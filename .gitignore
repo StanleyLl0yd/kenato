@@ -1,0 +1,42 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+local.properties
+
+# Android / Gradle
+.gradle/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Go
+bin/
+coverage.out
+*.test
+
+# Logs / temp
+*.log
+tmp/
+temp/
+
+# Release artifacts
+*.apk
+*.aab
+*.ipa
+*.zip
+checksums.txt
