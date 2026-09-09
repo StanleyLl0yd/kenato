@@ -16,11 +16,11 @@ val hasReleaseSigning = listOf(
 ).all { !it.isNullOrBlank() }
 
 android {
-    namespace = "app.kenato"
+    namespace = "com.sl.kenato"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "app.kenato"
+        applicationId = "com.sl.kenato"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
