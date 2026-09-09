@@ -17,7 +17,7 @@ Android client
   |
   | HTTPS / WSS (opaque encrypted payloads)
   v
-talkie-server-equivalent: kenato-server (Go)
+kenato-server (Go)
   |- identity public material / prekeys
   |- invite lifecycle
   |- transient WebSocket routing
