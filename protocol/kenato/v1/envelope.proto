@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package kenato.v1;
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
+
+// Envelope is the minimum server-routable unit.
+// Semantic message type and user content belong inside authenticated ciphertext
+// unless a future reviewed protocol change proves server visibility is required.
+message Envelope {
+  uint32 protocol_version = 1;
+  bytes recipient = 2;
+  bytes message_id = 3;
+  bytes ciphertext = 4;
+  int64 expires_at_unix_seconds = 5;
+}
