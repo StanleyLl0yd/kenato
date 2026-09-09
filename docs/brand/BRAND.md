@@ -110,10 +110,17 @@ Its visual identity is:
 
 Canonical source identity:
 
+- repository source: `branding/icon/kenato-icon-canonical.png`;
+- format: PNG;
 - dimensions: 1254 × 1254 px;
-- SHA-256: `9a60ea3c539c4299ccd5ec2ff303f2813e7f152398b6259ffd41f022426d90da`.
+- mode: RGBA;
+- size: 1,908,797 bytes;
+- SHA-256: `77050c7417afa5b00059743841ba87b6b7bdff5a9bec7a9e029882dbbc4e310a`;
+- Git blob: `1797a758c743b3adada30917a149b46588e9b4d0`.
 
-The canonical artwork must not be re-encoded, redrawn, vectorized, recolored, cropped, recompressed, optimized in place, or replaced without an explicit owner decision.
+This exact owner-supplied PNG is the source of truth. It was transferred through the owner's Google Drive `Exchange` folder and committed byte-for-byte without re-encoding.
+
+The canonical artwork must not be re-encoded, redrawn, vectorized, recolored, cropped, recompressed, optimized in place, re-exported, or replaced without an explicit owner decision.
 
 Platform-specific derivatives are separate assets. The current Android launcher derivative is documented in `branding/icon/README.md`.
 

@@ -1,29 +1,41 @@
 # Kenato App Icon
 
-The current Kenato application icon is the owner-approved Zen Minimal artwork with two opposing soft forms on a warm white rounded-square surface.
+The owner-approved Kenato app icon is the exact PNG supplied by the project owner.
 
 ## Canonical source
 
-The approved canonical PNG is immutable artwork.
+The immutable source of truth is:
 
-- original dimensions: 1254 × 1254 px
-- original SHA-256: `9a60ea3c539c4299ccd5ec2ff303f2813e7f152398b6259ffd41f022426d90da`
-- canonical appearance: warm-white rounded square with a subtle shadow; deep navy/indigo left form; pale blue right form; central negative-space connection
+`branding/icon/kenato-icon-canonical.png`
 
-Do not redraw, vectorize, recolor, crop, optimize, recompress, or replace the canonical source in place without an explicit owner decision.
+Properties:
 
-## Android launcher derivative
+- format: PNG
+- dimensions: 1254 × 1254 px
+- mode: RGBA
+- size: 1,908,797 bytes
+- SHA-256: `77050c7417afa5b00059743841ba87b6b7bdff5a9bec7a9e029882dbbc4e310a`
+- Git blob: `1797a758c743b3adada30917a149b46588e9b4d0`
 
-Android currently uses a dedicated 192 × 192 WebP derivative at:
+This exact file was transferred through the owner's Google Drive `Exchange` folder and committed byte-for-byte without re-encoding.
 
-`android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp`
+Do not redraw, vectorize, recolor, crop, optimize, recompress, re-export, or replace this canonical PNG without an explicit owner decision.
 
-It is referenced by both `android:icon` and `android:roundIcon`.
+## Android launcher derivatives
 
-This derivative is intentionally separate from the canonical artwork. Android may scale the xxxhdpi launcher resource for lower-density devices.
+Android launcher assets are platform derivatives of the canonical PNG. They must remain separate files and must never replace or modify the canonical source.
 
-## Adaptive / themed icons
+The currently integrated launcher asset is generated directly from the canonical PNG:
 
-Do not synthesize a symbol-only adaptive or monochrome icon by automatically removing the background from the canonical artwork. That would create a new brand asset.
+- path: `android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png`
+- dimensions: 192 × 192 px
+- SHA-256: `00c801636cd3aadd6ef4f6ff5bbc968817191ad8d84bc68badd39980789125ee`
+- Git blob: `227d7e35846d45286a261c4804bcb4b152f7fdae`
 
-A future adaptive foreground / monochrome symbol may be added only as a separately reviewed derivative that preserves the approved Kenato identity.
+It is a separate platform derivative; the canonical PNG remains unchanged.
+
+Any future adaptive, themed, monochrome, notification, store, or additional density-specific derivative must be generated from the canonical PNG and reviewed separately.
+
+## Brand integrity rule
+
+When documentation, generated assets, or platform resources disagree with the canonical PNG, the canonical PNG wins.
