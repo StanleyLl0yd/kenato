@@ -49,44 +49,31 @@ def validate_backup_rules(
         return
 
     text = path.read_text(encoding="utf-8")
-    if not re.search(rf"<{re.escape(expected_root)}(?:\\s[^>]*)?>", text):
+    if f"<{expected_root}>" not in text or f"</{expected_root}>" not in text:
         errors.append(f"Android: {path.name} root must be {expected_root}")
         return
 
-    sections = ((path.name, text),) if not section_names else tuple(
-        (
-            name,
-            match.group(1) if (
-                match := re.search(
-                    rf"<{re.escape(name)}(?:\\s[^>]*)?>(.*?)</{re.escape(name)}>",
-                    text,
-                    re.DOTALL,
-                )
-            ) else "",
-        )
-        for name in section_names
-    )
+    sections: list[tuple[str, str]] = []
+    if section_names:
+        for name in section_names:
+            opening = f"<{name}>"
+            closing = f"</{name}>"
+            if opening not in text or closing not in text:
+                errors.append(f"Android: missing {name} backup rules")
+                continue
+            sections.append((name, text.split(opening, 1)[1].split(closing, 1)[0]))
+    else:
+        sections.append((path.name, text))
 
     for name, section in sections:
-        if not section:
-            errors.append(f"Android: missing {name} backup rules")
-            continue
-        if re.search(r"<include\\b", section):
+        if "<include " in section:
             errors.append(f"Android: {name} must not include app data")
 
-        excluded_domains = {
+        missing_domains = {
             domain
             for domain in required_backup_domains
-            if re.search(
-                rf'<exclude\\s+[^>]*domain="{re.escape(domain)}"[^>]*path="\\."[^>]*/?>',
-                section,
-            )
-            or re.search(
-                rf'<exclude\\s+[^>]*path="\\."[^>]*domain="{re.escape(domain)}"[^>]*/?>',
-                section,
-            )
+            if f'<exclude domain="{domain}" path="." />' not in section
         }
-        missing_domains = required_backup_domains - excluded_domains
         if missing_domains:
             errors.append(
                 f"Android: {name} does not exclude: "
