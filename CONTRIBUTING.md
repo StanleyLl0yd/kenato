@@ -1,6 +1,6 @@
 # Contributing to Kenato
 
-Kenato is currently in early foundation work.
+Kenato is in pre-1.0 milestone-driven development. M0 Foundation is complete; later milestones remain scope-gated by `ROADMAP.md` and `AGENTS.md`.
 
 ## Workflow
 

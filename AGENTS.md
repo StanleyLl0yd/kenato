@@ -38,9 +38,13 @@ Brand:
 
 Current repository phase:
 
-`M0 — Foundation`
+`M0 — Foundation`: complete.
 
-Do not implement later-milestone features merely because the architecture could support them.
+Next planned milestone:
+
+`M1 — Local Identity`
+
+Do not start M1 or any later-milestone implementation unless explicitly requested. Do not implement later-milestone features merely because the architecture could support them.
 
 Kenato 1.0 is intentionally narrow:
 

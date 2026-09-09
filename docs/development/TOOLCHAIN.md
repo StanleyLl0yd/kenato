@@ -1,6 +1,6 @@
 # Development Toolchain
 
-M0 baseline:
+M0 foundation baseline (current after M0 close):
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.7.1
@@ -17,12 +17,12 @@ M0 baseline:
 
 The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds.
 
-Release signing material must never be committed. Signing/release architecture is defined separately before the first signed release pipeline is enabled.
+Release signing material must never be committed. The tag-triggered signed-release pipeline is committed and gated; production signing secrets and certificate trust material must be provisioned only in the protected `release` environment before the first production-signed release.
 
 
 ## CodeQL compatibility
 
-GitHub CodeQL 2.26.4 supports Kotlin only through 2.4.10, while Kenato intentionally uses Kotlin 2.4.20.
+As of 2026-09-09, current CodeQL documentation supports Kotlin through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
 
 Kenato does not downgrade the application toolchain solely to satisfy a scanner version ceiling. Until CodeQL adds Kotlin 2.4.20 support:
 

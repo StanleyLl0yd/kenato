@@ -12,6 +12,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sl.kenato.ui.theme.KenatoTheme
 
@@ -37,11 +38,11 @@ private fun KenatoApp() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Kenato",
+                text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineLarge,
             )
             Text(
-                text = "Talk freely.",
+                text = stringResource(R.string.tagline),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyLarge,
             )

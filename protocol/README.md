@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 defines only the outer server-routable envelope. It does **not** define the cryptographic session protocol yet.
+M0 established only the outer server-routable envelope. No cryptographic session protocol is implemented yet.
 
 The current schema lives under:
 
