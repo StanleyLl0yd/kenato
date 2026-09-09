@@ -29,6 +29,9 @@ This change modifies:
 - [ ] push/notifications
 - [ ] logging/telemetry
 - [ ] backup behavior
+- [ ] dependencies / supply chain
+- [ ] CI/CD permissions or triggers
+- [ ] release / signing / provenance
 
 ## Verification
 
