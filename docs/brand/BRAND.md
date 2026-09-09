@@ -97,22 +97,27 @@ Minimum touch target: 48 × 48 dp.
 
 ## App icon
 
-Master canvas: 1024 × 1024.
+The owner-approved icon is now canonical and supersedes earlier conceptual icon directions.
 
-Primary concept:
+Its visual identity is:
 
-- indigo background;
-- warm-ivory two-part Kenato symbol;
-- no text;
-- no small details;
-- symbol remains legible as a monochrome Android themed icon and notification glyph.
+- warm-white rounded-square surface with subtle depth/shadow;
+- two soft opposing forms;
+- left form in deep navy/indigo;
+- right form in pale mist blue;
+- central negative space expressing a quiet connection;
+- no text, phone receiver, padlock, shield, or chat bubble.
 
-Android deliverables must include:
+Canonical source identity:
 
-- adaptive foreground;
-- adaptive background;
-- monochrome themed icon;
-- simplified notification icon.
+- dimensions: 1254 × 1254 px;
+- SHA-256: `9a60ea3c539c4299ccd5ec2ff303f2813e7f152398b6259ffd41f022426d90da`.
+
+The canonical artwork must not be re-encoded, redrawn, vectorized, recolored, cropped, recompressed, optimized in place, or replaced without an explicit owner decision.
+
+Platform-specific derivatives are separate assets. The current Android launcher derivative is documented in `branding/icon/README.md`.
+
+Adaptive/themed/monochrome variants must not be fabricated by automatic background removal. They require a separately reviewed brand derivative.
 
 ## Tone of voice
 
