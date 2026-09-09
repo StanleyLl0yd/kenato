@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: initial architecture baseline for M0.
+Status: M0 architecture baseline. M0 is complete; this model remains authoritative until implementation changes require an update.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -61,12 +61,12 @@ GitHub source control and GitHub Actions are security-sensitive supply-chain bou
 
 Ordinary pull-request code is untrusted and must not receive production signing material or privileged write tokens.
 
-Before M0 closes:
+The M0 repository/release foundation establishes:
 
 - the default branch and release tags are protected by active no-bypass rulesets;
 - critical merge gates are required and strict;
 - external Actions/container dependencies are immutable-pinned;
-- production signing secrets exist only in the protected release environment;
+- the protected `release` environment exists; production signing secrets and certificate trust material, when provisioned, are confined to it;
 - release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
 
 ## Threats in scope

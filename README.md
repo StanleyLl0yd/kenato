@@ -14,7 +14,7 @@ Kenato is a privacy-first mobile app for private 1-to-1 voice calls and simple e
 - Android first; iOS is planned after the Android protocol and calling experience are stable.
 - RuStore first, Google Play later.
 
-## Planned stack
+## Target stack
 
 - Android: Kotlin + Jetpack Compose
 - Media: WebRTC + Opus
@@ -29,14 +29,14 @@ Kenato is a privacy-first mobile app for private 1-to-1 voice calls and simple e
 
 ```text
 android/    Android application
+branding/   Canonical brand assets and platform-derivative records
 server/     Go backend
 protocol/   Versioned wire protocol and test vectors
-deploy/     Deployment assets
 docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-The repository is currently in **M0 — Foundation**.
+**M0 — Foundation is complete.** **M1 — Local Identity** is the next planned milestone and has not started.
 
 ## Security
 

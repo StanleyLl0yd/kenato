@@ -4,7 +4,7 @@ Kenato is designed around end-to-end encrypted 1-to-1 communication and minimal 
 
 ## Supported versions
 
-During pre-1.0 development, only the latest commit on the default branch is supported. M0 requires that branch to be protected before foundation work is considered complete. A formal stable-release support window will be defined before 1.0.
+During pre-1.0 development, only the latest commit on the default branch is supported. The default branch is protected; M0 was closed only after the required repository rulesets and security settings were verified active. A formal stable-release support window will be defined before 1.0.
 
 ## Reporting a vulnerability
 

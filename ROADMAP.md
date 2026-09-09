@@ -4,6 +4,8 @@ Kenato is developed milestone-first. Scope expands only after the current milest
 
 ## M0 — Foundation
 
+Status: **Complete** (2026-09-09).
+
 - repository structure and operating contract;
 - Android and Go skeletons;
 - versioned protocol foundation;

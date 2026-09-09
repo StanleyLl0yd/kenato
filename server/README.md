@@ -2,7 +2,7 @@
 
 The initial backend is a deliberately small Go service.
 
-Current M0 surface:
+Current foundation surface:
 
 - bounded HTTP server configuration;
 - `GET /healthz`;

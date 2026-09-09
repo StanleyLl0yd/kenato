@@ -117,20 +117,33 @@ If a second trusted reviewer exists, an environment approval can be useful. Do n
 
 ## Verification record
 
-### Verified on 2026-09-09 before this hardening change
+### M0 final state — verified 2026-09-09
 
-- Dependency Review is operational.
-- Dependabot version updates are operational.
-- Current `main` commits produced through GitHub squash merge are cryptographically verified.
-- No release tags or GitHub Releases exist yet.
-- Repository rulesets are absent (`rulesets = []`), so `main`, CodeQL enforcement, and `v*` tags are not yet protected.
-- The current connector cannot read or mutate the owner-only repository settings listed above.
+- `main` is protected.
+- Active repository rulesets:
+  - `Protect main` — ID `22649078`;
+  - `Protect release tags` — ID `22649083`;
+  - `Require CodeQL` — ID `22649087`.
+- `Protect main` has no bypass actors and requires strict status checks, signed commits, linear history, squash-only pull requests, conversation resolution, and blocks deletion/non-fast-forward updates.
+- Required checks are:
+  - `Android`;
+  - `Go`;
+  - `Protocol syntax`;
+  - `Semgrep`;
+  - `Gitleaks`;
+  - `Dependency Review`;
+  - `Analyze (go)`;
+  - `Analyze (actions)`.
+- Release tags matching `v*` cannot be updated or deleted and have no bypass actors.
+- CodeQL enforcement is active for the default branch at `medium_or_higher` security alerts and `errors` alert/error threshold.
+- Repository merges are squash-only; merge/rebase commits are disabled and merged head branches are deleted automatically.
+- Secret scanning and push protection are enabled.
+- Dependabot alerts and security updates are enabled.
+- Private Vulnerability Reporting is enabled.
+- Actions default token permissions are read-only and workflows may not approve pull requests.
+- The protected `release` environment exists.
+- Production signing secrets and certificate trust material are intentionally not yet provisioned; they are required before the first production-signed release.
 
-### M0 close condition
+### Ongoing verification
 
-Do not close M0 until:
-
-1. this hardening change is merged and all new check names above are proven green;
-2. the three rulesets are active and re-read from the repository API;
-3. owner-only secret-scanning/Dependabot/PVR/Actions/environment settings are verified;
-4. final repository-wide CI/security verification is green.
+Re-read live rulesets and owner-controlled security/release settings whenever a change affects CI permissions, required checks, release tags, signing, provenance, or the repository security boundary. Do not rely on this record as a substitute for live verification before a production release.

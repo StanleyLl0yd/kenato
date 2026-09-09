@@ -4,11 +4,13 @@ Kenato release signing is designed so production signing material never enters t
 
 ## Required GitHub environment
 
-Create a protected GitHub Actions environment named:
+Use the protected GitHub Actions environment named:
 
 `release`
 
-Store these environment secrets:
+The environment exists. Production signing secrets and certificate trust material remain unprovisioned until first production-signed release preparation.
+
+When provisioning signing, store these environment secrets:
 
 - `ANDROID_KEYSTORE_BASE64` — complete release keystore encoded as base64;
 - `ANDROID_KEYSTORE_PASSWORD`;
