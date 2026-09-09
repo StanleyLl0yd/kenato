@@ -4,7 +4,7 @@ M0 baseline:
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.6.1
-- Kotlin / Compose compiler plugin: 2.4.20
+- Kotlin / Compose compiler plugin: 2.4.20 (AGP 9 built-in Kotlin; no `org.jetbrains.kotlin.android` plugin)
 - JDK: 17
 - compileSdk: 37
 - targetSdk: 37
