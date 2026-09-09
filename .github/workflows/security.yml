@@ -1,0 +1,81 @@
+name: Security and Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "47 4 * * 1"
+
+permissions: {}
+
+concurrency:
+  group: security-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Semgrep CE
+        run: semgrep scan --config p/security-audit --config p/secrets --error --metrics=off .
+
+  qodana:
+    name: Qodana
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          verify-signature: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install Android SDK 37
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3
+          "platforms;android-37.0"
+          "build-tools;37.0.0"
+
+      - name: Prepare Gradle dependencies
+        run: ./gradlew :android:app:dependencies --stacktrace
+
+      - name: Run Qodana
+        uses: JetBrains/qodana-action@10be11607eb323a180e2b76b26c9c5cdceac3e77 # v2026.2.1
+        with:
+          args: --linter qodana-jvm-community --within-docker false --only-directory android/app/src --print-problems
+          upload-result: true
+          artifact-name: qodana-report
