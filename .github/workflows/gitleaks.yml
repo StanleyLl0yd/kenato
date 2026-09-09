@@ -8,8 +8,7 @@ on:
   schedule:
     - cron: "43 3 * * 2"
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: gitleaks-${{ github.workflow }}-${{ github.ref }}
@@ -18,15 +17,19 @@ concurrency:
 jobs:
   scan:
     name: Gitleaks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Scan repository
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
