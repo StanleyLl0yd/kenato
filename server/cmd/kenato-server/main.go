@@ -7,17 +7,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/StanleyLl0yd/kenato/server/internal/httpapi"
 )
 
+const defaultListenAddress = "127.0.0.1:8080"
+
 func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              listenAddress(),
 		Handler:           httpapi.NewHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -55,4 +58,11 @@ func main() {
 			logger.Printf("forced shutdown failed: %v", closeErr)
 		}
 	}
+}
+
+func listenAddress() string {
+	if address := strings.TrimSpace(os.Getenv("KENATO_LISTEN_ADDR")); address != "" {
+		return address
+	}
+	return defaultListenAddress
 }
