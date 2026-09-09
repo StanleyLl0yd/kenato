@@ -82,7 +82,7 @@ jobs:
           AAB="$(find android/app/build/outputs/bundle/release -name '*.aab' -type f -print -quit)"
           test -n "$APK"
           test -n "$AAB"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
           jarsigner -verify -strict "$AAB"
 
       - name: Create checksums
