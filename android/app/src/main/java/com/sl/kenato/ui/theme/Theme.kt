@@ -5,6 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+
+private val ColorWhite = Color.White
 
 private val LightColors = lightColorScheme(
     primary = InkIndigo,
@@ -25,8 +28,6 @@ private val DarkColors = darkColorScheme(
     onSurface = DarkTextPrimary,
     onSurfaceVariant = DarkTextSecondary,
 )
-
-private val ColorWhite = androidx.compose.ui.graphics.Color.White
 
 @Composable
 fun KenatoTheme(
