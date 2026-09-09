@@ -14,7 +14,7 @@ type healthResponse struct {
 func NewHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
-	return withRequestLimit(mux)
+	return withSecurityHeaders(withRequestLimit(mux))
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
@@ -25,7 +25,19 @@ func health(w http.ResponseWriter, _ *http.Request) {
 
 func withRequestLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBodyBytes {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
 }
