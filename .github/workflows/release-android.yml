@@ -35,7 +35,7 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Install Android SDK 37
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;36.0.0"
 
       - name: Validate signing secrets
         env:
@@ -76,7 +76,7 @@ jobs:
           AAB="$(find android/app/build/outputs/bundle/release -name '*.aab' -type f -print -quit)"
           test -n "$APK"
           test -n "$AAB"
-          apksigner verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           jarsigner -verify -strict "$AAB"
 
       - name: Create checksums
