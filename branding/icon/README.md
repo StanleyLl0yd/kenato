@@ -25,9 +25,16 @@ Do not redraw, vectorize, recolor, crop, optimize, recompress, re-export, or rep
 
 Android launcher assets are platform derivatives of the canonical PNG. They must remain separate files and must never replace or modify the canonical source.
 
-The currently integrated launcher asset is derived from the approved artwork and referenced from the manifest.
+The currently integrated launcher asset is generated directly from the canonical PNG:
 
-Any future adaptive, themed, monochrome, notification, store, or density-specific derivative must be generated from the canonical PNG and reviewed separately.
+- path: `android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png`
+- dimensions: 192 × 192 px
+- SHA-256: `00c801636cd3aadd6ef4f6ff5bbc968817191ad8d84bc68badd39980789125ee`
+- Git blob: `227d7e35846d45286a261c4804bcb4b152f7fdae`
+
+It is a separate platform derivative; the canonical PNG remains unchanged.
+
+Any future adaptive, themed, monochrome, notification, store, or additional density-specific derivative must be generated from the canonical PNG and reviewed separately.
 
 ## Brand integrity rule
 
