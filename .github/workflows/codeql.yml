@@ -44,7 +44,10 @@ jobs:
 
       - name: Install Android SDK 37
         if: matrix.language == 'java-kotlin'
-        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;36.0.0"
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37"
+          "build-tools;36.0.0"
 
       - name: Set up Go
         if: matrix.language == 'go'
