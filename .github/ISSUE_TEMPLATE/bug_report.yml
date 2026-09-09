@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible Kenato defect
+title: "bug: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal reproducible steps.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kenato version/commit, Android version/device, or server platform as applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security/privacy impact
+      description: Do not disclose exploitable vulnerabilities publicly; use private security reporting instead.
