@@ -75,6 +75,7 @@ Initial server:
 - WebSocket + HTTPS
 - systemd deployment
 - coturn as a separate service
+- loopback listener by default; public deployment must explicitly expose it behind the reviewed TLS boundary
 
 No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
 
