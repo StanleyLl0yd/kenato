@@ -3,7 +3,7 @@
 M0 baseline:
 
 - Android Gradle Plugin: 9.4.0
-- Gradle Wrapper: 9.6.1
+- Gradle Wrapper: 9.7.1
 - Kotlin / Compose compiler plugin: 2.4.20 (AGP 9 built-in Kotlin; no `org.jetbrains.kotlin.android` plugin)
 - JDK: 17
 - compileSdk: 37
@@ -19,7 +19,7 @@ Release signing material must never be committed. Signing/release architecture i
 
 ## CodeQL compatibility
 
-GitHub CodeQL 2.26.4 supports Kotlin only through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
+GitHub CodeQL 2.26.4 supports Kotlin only through 2.4.10, while Kenato intentionally uses Kotlin 2.4.20.
 
 Kenato does not downgrade the application toolchain solely to satisfy a scanner version ceiling. Until CodeQL adds Kotlin 2.4.20 support:
 
