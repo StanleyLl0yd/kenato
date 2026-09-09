@@ -13,9 +13,13 @@ Thumbs.db
 *.jks
 *.keystore
 *.p12
+*.pfx
+*.pkcs12
 *.pem
 *.key
 local.properties
+keystore.properties
+secrets.properties
 
 # Android / Gradle
 .gradle/

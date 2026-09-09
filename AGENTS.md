@@ -319,11 +319,34 @@ Do not replace a mature reviewed cryptographic/networking implementation with cu
 
 Native/cgo/JNI dependencies require additional scrutiny because they affect portability, build security, binary size, and platform compatibility.
 
-For CI:
+Dependency resolution rules:
 
-- use least-privilege permissions;
-- pin third-party GitHub Actions to immutable revisions where practical;
-- avoid exposing production secrets to ordinary pull-request workflows.
+- use exact dependency/tool versions rather than dynamic selectors such as `latest` or `+`;
+- commit ecosystem lock/checksum/integrity files when the ecosystem produces them;
+- commit `go.sum` as soon as Go module dependencies require it;
+- keep Gradle Wrapper distribution verification enabled and preserve the pinned wrapper JAR checksum gate;
+- use package-manager integrity mechanisms rather than blindly executing downloaded tools;
+- any direct executable/archive download in CI must use HTTPS plus a pinned version and checksum/signature verification.
+
+For GitHub Actions and CI:
+
+- every non-local GitHub Action must use a full immutable 40-character commit SHA; retain a human-readable version comment;
+- critical workflow container images must be pinned by SHA-256 digest;
+- checkouts must use `persist-credentials: false`;
+- top-level workflow permissions must be empty/read-only and job permissions must follow least privilege;
+- `security-events: write`, `id-token: write`, `attestations: write`, and `contents: write` belong only to jobs that actually require them;
+- ordinary pull-request workflows must use `pull_request`, not `pull_request_target`;
+- do not inherit reusable-workflow secrets or expose production signing/deployment secrets to untrusted PR code;
+- repository CI supply-chain policy checks are mandatory and must stay green;
+- merge gates must include the relevant build/tests, SAST, secret scan, dependency review/vulnerability scan, and CodeQL checks that are supported by the current stack.
+
+Release integrity rules:
+
+- release tags are immutable and must resolve to reviewed `main` commits;
+- production signing keys/certificates never enter source control;
+- release workflows verify source revision, application identity, version, signing identity, checksums, and successful main security gates before producing a production artifact;
+- binary release artifacts must receive provenance/attestation when the hosting platform supports it;
+- temporary decoded signing material must be removed even on workflow failure.
 
 ## Code quality
 

@@ -11,6 +11,9 @@ M0 baseline:
 - minSdk: 26
 - Compose BOM: 2026.08.00
 - Go: 1.27.1 in CI
+- Go vulnerability scanner: govulncheck `709015412431dd2b5b28a53c06c70bc02d49074c` (2026-09-08 upstream revision; pinned because released v1.1.4 predates Go 1.27 AST support)
+- SAST: Semgrep CE 1.172.0 (required PR/main gate)
+- Kotlin/JVM defense-in-depth: Qodana JVM Community 2026.2.1 (scheduled/manual)
 
 The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds.
 

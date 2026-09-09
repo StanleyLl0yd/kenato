@@ -55,7 +55,39 @@ TURN is treated as an untrusted network relay. It must not require end-to-end pl
 
 Push services may be required for reliable background wake-up. Push payloads should contain the minimum information necessary and should not include message plaintext, contact names, or sensitive call details.
 
+### Source repository, CI, and release signing
+
+GitHub source control and GitHub Actions are security-sensitive supply-chain boundaries.
+
+Ordinary pull-request code is untrusted and must not receive production signing material or privileged write tokens.
+
+Before M0 closes:
+
+- the default branch and release tags are protected by active no-bypass rulesets;
+- critical merge gates are required and strict;
+- external Actions/container dependencies are immutable-pinned;
+- production signing secrets exist only in the protected release environment;
+- release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
+
 ## Threats in scope
+
+### Software supply-chain and release compromise
+
+An attacker attempts to introduce malicious source/dependencies, weaken CI checks, replace a release tag, steal signing material, or substitute release artifacts.
+
+Mitigations:
+
+- pull-request-only protected default branch with strict required checks;
+- no force pushes/deletion and no ruleset bypass actors;
+- required signed commits on the default branch;
+- immutable `v*` release tags;
+- full-SHA-pinned GitHub Actions and digest-pinned critical containers;
+- least-privilege workflow permissions and non-persistent checkout credentials;
+- Semgrep, Gitleaks, Dependency Review, govulncheck, Android lint, Qodana, and CodeQL according to stack support;
+- release signing secrets isolated in the `release` environment;
+- independent expected certificate fingerprint verification;
+- release source must be a successfully verified `main` commit;
+- release checksums and OIDC-backed artifact attestations.
 
 ### Network interception
 
@@ -167,7 +199,10 @@ A dedicated security review is required for changes to:
 - WebRTC security assumptions;
 - push payload content;
 - logging/telemetry;
-- backup behavior.
+- backup behavior;
+- dependency or CI supply-chain policy;
+- GitHub Actions permissions/triggers;
+- release-tag, signing, provenance, or artifact-publication behavior.
 
 ## Pre-1.0 exit criteria
 
@@ -178,6 +213,8 @@ Before the first stable public release:
 - malformed/replayed/reordered input tests exist;
 - mailbox and TURN abuse limits validated;
 - dependency and supply-chain review completed;
+- default-branch, release-tag, and CodeQL rulesets verified active;
+- release signing identity/provenance controls verified;
 - Android backup and logging behavior reviewed;
 - repository-wide security audit completed;
 - no open Critical or High severity security findings.

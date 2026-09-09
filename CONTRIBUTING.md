@@ -23,6 +23,10 @@ A pull request should explain:
 
 Changes to cryptography, identity, wire formats, authentication, persistence, or call state machines require extra review attention.
 
+## CI and supply chain
+
+Workflow changes must preserve full-SHA Action pins, least-privilege permissions, non-persistent checkout credentials, required security gates, and release-secret isolation. Do not merge around a failing security gate; fix the cause or make an explicit reviewed policy change.
+
 ## Dependencies
 
 Before adding a dependency, consider:
@@ -33,7 +37,8 @@ Before adding a dependency, consider:
 - security history;
 - binary/native size impact;
 - telemetry;
-- supply-chain risk.
+- supply-chain risk;
+- lock/checksum/integrity impact and vulnerability-scanner coverage.
 
 ## Scope discipline
 
