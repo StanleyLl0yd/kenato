@@ -2,19 +2,49 @@
 
 Kenato is designed around end-to-end encrypted 1-to-1 communication and minimal server knowledge.
 
+## Supported versions
+
+During pre-1.0 development, only the latest commit on the protected default branch is supported. A formal stable-release support window will be defined before 1.0.
+
 ## Reporting a vulnerability
 
-Please do not open a public issue for vulnerabilities that could expose user content, identities, cryptographic material, authentication data, or service integrity.
+Do not open a public issue for a vulnerability that could expose user content, identities, cryptographic material, authentication data, service integrity, signing material, or the software supply chain.
 
-Until a dedicated security contact is published, use GitHub's private security reporting feature when available for this repository.
+Use GitHub Private Vulnerability Reporting for this repository when available. If that feature is temporarily unavailable, do not publish exploit details, credentials, tokens, private keys, or other secrets in a public issue while a private reporting path is being restored.
 
-Include:
+Please include, where safe:
 
 - affected component and version/commit;
-- impact;
-- reproduction steps;
-- proof of concept where safe;
+- security impact;
+- minimal reproduction steps;
+- proof of concept;
 - suggested remediation if known.
+
+Never include real production credentials or private user data in a report.
+
+## Scope
+
+Security reports may cover:
+
+- Android application code and platform integration;
+- the Go server;
+- the versioned wire protocol;
+- identity/cryptographic design when implemented;
+- persistence and backup behavior;
+- GitHub Actions, dependencies, build/release tooling, signing, and artifact provenance.
+
+Reports about planned-but-not-yet-implemented features should identify the concrete current risk rather than a hypothetical future vulnerability.
+
+## Response process
+
+Best-effort targets during pre-1.0 development:
+
+1. acknowledge a private report within 5 business days;
+2. perform initial severity/impact triage within 10 business days;
+3. keep the reporter informed when a confirmed issue requires longer remediation;
+4. coordinate disclosure only after a fix or an explicit disclosure decision.
+
+Urgent Critical/High issues may be handled faster. These targets are not a service-level agreement.
 
 ## Security principles
 
@@ -24,7 +54,4 @@ Include:
 - Network and protocol inputs must be size- and state-bounded.
 - Secrets and plaintext user content must not appear in logs.
 - Cryptographic primitives must come from mature, reviewed implementations.
-
-## Supported versions
-
-During pre-1.0 development, only the latest development version is supported. A formal support window will be defined before the first stable release.
+- Production signing material must never enter the repository or ordinary pull-request workflows.
