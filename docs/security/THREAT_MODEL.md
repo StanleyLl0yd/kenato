@@ -168,7 +168,9 @@ Backups, logs, crash reports, screenshots, or local storage may expose sensitive
 Mitigations:
 
 - secrets in Android Keystore;
-- sensitive backup behavior explicitly controlled and tested;
+- cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
+- cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
+- backup policy is enforced by repository checks and Android build/lint validation;
 - no plaintext secrets in logs;
 - minimum telemetry;
 - UI screenshot restrictions considered only where they improve privacy without harming normal UX.
