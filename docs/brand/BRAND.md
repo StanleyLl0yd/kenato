@@ -110,8 +110,12 @@ Its visual identity is:
 
 Canonical source identity:
 
-- dimensions: 1254 × 1254 px;
-- SHA-256: `9a60ea3c539c4299ccd5ec2ff303f2813e7f152398b6259ffd41f022426d90da`.
+- repository source: `branding/icon/kenato-icon-canonical.webp`;
+- format: WebP;
+- dimensions: 192 × 192 px;
+- SHA-256: `4eb1c7cd269de4a723579eb7b05005e89d6a4df5a7f05005e2522ddc17a8d4b3`.
+
+The exact approved source snapshot was transferred through the owner's Google Drive `Exchange` folder and committed without re-encoding.
 
 The canonical artwork must not be re-encoded, redrawn, vectorized, recolored, cropped, recompressed, optimized in place, or replaced without an explicit owner decision.
 

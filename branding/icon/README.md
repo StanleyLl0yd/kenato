@@ -4,23 +4,30 @@ The current Kenato application icon is the owner-approved Zen Minimal artwork wi
 
 ## Canonical source
 
-The approved canonical PNG is immutable artwork.
+The exact owner-approved source snapshot currently available to the repository is preserved byte-for-byte at:
 
-- original dimensions: 1254 × 1254 px
-- original SHA-256: `9a60ea3c539c4299ccd5ec2ff303f2813e7f152398b6259ffd41f022426d90da`
-- canonical appearance: warm-white rounded square with a subtle shadow; deep navy/indigo left form; pale blue right form; central negative-space connection
+`branding/icon/kenato-icon-canonical.webp`
+
+Properties:
+
+- format: WebP
+- dimensions: 192 × 192 px
+- size: 2556 bytes
+- SHA-256: `4eb1c7cd269de4a723579eb7b05005e89d6a4df5a7f05005e2522ddc17a8d4b3`
+
+It was transferred through the owner's Google Drive `Exchange` folder without re-encoding.
 
 Do not redraw, vectorize, recolor, crop, optimize, recompress, or replace the canonical source in place without an explicit owner decision.
 
-## Android launcher derivative
+## Android launcher
 
-Android currently uses a dedicated 192 × 192 WebP derivative at:
+Android uses the exact same binary bytes at:
 
 `android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp`
 
 It is referenced by both `android:icon` and `android:roundIcon`.
 
-This derivative is intentionally separate from the canonical artwork. Android may scale the xxxhdpi launcher resource for lower-density devices.
+Android may scale the xxxhdpi launcher resource for lower-density devices.
 
 ## Adaptive / themed icons
 
