@@ -9,6 +9,9 @@ manifest = Path("android/app/src/main/AndroidManifest.xml").read_text(encoding="
 build = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
 release = Path(".github/workflows/release-android.yml").read_text(encoding="utf-8")
 gitignore = Path(".gitignore").read_text(encoding="utf-8")
+versions = Path("gradle/libs.versions.toml").read_text(encoding="utf-8")
+wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text(encoding="utf-8")
+go_mod = Path("server/go.mod").read_text(encoding="utf-8")
 
 required_manifest = {
     'android:allowBackup="false"': "Android backups must be explicitly disabled",
@@ -41,6 +44,15 @@ for required in (
 ):
     if required not in release:
         errors.append(f"release-android.yml: missing required release control: {required}")
+
+if re.search(r'(?im)^\s*[^#\n=]+\s*=\s*"[^"]*(?:\+|latest\.|snapshot)[^"]*"', versions):
+    errors.append("libs.versions.toml: dynamic dependency versions are forbidden")
+
+if "distributionSha256Sum=" not in wrapper:
+    errors.append("gradle-wrapper.properties: Gradle distribution SHA-256 is required")
+
+if re.search(r"(?m)^\s*require\s+(?:\(|\S)", go_mod) and not Path("server/go.sum").exists():
+    errors.append("server: go.sum must be committed when module dependencies are present")
 
 required_ignores = (
     ".env",
