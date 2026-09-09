@@ -101,7 +101,8 @@ jobs:
         run: go vet ./...
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        # Immutable upstream revision from 2026-09-08; uses x/tools v0.50.0 with Go 1.27 support.
+        run: go install golang.org/x/vuln/cmd/govulncheck@709015412431dd2b5b28a53c06c70bc02d49074c
 
       - name: Vulnerability scan
         run: govulncheck ./...
