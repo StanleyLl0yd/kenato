@@ -15,3 +15,14 @@ M0 baseline:
 The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds.
 
 Release signing material must never be committed. Signing/release architecture is defined separately before the first signed release pipeline is enabled.
+
+
+## CodeQL compatibility
+
+GitHub CodeQL 2.26.4 supports Kotlin only through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
+
+Kenato does not downgrade the application toolchain solely to satisfy a scanner version ceiling. Until CodeQL adds Kotlin 2.4.20 support:
+
+- CodeQL analyzes Go and GitHub Actions;
+- Android CI still performs Kotlin compilation, lint, debug build, unsigned release APK build, and unsigned release AAB build;
+- Kotlin CodeQL analysis is re-enabled when the deployed CodeQL extractor supports the project Kotlin version.
