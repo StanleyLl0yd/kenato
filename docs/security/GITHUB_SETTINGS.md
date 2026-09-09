@@ -23,9 +23,11 @@ Version update configuration is committed in `.github/dependabot.yml`.
 
 ## Secret scanning
 
-For this public repository, enable all available secret-scanning protections, including push protection when GitHub offers them for the repository.
+A pinned Gitleaks workflow scans pull requests, main-branch pushes, and a weekly schedule with a read-only token.
 
-No committed workflow or configuration is a substitute for repository-level push protection.
+Also enable all repository-level secret-scanning protections GitHub offers for this public repository, including push protection when available.
+
+The CI scan is defense in depth; it is not a substitute for repository-level push protection.
 
 ## Private vulnerability reporting
 
