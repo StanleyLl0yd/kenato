@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import re
 import subprocess
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 errors: list[str] = []
@@ -40,7 +39,7 @@ required_backup_domains = {
 }
 
 
-def validate_backup_sections(
+def validate_backup_rules(
     path: Path,
     expected_root: str,
     section_names: tuple[str, ...],
@@ -49,29 +48,43 @@ def validate_backup_sections(
         errors.append(f"Android: {path.name} is required")
         return
 
-    try:
-        root = ET.parse(path).getroot()
-    except ET.ParseError as exc:
-        errors.append(f"Android: invalid {path.name}: {exc}")
-        return
-
-    if root.tag != expected_root:
+    text = path.read_text(encoding="utf-8")
+    if not re.search(rf"<{re.escape(expected_root)}(?:\\s[^>]*)?>", text):
         errors.append(f"Android: {path.name} root must be {expected_root}")
         return
 
-    sections = [(path.name, root)] if not section_names else [
-        (name, root.find(name)) for name in section_names
-    ]
+    sections = ((path.name, text),) if not section_names else tuple(
+        (
+            name,
+            match.group(1) if (
+                match := re.search(
+                    rf"<{re.escape(name)}(?:\\s[^>]*)?>(.*?)</{re.escape(name)}>",
+                    text,
+                    re.DOTALL,
+                )
+            ) else "",
+        )
+        for name in section_names
+    )
+
     for name, section in sections:
-        if section is None:
+        if not section:
             errors.append(f"Android: missing {name} backup rules")
             continue
-        if section.findall("include"):
+        if re.search(r"<include\\b", section):
             errors.append(f"Android: {name} must not include app data")
+
         excluded_domains = {
-            item.get("domain")
-            for item in section.findall("exclude")
-            if item.get("path") == "."
+            domain
+            for domain in required_backup_domains
+            if re.search(
+                rf'<exclude\\s+[^>]*domain="{re.escape(domain)}"[^>]*path="\\."[^>]*/?>',
+                section,
+            )
+            or re.search(
+                rf'<exclude\\s+[^>]*path="\\."[^>]*domain="{re.escape(domain)}"[^>]*/?>',
+                section,
+            )
         }
         missing_domains = required_backup_domains - excluded_domains
         if missing_domains:
@@ -81,12 +94,12 @@ def validate_backup_sections(
             )
 
 
-validate_backup_sections(
+validate_backup_rules(
     Path("android/app/src/main/res/xml/data_extraction_rules.xml"),
     "data-extraction-rules",
     ("cloud-backup", "device-transfer"),
 )
-validate_backup_sections(
+validate_backup_rules(
     Path("android/app/src/main/res/xml/backup_rules.xml"),
     "full-backup-content",
     (),
