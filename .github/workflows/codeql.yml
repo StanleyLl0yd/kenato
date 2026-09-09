@@ -50,8 +50,9 @@ jobs:
         if: matrix.language == 'java-kotlin'
         run: >
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3
           "platforms;android-37"
-          "build-tools;36.0.0"
+          "build-tools;37.0.0"
 
       - name: Set up Go
         if: matrix.language == 'go'
