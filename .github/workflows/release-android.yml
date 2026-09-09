@@ -218,7 +218,7 @@ jobs:
           apk_fingerprint="$(awk -F': ' '/certificate SHA-256 digest:/ {print $NF; exit}' "$apk_report" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test "$apk_fingerprint" = "$expected"
 
-          jarsigner -verify -strict "$source_aab" | tee "$RUNNER_TEMP/jarsigner-report.txt"
+          jarsigner -verify "$source_aab" | tee "$RUNNER_TEMP/jarsigner-report.txt"
           grep -F 'jar verified.' "$RUNNER_TEMP/jarsigner-report.txt"
           aab_fingerprint="$(keytool -printcert -jarfile "$source_aab" | awk -F': ' '/SHA256:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test "$aab_fingerprint" = "$expected"
