@@ -5,34 +5,140 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: android-release-${{ github.ref }}
   cancel-in-progress: false
 
-jobs:
-  build:
-    name: Signed APK + AAB
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    environment: release
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
 
+jobs:
+  validate:
+    name: Validate release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
     steps:
+      - name: Validate tag format
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
+
       - name: Checkout tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify release provenance
-        shell: bash
+      - name: Validate source, version, and application identity
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/tags/v* ]]
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --force --tags origin
           git fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+
+          build_file="android/app/build.gradle.kts"
+          version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
+          version_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' "$build_file" | head -1)"
+          namespace="$(sed -n 's/^[[:space:]]*namespace = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
+          application_id="$(sed -n 's/^[[:space:]]*applicationId = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
+
+          test -n "$version_name"
+          [[ "$version_code" =~ ^[0-9]+$ ]]
+          (( version_code > 0 ))
+          test "$namespace" = "com.sl.kenato"
+          test "$application_id" = "com.sl.kenato"
+          test "$RELEASE_TAG" = "v$version_name"
+
+          max_previous_code=0
+          max_previous_tag=""
+          while IFS= read -r tag; do
+            [[ "$tag" == "$RELEASE_TAG" ]] && continue
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || continue
+            previous_file="$(git show "${tag}:android/app/build.gradle.kts" 2>/dev/null || true)"
+            [[ -n "$previous_file" ]] || continue
+            previous_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' <<< "$previous_file" | head -1)"
+            [[ "$previous_code" =~ ^[0-9]+$ ]] || continue
+            if (( previous_code > max_previous_code )); then
+              max_previous_code="$previous_code"
+              max_previous_tag="$tag"
+            fi
+          done < <(git tag --list 'v*')
+
+          if (( version_code <= max_previous_code )); then
+            echo "versionCode $version_code must be greater than $max_previous_code from $max_previous_tag." >&2
+            exit 1
+          fi
+
+      - name: Require successful main verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")
+
+          for attempt in $(seq 1 40); do
+            runs="$(gh api               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2026-03-10"               "/repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100")"
+            pending=0
+
+            for workflow in "${required_workflows[@]}"; do
+              record="$(jq -c --arg name "$workflow"                 '[.workflow_runs[] | select(.name == $name and .event == "push" and .head_branch == "main")] | sort_by(.created_at) | last // empty'                 <<< "$runs")"
+
+              if [[ -z "$record" ]]; then
+                echo "$workflow: waiting for a main push run"
+                pending=1
+                continue
+              fi
+
+              status="$(jq -r '.status' <<< "$record")"
+              conclusion="$(jq -r '.conclusion // ""' <<< "$record")"
+              run_url="$(jq -r '.html_url' <<< "$record")"
+
+              if [[ "$status" != "completed" ]]; then
+                echo "$workflow: $status ($run_url)"
+                pending=1
+              elif [[ "$conclusion" != "success" ]]; then
+                echo "$workflow failed with conclusion '$conclusion': $run_url" >&2
+                exit 1
+              else
+                echo "$workflow: success ($run_url)"
+              fi
+            done
+
+            if (( pending == 0 )); then
+              exit 0
+            fi
+
+            if (( attempt < 40 )); then
+              sleep 15
+            fi
+          done
+
+          echo "Timed out waiting for required main verification workflows." >&2
+          exit 1
+
+  build-sign:
+    name: Test, build, sign, and attest
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Verify Gradle Wrapper JAR
         run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
@@ -46,6 +152,9 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
@@ -57,62 +166,97 @@ jobs:
           "platforms;android-37.0"
           "build-tools;37.0.0"
 
-      - name: Validate signing secrets
+      - name: Restore and validate release keystore
         env:
-          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_CERT_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
         run: |
-          test -n "$KEYSTORE"
-          test -n "$STORE_PASSWORD"
-          test -n "$KEY_ALIAS"
-          test -n "$KEY_PASSWORD"
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          test -n "$ANDROID_CERT_SHA256"
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kenato-release.jks"
+          test -s "$RUNNER_TEMP/kenato-release.jks"
+          keytool -list             -keystore "$RUNNER_TEMP/kenato-release.jks"             -storepass "$ANDROID_KEYSTORE_PASSWORD"             -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          echo "KENATO_KEYSTORE_PATH=$RUNNER_TEMP/kenato-release.jks" >> "$GITHUB_ENV"
 
-      - name: Decode release keystore
-        env:
-          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          KEYSTORE_PATH="$RUNNER_TEMP/kenato-release.jks"
-          printf '%s' "$KEYSTORE" | base64 --decode > "$KEYSTORE_PATH"
-          chmod 600 "$KEYSTORE_PATH"
-          echo "KENATO_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+      - name: Test and lint release source
+        run: ./gradlew :android:app:testDebugUnitTest :android:app:lintRelease --stacktrace
 
-      - name: Build signed release
+      - name: Build signed APK and AAB
         env:
           KENATO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KENATO_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KENATO_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: >
-          ./gradlew --no-daemon --stacktrace
-          :android:app:lintRelease
-          :android:app:testReleaseUnitTest
-          :android:app:assembleRelease
-          :android:app:bundleRelease
+        run: ./gradlew :android:app:assembleRelease :android:app:bundleRelease --stacktrace
 
-      - name: Verify signatures
+      - name: Verify signatures and package release
+        id: package
+        env:
+          EXPECTED_CERT_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
+          LC_ALL: C.UTF-8
         run: |
-          APK="$(find android/app/build/outputs/apk/release -name '*.apk' -type f -print -quit)"
-          AAB="$(find android/app/build/outputs/bundle/release -name '*.aab' -type f -print -quit)"
-          test -n "$APK"
-          test -n "$AAB"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
-          jarsigner -verify -strict "$AAB"
+          set -euo pipefail
+          source_apk="android/app/build/outputs/apk/release/app-release.apk"
+          source_aab="android/app/build/outputs/bundle/release/app-release.aab"
+          test -s "$source_apk"
+          test -s "$source_aab"
 
-      - name: Create checksums
-        run: |
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+
+          apk_report="$RUNNER_TEMP/apksigner-report.txt"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$source_apk" | tee "$apk_report"
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' "$apk_report"
+          grep -F 'Number of signers: 1' "$apk_report"
+          apk_fingerprint="$(awk -F': ' '/certificate SHA-256 digest:/ {print $NF; exit}' "$apk_report" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test "$apk_fingerprint" = "$expected"
+
+          jarsigner -verify -strict "$source_aab" | tee "$RUNNER_TEMP/jarsigner-report.txt"
+          grep -F 'jar verified.' "$RUNNER_TEMP/jarsigner-report.txt"
+          aab_fingerprint="$(keytool -printcert -jarfile "$source_aab" | awk -F': ' '/SHA256:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test "$aab_fingerprint" = "$expected"
+
           mkdir -p release
-          cp android/app/build/outputs/apk/release/*.apk release/
-          cp android/app/build/outputs/bundle/release/*.aab release/
+          version="${RELEASE_TAG#v}"
+          apk_path="release/Kenato-$version.apk"
+          aab_path="release/Kenato-$version.aab"
+          checksum_path="release/Kenato-$version.sha256"
+          cp "$source_apk" "$apk_path"
+          cp "$source_aab" "$aab_path"
           (
             cd release
-            sha256sum *.apk *.aab > SHA256SUMS
+            sha256sum "Kenato-$version.apk" "Kenato-$version.aab" > "Kenato-$version.sha256"
+            sha256sum --check "Kenato-$version.sha256"
           )
+          echo "apk_path=$apk_path" >> "$GITHUB_OUTPUT"
+          echo "aab_path=$aab_path" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$checksum_path" >> "$GITHUB_OUTPUT"
 
-      - name: Upload signed artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - name: Attest release APK and AAB
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          name: kenato-android-${{ github.ref_name }}
-          path: release/
+          subject-path: |
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.aab_path }}
+
+      - name: Upload signed package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kenato-${{ env.RELEASE_TAG }}-signed
+          path: |
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.aab_path }}
+            ${{ steps.package.outputs.checksum_path }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/kenato-release.jks"
