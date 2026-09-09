@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 errors: list[str] = []
@@ -15,6 +16,7 @@ go_mod = Path("server/go.mod").read_text(encoding="utf-8")
 
 required_manifest = {
     'android:allowBackup="false"': "Android backups must be explicitly disabled",
+    'android:dataExtractionRules="@xml/data_extraction_rules"': "Android 12+ backup and device-transfer rules must be explicit",
     'android:usesCleartextTraffic="false"': "cleartext network traffic must be explicitly disabled",
 }
 for needle, message in required_manifest.items():
@@ -23,6 +25,38 @@ for needle, message in required_manifest.items():
 
 if 'android:debuggable="true"' in manifest:
     errors.append("AndroidManifest.xml: debuggable=true is forbidden")
+
+backup_rules_path = Path("android/app/src/main/res/xml/data_extraction_rules.xml")
+if not backup_rules_path.is_file():
+    errors.append("Android: data_extraction_rules.xml is required")
+else:
+    try:
+        backup_rules = ET.parse(backup_rules_path).getroot()
+    except ET.ParseError as exc:
+        errors.append(f"Android: invalid data_extraction_rules.xml: {exc}")
+    else:
+        if backup_rules.tag != "data-extraction-rules":
+            errors.append("Android: backup rules root must be data-extraction-rules")
+
+        required_backup_domains = {"root", "file", "database", "sharedpref", "external"}
+        for section_name in ("cloud-backup", "device-transfer"):
+            section = backup_rules.find(section_name)
+            if section is None:
+                errors.append(f"Android: missing {section_name} backup rules")
+                continue
+            if section.findall("include"):
+                errors.append(f"Android: {section_name} must not include app data")
+            excluded_domains = {
+                item.get("domain")
+                for item in section.findall("exclude")
+                if item.get("path") == "."
+            }
+            missing_domains = required_backup_domains - excluded_domains
+            if missing_domains:
+                errors.append(
+                    f"Android: {section_name} does not exclude: "
+                    + ", ".join(sorted(missing_domains))
+                )
 
 for field in ("namespace", "applicationId"):
     match = re.search(rf'^\s*{field}\s*=\s*"([^"]+)"', build, re.MULTILINE)
