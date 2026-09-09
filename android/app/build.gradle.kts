@@ -1,3 +1,8 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
 val releaseKeystorePath = providers.environmentVariable("KENATO_KEYSTORE_PATH").orNull
 val releaseStorePassword = providers.environmentVariable("KENATO_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("KENATO_KEY_ALIAS").orNull
@@ -9,11 +14,6 @@ val hasReleaseSigning = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
-
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
-}
 
 android {
     namespace = "app.kenato"
