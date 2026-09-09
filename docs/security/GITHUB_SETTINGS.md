@@ -1,85 +1,136 @@
 # GitHub Security Settings
 
-These repository settings require repository-owner administration and are part of the M0 security baseline.
+These repository-owner settings are part of the M0 security baseline and must be verified from the live repository before M0 closes.
 
-## Dependency graph
+## Dependency and secret security
 
-Required for the Dependency Review workflow.
+Enable all available repository protections for this public repository:
 
-Enable:
-
-`Settings → Security → Advanced Security → Dependency graph`
-
-The PR gate intentionally fails while the dependency graph is disabled.
-
-## Dependabot
-
-Enable where available:
-
+- Dependency graph;
 - Dependabot alerts;
-- Dependabot security updates.
+- Dependabot security updates;
+- secret scanning;
+- push protection;
+- Private Vulnerability Reporting.
 
-Version update configuration is committed in `.github/dependabot.yml`.
+Dependency Review, Dependabot version updates, Gitleaks, Semgrep, govulncheck, and CodeQL remain defense-in-depth even when GitHub-native protections are enabled.
 
-## Secret scanning
+## Default branch ruleset
 
-A pinned Gitleaks workflow scans pull requests, main-branch pushes, and a weekly schedule with a read-only token.
+Create one active branch ruleset named `Protect main` for:
 
-Also enable all repository-level secret-scanning protections GitHub offers for this public repository, including push protection when available.
+`~DEFAULT_BRANCH`
 
-The CI scan is defense in depth; it is not a substitute for repository-level push protection.
+Required rules:
 
-## Private vulnerability reporting
+- deletion: blocked;
+- non-fast-forward/force push: blocked;
+- linear history: required;
+- pull request: required;
+- approving review count: 0 for the current single-maintainer model;
+- conversation resolution: required;
+- allowed merge method: squash only;
+- required signatures: enabled;
+- bypass actors: none;
+- strict required status checks: enabled.
 
-Enable GitHub private vulnerability reporting so `SECURITY.md` can direct reporters away from public issues.
+After the hardening PR has produced these exact successful check contexts, require:
 
-## Main branch rules
+- `Android`;
+- `Go`;
+- `Protocol syntax`;
+- `Semgrep`;
+- `Gitleaks`;
+- `Dependency Review`;
+- `Analyze (go)`;
+- `Analyze (actions)`.
 
-After the M0 checks have stable names, protect `main` with a branch ruleset.
+Do not add Qodana as a required merge gate: it is intentionally scheduled/manual defense-in-depth so an external tooling failure cannot deadlock a single-maintainer repository.
 
-Required intent:
+Required signatures are compatible with the current workflow: squash merges created by GitHub are verified, and release automation does not write to `main`.
 
-- changes reach `main` through pull requests;
-- required CI/security checks must pass;
-- force pushes are blocked;
-- branch deletion is blocked;
-- conversations/reviews are resolved where applicable;
-- administrators should not casually bypass security gates.
+## Release tag ruleset
 
-Do not require a check until it has successfully run on `main`/a PR and its final check name is known.
+Create one active tag ruleset named `Protect release tags` for:
+
+`refs/tags/v*`
+
+Required rules:
+
+- update existing tag: blocked;
+- deletion: blocked;
+- bypass actors: none.
+
+Initial tag creation remains allowed. The release workflow separately validates tag syntax, version/application identity, `main` ancestry, successful `main` verification, signing identity, and artifact provenance.
+
+## Code scanning ruleset
+
+Create one active branch ruleset named `Require CodeQL` for:
+
+`~DEFAULT_BRANCH`
+
+Add Code Scanning enforcement:
+
+- tool: CodeQL;
+- security alerts threshold: `medium_or_higher`;
+- alert/error threshold: `errors`;
+- bypass actors: none.
+
+Kenato currently runs CodeQL for Go and GitHub Actions. Kotlin 2.4.20 remains outside the deployed CodeQL Kotlin support ceiling documented in `docs/development/TOOLCHAIN.md`; Semgrep is therefore the required complementary SAST gate and Qodana provides scheduled JVM/Kotlin analysis.
+
+## Repository merge settings
+
+Use repository merge settings consistent with the ruleset:
+
+- allow squash merge: enabled;
+- allow merge commits: disabled;
+- allow rebase merge: disabled;
+- automatically delete head branches after merge: enabled;
+- branch update support may remain enabled if useful.
+
+Do not require a human approval count merely to increase a security score in a single-maintainer repository.
 
 ## Actions
 
-Keep default workflow permissions read-only unless a workflow explicitly needs a narrower write permission.
+Set default workflow permissions to read-only repository contents.
 
-Production secrets must never be exposed to ordinary pull-request workflows.
+Do not allow ordinary Actions workflows to create/approve pull requests unless a future reviewed automation explicitly requires it.
+
+Committed workflow policy additionally requires:
+
+- full-SHA pins for every non-local Action;
+- digest pins for critical containers;
+- `persist-credentials: false` on checkouts;
+- least-privilege job permissions;
+- no `pull_request_target`;
+- no inherited reusable-workflow secrets.
 
 ## Release environment
 
-Create a protected environment named `release` before the first signed artifact run.
+Create a GitHub Actions environment named:
 
-Required environment secrets are documented in `docs/release/ANDROID_SIGNING.md`.
+`release`
 
-Consider requiring manual approval for the release environment before public production releases.
+Store only the production signing trust material documented in `docs/release/ANDROID_SIGNING.md`.
 
-## Verification
+If a second trusted reviewer exists, an environment approval can be useful. Do not enable a self-review-preventing approval policy that makes releases impossible for the current single-maintainer model.
 
-Before closing M0, verify and record the actual repository settings rather than assuming GitHub defaults.
+## Verification record
 
-### M0 verification record — 2026-09-09
+### Verified on 2026-09-09 before this hardening change
 
-Verified from repository behavior/API:
+- Dependency Review is operational.
+- Dependabot version updates are operational.
+- Current `main` commits produced through GitHub squash merge are cryptographically verified.
+- No release tags or GitHub Releases exist yet.
+- Repository rulesets are absent (`rulesets = []`), so `main`, CodeQL enforcement, and `v*` tags are not yet protected.
+- The current connector cannot read or mutate the owner-only repository settings listed above.
 
-- Dependency Review is operational and passes on pull requests, which confirms the dependency graph required by that gate is available.
-- Dependabot version updates are operational; its initial Gradle and GitHub Actions update pull requests were created and verified.
-- Repository rulesets are currently absent (`rulesets = []`). The required `main` protection ruleset is therefore an open M0 blocker.
+### M0 close condition
 
-Requires repository-owner verification in the GitHub UI because the current GitHub connector cannot read or change these administration settings:
+Do not close M0 until:
 
-- Dependabot alerts and security updates;
-- secret scanning and push protection;
-- private vulnerability reporting;
-- default Actions workflow permissions;
-- the protected `release` environment and its approval policy.
-
-Do not close M0 until the required owner-controlled security settings are verified and the `main` ruleset blocker is resolved.
+1. this hardening change is merged and all new check names above are proven green;
+2. the three rulesets are active and re-read from the repository API;
+3. owner-only secret-scanning/Dependabot/PVR/Actions/environment settings are verified;
+4. final repository-wide CI/security verification is green.
