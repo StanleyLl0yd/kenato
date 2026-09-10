@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package kenato.v1;
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
+
+// PublicSignedPreKey is M1 public signed-prekey material.
+message PublicSignedPreKey {
+  uint32 id = 1;
+  bytes public_key = 2;
+  bytes signature = 3;
+  int64 created_at_unix_seconds = 4;
+}
+
+// PublicOneTimePreKey is public one-time prekey material. M2 publishes it but
+// does not define claim/consumption semantics; those belong to M3.
+message PublicOneTimePreKey {
+  uint32 id = 1;
+  bytes public_key = 2;
+  int64 created_at_unix_seconds = 3;
+}
+
+// PublicIdentityBundle contains only server-publishable identity material.
+// publication_signature authenticates the canonical M2 publication payload,
+// including publication_revision and the complete ordered prekey set.
+message PublicIdentityBundle {
+  bytes identity_id = 1;
+  bytes identity_public_key = 2;
+  uint64 publication_revision = 3;
+  PublicSignedPreKey signed_prekey = 4;
+  repeated PublicOneTimePreKey one_time_prekeys = 5;
+  bytes publication_signature = 6;
+}
+
+message PublishIdentityRequest {
+  uint32 protocol_version = 1;
+  PublicIdentityBundle bundle = 2;
+}
+
+message PublishIdentityResponse {
+  uint32 protocol_version = 1;
+  uint64 accepted_revision = 2;
+}
+
+// InviteDescriptor is represented in QR/deep links as documented in
+// protocol/README.md. invite_signature binds the token to creator_identity_id.
+message InviteDescriptor {
+  bytes creator_identity_id = 1;
+  bytes invite_token = 2;
+  bytes invite_signature = 3;
+}
+
+message CreateInviteRequest {
+  uint32 protocol_version = 1;
+  InviteDescriptor invite = 2;
+}
+
+message CreateInviteResponse {
+  uint32 protocol_version = 1;
+  int64 expires_at_unix_seconds = 2;
+}
+
+// redemption_signature proves that redeemer_identity_id intentionally
+// redeemed this exact creator/token pair.
+message RedeemInviteRequest {
+  uint32 protocol_version = 1;
+  InviteDescriptor invite = 2;
+  PublicIdentityBundle redeemer_bundle = 3;
+  bytes redemption_signature = 4;
+}
+
+message RedeemInviteResponse {
+  uint32 protocol_version = 1;
+  PublicIdentityBundle creator_bundle = 2;
+  int64 redeemed_at_unix_seconds = 3;
+}
+
+// Claim is available only to the creator that still possesses the invite
+// token and can sign the canonical claim payload.
+message ClaimInviteRequest {
+  uint32 protocol_version = 1;
+  bytes creator_identity_id = 2;
+  bytes invite_token = 3;
+  bytes claim_signature = 4;
+}
+
+message ClaimInviteResponse {
+  uint32 protocol_version = 1;
+  PublicIdentityBundle redeemer_bundle = 2;
+  bytes redemption_signature = 3;
+  int64 redeemed_at_unix_seconds = 4;
+}
