@@ -13,9 +13,12 @@ internal object IdentityPrimitives {
     const val MAX_SIGNATURE_BYTES = 2_048
 
     private val base64UrlEncoder = Base64.getUrlEncoder().withoutPadding()
+    private val base64UrlDecoder = Base64.getUrlDecoder()
     private val signedPreKeyDomain = "KENATO-SIGNED-PREKEY-V1\u0000".toByteArray(StandardCharsets.UTF_8)
 
     fun base64Url(bytes: ByteArray): String = base64UrlEncoder.encodeToString(bytes)
+
+    fun decodeBase64Url(value: String): ByteArray = base64UrlDecoder.decode(value)
 
     fun identityId(identityPublicKey: ByteArray): String {
         require(identityPublicKey.isNotEmpty()) { "Identity public key must not be empty" }
