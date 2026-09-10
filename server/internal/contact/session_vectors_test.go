@@ -29,6 +29,22 @@ func TestSessionCanonicalPayloadVectors(t *testing.T) {
 	}
 	assertHex(t, reserve, "4b454e41544f2d53455353494f4e2d524553455256452d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f")
 
+	submit, err := SessionSubmitPayload(SubmitSessionInitRequest{
+		ProtocolVersion:           SessionProtocolVersion,
+		CreatorIdentityID:         creator,
+		RedeemerIdentityID:        redeemer,
+		InviteToken:               token,
+		CreatorAccountGeneration:  2,
+		CreatorOneTimePreKeyID:    7,
+		RedeemerAccountGeneration: 4,
+		OlmMessageType:            OlmMessageTypePreKey,
+		OlmMessage:                []byte("opaque-pre-key-frame"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHex(t, submit, "4b454e41544f2d53455353494f4e2d494e49542d5355424d49542d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f00000000000000020000000000000007000000000000000400000000cfaac14d99379ff5a9887f3342cca9eaaa70803f570bf7e8913aef9b0403e9e4")
+
 	claim, err := SessionClaimPayload(creator, token)
 	if err != nil {
 		t.Fatal(err)
