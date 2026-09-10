@@ -36,7 +36,9 @@ docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-**M0 — Foundation** and **M1 — Local Identity** are complete. **M2 — Invite + Contact Establishment** is in progress. M3 and later milestones have not started.
+**M0 — Foundation**, **M1 — Local Identity**, and **M2 — Invite + Contact Establishment** are complete. **M3 — E2EE Session** has not started.
+
+M2 provides authenticated public identity/prekey publication, single-use expiring invite establishment, strict canonical invite links/QR payloads, and fail-closed local contact identity pinning. It deliberately does not implement session-key derivation, Double Ratchet state, encrypted messaging, mailbox behavior, or calling.
 
 ## Security
 

@@ -215,10 +215,11 @@ func writeContactError(w http.ResponseWriter, err error) {
 		errors.Is(err, contact.ErrInvalidBundle),
 		errors.Is(err, contact.ErrInvalidInvite),
 		errors.Is(err, contact.ErrUnsupportedVersion),
-		errors.Is(err, contact.ErrSelfInvite):
+		errors.Is(err, contact.ErrSelfInvite),
+		errors.Is(err, contact.ErrIdentityNotFound):
 		status = http.StatusBadRequest
 		message = "invalid contact request"
-	case errors.Is(err, contact.ErrIdentityNotFound), errors.Is(err, contact.ErrInviteNotFound):
+	case errors.Is(err, contact.ErrInviteNotFound):
 		status = http.StatusNotFound
 		message = "contact resource not found"
 	case errors.Is(err, contact.ErrInviteExpired):

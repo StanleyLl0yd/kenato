@@ -170,6 +170,9 @@ internal object ContactCrypto {
     fun verifyInvite(invite: M2InviteDescriptor, creatorPublicKey: ByteArray) {
         validateInviteShape(invite)
         val key = canonicalP256PublicKey(creatorPublicKey)
+        if (!MessageDigest.isEqual(identityId(creatorPublicKey), invite.creatorIdentityId)) {
+            throw ContactProtocolException("Invite creator identity id does not match its public key")
+        }
         if (!verifySignature(
                 key,
                 ContactCanonical.invitePayload(invite.creatorIdentityId, invite.token),

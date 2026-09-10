@@ -55,6 +55,10 @@ class ContactWireTest {
     @Test
     fun responseRejectsMalformedTagsTruncationOverflowAndOversize() {
         val invalidFieldZero = byteArrayOf(0)
+        val invalidFieldAboveProtobufMaximum = TestProto().apply {
+            rawTag(536_870_912, 0)
+            rawVarint(1)
+        }.bytes()
         val truncatedVarint = byteArrayOf(0x08, 0x80.toByte())
         val overflowingVarint = byteArrayOf(
             0x08,
@@ -63,7 +67,13 @@ class ContactWireTest {
         )
         val oversized = ByteArray(MAX_CONTACT_WIRE_BYTES + 1)
 
-        listOf(invalidFieldZero, truncatedVarint, overflowingVarint, oversized).forEach { value ->
+        listOf(
+            invalidFieldZero,
+            invalidFieldAboveProtobufMaximum,
+            truncatedVarint,
+            overflowingVarint,
+            oversized,
+        ).forEach { value ->
             assertThrows(ContactProtocolException::class.java) {
                 ContactWire.decodePublishIdentityResponse(value)
             }

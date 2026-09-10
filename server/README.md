@@ -1,6 +1,6 @@
 # Kenato Server
 
-Kenato's backend is a deliberately small Go service. M2 adds authenticated identity publication and invite/contact establishment while keeping the listener private by default and keeping all M3 session/ratchet behavior out of scope.
+Kenato's backend is a deliberately small Go service. M2 provides authenticated identity publication and invite/contact establishment while keeping the listener private by default and keeping all M3 session/ratchet behavior out of scope.
 
 ## Current surface
 
@@ -16,15 +16,21 @@ Kenato's backend is a deliberately small Go service. M2 adds authenticated ident
 - SQLite/WAL persistence for public identity bundles and temporary invite lifecycle state;
 - single-use 32-byte invite tokens with 24-hour expiry, stored only as SHA-256 hashes at rest;
 - monotonic publication revisions with exact-replay idempotency;
-- bounded identity/invite counts and a coarse pre-crypto concurrency/rate gate.
+- bounded identity/invite counts and a coarse process-wide pre-crypto concurrency/rate gate;
+- expired-invite cleanup at startup and every hour in addition to operation-triggered expiry cleanup;
+- generic public handling for missing creator identity so the API does not expose a dedicated identity-existence response.
 
 The server binds to `127.0.0.1:8080` by default. `KENATO_LISTEN_ADDR` may override the listener only for a reviewed deployment boundary. Public deployment is expected to terminate TLS in front of the loopback service; M2 development does not itself open public OCI HTTP/HTTPS ingress.
 
 `KENATO_DB_PATH` selects the SQLite database. The default is `kenato.db` in the process working directory. Deployment should use a dedicated service-owned state directory. The main database is required to be a regular file and is restricted to mode `0600`; SQLite runs in WAL mode with foreign keys enabled and synchronous durability set to FULL.
 
+The built-in M2 rate gate is intentionally process-wide. Source-aware or distributed edge limits should be implemented only together with the reviewed reverse-proxy/TLS deployment boundary rather than by trusting arbitrary forwarded-address headers in the loopback service.
+
 ## Privacy boundary
 
 The M2 server persists only public identity/prekey material, monotonic publication metadata, SHA-256 invite-token hashes, invite timestamps/state, and temporary redemption relationship/proof data. Raw invite tokens exist only transiently while bounded requests are processed.
+
+Successful creator claim deletes the temporary invite relationship row immediately. Unclaimed expired rows are removed during relevant invite operations and by explicit startup/hourly retention cleanup. The creator claim is therefore intentionally one-shot: if a successful response is lost after the server commits, the result is not replayed from a retained relationship cache and a fresh invite is required.
 
 The server must never receive or store private identity/prekey keys, plaintext user messages, call signaling plaintext, voice content, contact display names, address-book data, or M3 session keys.
 

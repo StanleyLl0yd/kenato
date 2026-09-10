@@ -32,6 +32,8 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
+Only the identity/invite portion of that diagram is implemented through M2. Session cryptography, WebSocket routing, offline messaging, TURN credentials and calling remain later milestones.
+
 ## Client
 
 Planned Android stack:
@@ -45,7 +47,7 @@ Planned Android stack:
 - Opus
 - WSS transport
 
-Client architecture should keep UI separate from call/media/session state. In particular, UI must not directly own or manipulate WebRTC `PeerConnection` objects.
+Client architecture keeps UI separate from call/media/session state. In particular, UI must not directly own or manipulate WebRTC `PeerConnection` objects.
 
 Suggested boundaries:
 
@@ -65,6 +67,8 @@ Infrastructure
    |- Persistence
 ```
 
+M1 implements the device-local identity boundary. M2 adds the Android contact-establishment boundary: canonical invite URI/QR payload handling, authenticated identity publication, invite create/redeem/claim transport, persistent pending-invite state and fail-closed peer identity pins. Private identity and prekey keys remain inside the M1 local security boundary.
+
 ## Server
 
 Current server:
@@ -74,6 +78,7 @@ Current server:
 - bounded HTTP/Protocol Buffers M2 identity/invite API;
 - authenticated public identity and prekey publication;
 - single-use expiring invite lifecycle with token hashes at rest;
+- periodic expired-invite retention cleanup plus cleanup at process start;
 - no public identity lookup/search endpoint;
 - loopback listener by default;
 - intended systemd deployment behind a reviewed TLS-terminating reverse proxy.
@@ -101,7 +106,7 @@ Transport-level metadata must contain only fields required for routing and proto
 
 ## Messaging
 
-The server acts as a bounded store-and-forward relay.
+The server acts as a bounded store-and-forward relay in the planned messaging architecture.
 
 When a recipient is online, encrypted payloads should be forwarded directly without durable mailbox storage.
 
@@ -112,7 +117,7 @@ When offline, opaque payloads may be stored with strict limits and expiry. Initi
 - maximum queued messages per recipient: 500;
 - delete immediately after acknowledged delivery.
 
-These values are design targets and must be validated by implementation and load testing.
+These values are design targets for later milestones and are not M2 implementation claims.
 
 ## Calling
 
@@ -146,6 +151,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M1 is complete. M2 is in progress: the protocol contract is accepted and the bounded server identity/invite backend is being implemented. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0, M1 and M2 are complete. M3 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.
