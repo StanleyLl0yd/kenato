@@ -88,7 +88,8 @@ internal class ContactLocalState(
         }
         requireOwner(invite.creatorIdentityId)
         validateInviteShape(M2InviteDescriptor(invite.creatorIdentityId, invite.token, invite.signature))
-        val state = pruneExpired(load(invite.creatorIdentityId), nowEpochSeconds)
+        val loaded = load(invite.creatorIdentityId)
+        val state = pruneExpired(loaded, nowEpochSeconds)
         val existing = state.pendingInvites.firstOrNull { it.token.contentEquals(invite.token) }
         if (existing != null) {
             if (
@@ -98,7 +99,7 @@ internal class ContactLocalState(
             ) {
                 throw ContactStateException("Pending invite token conflicts with existing state")
             }
-            if (state !== load(invite.creatorIdentityId)) {
+            if (state.pendingInvites.size != loaded.pendingInvites.size) {
                 persist(state)
             }
             return
