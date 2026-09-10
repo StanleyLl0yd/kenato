@@ -146,3 +146,4 @@ jobs:
           --descriptor_set_out=/tmp/kenato.pb
           protocol/kenato/v1/envelope.proto
           protocol/kenato/v1/contact.proto
+          protocol/kenato/v1/session.proto
