@@ -1,6 +1,6 @@
 # Development Toolchain
 
-M0 foundation baseline (current after M0 close):
+Current post-M1 baseline:
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.7.1
@@ -19,13 +19,14 @@ The committed Gradle Wrapper is the authoritative Gradle entry point for local a
 
 Release signing material must never be committed. The tag-triggered signed-release pipeline is committed and gated; production signing secrets and certificate trust material must be provisioned only in the protected `release` environment before the first production-signed release.
 
-
 ## CodeQL compatibility
 
-As of 2026-09-09, current CodeQL documentation supports Kotlin through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
+Re-checked 2026-09-10: current CodeQL documentation supports Kotlin through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
 
 Kenato does not downgrade the application toolchain solely to satisfy a scanner version ceiling. Until CodeQL adds Kotlin 2.4.20 support:
 
 - CodeQL analyzes Go and GitHub Actions;
-- Android CI still performs Kotlin compilation, lint, debug build, unsigned release APK build, and unsigned release AAB build;
+- Semgrep remains the required complementary SAST gate for Kotlin source;
+- Qodana provides scheduled/manual Kotlin/JVM defense-in-depth analysis;
+- Android CI performs Kotlin compilation, lint, unit tests, debug build, unsigned release APK build, and unsigned release AAB build;
 - Kotlin CodeQL analysis is re-enabled when the deployed CodeQL extractor supports the project Kotlin version.
