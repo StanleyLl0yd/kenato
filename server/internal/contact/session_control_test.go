@@ -25,21 +25,21 @@ func TestSessionInitControlPayloadRejectsInvalidBindings(t *testing.T) {
 	token := bytes.Repeat([]byte{3}, InviteTokenBytes)
 
 	tests := map[string]struct {
-		creator    []byte
-		redeemer   []byte
-		token      []byte
-		creatorGen uint64
-		keyID      uint64
+		creator     []byte
+		redeemer    []byte
+		token       []byte
+		creatorGen  uint64
+		keyID       uint64
 		redeemerGen uint64
 	}{
-		"same identity":          {creator, creator, token, 1, 1, 1},
-		"short creator":          {creator[:len(creator)-1], redeemer, token, 1, 1, 1},
-		"short redeemer":         {creator, redeemer[:len(redeemer)-1], token, 1, 1, 1},
-		"short token":            {creator, redeemer, token[:len(token)-1], 1, 1, 1},
-		"zero creator generation": {creator, redeemer, token, 0, 1, 1},
-		"zero key id":            {creator, redeemer, token, 1, 0, 1},
+		"same identity":            {creator, creator, token, 1, 1, 1},
+		"short creator":            {creator[:len(creator)-1], redeemer, token, 1, 1, 1},
+		"short redeemer":           {creator, redeemer[:len(redeemer)-1], token, 1, 1, 1},
+		"short token":              {creator, redeemer, token[:len(token)-1], 1, 1, 1},
+		"zero creator generation":  {creator, redeemer, token, 0, 1, 1},
+		"zero key id":              {creator, redeemer, token, 1, 0, 1},
 		"zero redeemer generation": {creator, redeemer, token, 1, 1, 0},
-		"oversized generation":   {creator, redeemer, token, uint64(math.MaxInt64) + 1, 1, 1},
+		"oversized generation":     {creator, redeemer, token, uint64(math.MaxInt64) + 1, 1, 1},
 	}
 
 	for name, tc := range tests {
