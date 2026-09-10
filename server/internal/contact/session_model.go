@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	SessionProtocolVersion      uint32 = 1
-	OlmPublicKeyBytes                  = 32
-	MaxSessionOneTimePreKeys           = 50
-	TargetSessionOneTimePreKeys        = 32
-	MaxSessionCiphertextBytes          = 96 << 10
-	MaxStoredSessionBootstraps         = MaxStoredIdentities
+	SessionProtocolVersion       uint32 = 1
+	OlmPublicKeyBytes                   = 32
+	MaxSessionOneTimePreKeys            = 50
+	TargetSessionOneTimePreKeys         = 32
+	MaxSessionCiphertextBytes           = 96 << 10
+	MaxSessionWireMessageBytes          = 128 << 10
+	MaxStoredSessionBootstraps          = MaxStoredIdentities
 )
 
 const (
@@ -33,13 +34,13 @@ type SessionOneTimePreKey struct {
 }
 
 type SessionBootstrapBundle struct {
-	IdentityID              []byte
-	AccountGeneration       uint64
-	PublicationRevision     uint64
-	OlmEd25519IdentityKey   []byte
+	IdentityID               []byte
+	AccountGeneration        uint64
+	PublicationRevision      uint64
+	OlmEd25519IdentityKey    []byte
 	OlmCurve25519IdentityKey []byte
-	OneTimePreKeys          []SessionOneTimePreKey
-	BindingSignature        []byte
+	OneTimePreKeys           []SessionOneTimePreKey
+	BindingSignature         []byte
 }
 
 type SessionBootstrapPublicationRecord struct {
@@ -58,29 +59,29 @@ type PublishSessionBootstrapRequest struct {
 }
 
 type ReserveSessionBootstrapRequest struct {
-	ProtocolVersion   uint32
-	CreatorIdentityID []byte
+	ProtocolVersion    uint32
+	CreatorIdentityID  []byte
 	RedeemerIdentityID []byte
-	InviteToken       []byte
-	ReserveSignature  []byte
+	InviteToken        []byte
+	ReserveSignature   []byte
 }
 
 type ReserveSessionBootstrapResult struct {
-	CreatorBundle      SessionBootstrapBundle
-	CreatorOneTimeKey  SessionOneTimePreKey
+	CreatorBundle     SessionBootstrapBundle
+	CreatorOneTimeKey SessionOneTimePreKey
 }
 
 type SubmitSessionInitRequest struct {
-	ProtocolVersion          uint32
-	CreatorIdentityID        []byte
-	RedeemerIdentityID       []byte
-	InviteToken              []byte
-	CreatorAccountGeneration uint64
-	CreatorOneTimePreKeyID   uint64
+	ProtocolVersion           uint32
+	CreatorIdentityID         []byte
+	RedeemerIdentityID        []byte
+	InviteToken               []byte
+	CreatorAccountGeneration  uint64
+	CreatorOneTimePreKeyID    uint64
 	RedeemerAccountGeneration uint64
-	OlmMessageType           uint32
-	OlmMessage               []byte
-	SubmitSignature          []byte
+	OlmMessageType            uint32
+	OlmMessage                []byte
+	SubmitSignature           []byte
 }
 
 type ClaimSessionInitRequest struct {
@@ -101,10 +102,10 @@ type ClaimSessionInitResult struct {
 }
 
 type SessionReservationRecord struct {
-	TokenHash         [sha256.Size]byte
-	CreatorIdentityID []byte
+	TokenHash          [sha256.Size]byte
+	CreatorIdentityID  []byte
 	RedeemerIdentityID []byte
-	ReservedAt        int64
+	ReservedAt         int64
 }
 
 type StoredSessionReservation struct {
@@ -113,17 +114,17 @@ type StoredSessionReservation struct {
 }
 
 type SessionInitRecord struct {
-	TokenHash                 [sha256.Size]byte
-	CreatorIdentityID         []byte
-	RedeemerIdentityID        []byte
-	CreatorAccountGeneration  uint64
-	CreatorOneTimePreKeyID    uint64
-	RedeemerAccountGeneration uint64
-	OlmMessageType            uint32
-	OlmMessage                []byte
-	SubmitSignature           []byte
-	RedeemerSessionBundle     []byte
-	SubmittedAt               int64
+	TokenHash                  [sha256.Size]byte
+	CreatorIdentityID          []byte
+	RedeemerIdentityID         []byte
+	CreatorAccountGeneration   uint64
+	CreatorOneTimePreKeyID     uint64
+	RedeemerAccountGeneration  uint64
+	OlmMessageType             uint32
+	OlmMessage                 []byte
+	SubmitSignature            []byte
+	RedeemerSessionBundle      []byte
+	SubmittedAt                int64
 }
 
 type StoredSessionClaim struct {
