@@ -127,6 +127,12 @@ type SessionInitRecord struct {
 	SubmittedAt                int64
 }
 
+type SessionClaimRecord struct {
+	TokenHash         [sha256.Size]byte
+	CreatorIdentityID []byte
+	ClaimedAt         int64
+}
+
 type StoredSessionClaim struct {
 	RedeemerIdentityBundle []byte
 	RedemptionSignature    []byte
