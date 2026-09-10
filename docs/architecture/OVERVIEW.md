@@ -142,6 +142,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M1 is device-local and does not require deploying the backend. Public server exposure must wait for a reviewed deployment boundary.
+M1 is complete and remains device-local. M2 has not started, and public server exposure must still wait for an explicitly reviewed deployment boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.

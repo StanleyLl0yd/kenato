@@ -8,12 +8,18 @@ val releaseStorePassword = providers.environmentVariable("KENATO_KEYSTORE_PASSWO
 val releaseKeyAlias = providers.environmentVariable("KENATO_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("KENATO_KEY_PASSWORD").orNull
 
-val hasReleaseSigning = listOf(
+val releaseSigningValues = listOf(
     releaseKeystorePath,
     releaseStorePassword,
     releaseKeyAlias,
     releaseKeyPassword,
-).all { !it.isNullOrBlank() }
+)
+val hasAnyReleaseSigning = releaseSigningValues.any { !it.isNullOrBlank() }
+val hasReleaseSigning = releaseSigningValues.all { !it.isNullOrBlank() }
+
+check(!hasAnyReleaseSigning || hasReleaseSigning) {
+    "Release signing configuration is incomplete; set all four Kenato release-signing variables or none"
+}
 
 android {
     namespace = "com.sl.kenato"

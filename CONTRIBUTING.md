@@ -1,6 +1,6 @@
 # Contributing to Kenato
 
-Kenato is in pre-1.0 milestone-driven development. M0 Foundation is complete; later milestones remain scope-gated by `ROADMAP.md` and `AGENTS.md`.
+Kenato is in pre-1.0 milestone-driven development. M0 Foundation and M1 Local Identity are complete; M2 Invite + Contact Establishment is the next planned milestone and remains scope-gated by `ROADMAP.md` and `AGENTS.md`.
 
 ## Workflow
 

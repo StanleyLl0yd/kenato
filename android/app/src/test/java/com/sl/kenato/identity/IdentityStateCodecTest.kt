@@ -1,5 +1,6 @@
 package com.sl.kenato.identity
 
+import java.security.MessageDigest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -23,11 +24,33 @@ class IdentityStateCodecTest {
     }
 
     @Test
-    fun trailingSerializedDataIsRejected() {
-        val encoded = IdentityStateCodec.encode(state()) + byteArrayOf(1)
+    fun trailingSerializedDataIsRejectedEvenWithValidChecksum() {
+        val encoded = IdentityStateCodec.encode(state())
+        val payload = encoded.copyOfRange(0, encoded.size - SHA256_BYTES) + byteArrayOf(1)
+        val malformed = payload + MessageDigest.getInstance(SHA256).digest(payload)
 
         assertThrows(IdentityStateException::class.java) {
-            IdentityStateCodec.decode(encoded)
+            IdentityStateCodec.decode(malformed)
+        }
+    }
+
+    @Test
+    fun nonCanonicalBooleanIsRejectedEvenWithValidChecksum() {
+        val original = state()
+        val malformed = IdentityStateCodec.encode(original).withValidChecksumMutation { payload ->
+            val signaturePresenceOffset =
+                MAGIC_BYTES +
+                    Int.SIZE_BYTES +
+                    Int.SIZE_BYTES + original.identityPublicKey.size +
+                    Int.SIZE_BYTES +
+                    Long.SIZE_BYTES +
+                    Int.SIZE_BYTES + original.signedPreKey.publicKey.size +
+                    Int.SIZE_BYTES + original.signedPreKey.encryptedPrivateKey.size
+            payload[signaturePresenceOffset] = 2
+        }
+
+        assertThrows(IdentityStateException::class.java) {
+            IdentityStateCodec.decode(malformed)
         }
     }
 
@@ -36,7 +59,7 @@ class IdentityStateCodecTest {
         val original = state()
         val encoded = IdentityStateCodec.encode(original)
         val signedTimestampLastByte =
-            4 + Int.SIZE_BYTES + Int.SIZE_BYTES + original.identityPublicKey.size + Int.SIZE_BYTES + Long.SIZE_BYTES - 1
+            MAGIC_BYTES + Int.SIZE_BYTES + Int.SIZE_BYTES + original.identityPublicKey.size + Int.SIZE_BYTES + Long.SIZE_BYTES - 1
         encoded[signedTimestampLastByte] = (encoded[signedTimestampLastByte].toInt() xor 1).toByte()
 
         assertThrows(IdentityStateException::class.java) {
@@ -123,6 +146,18 @@ class IdentityStateCodecTest {
         signature = if (signed) byteArrayOf(id.toByte(), 3) else null,
     )
 
+    private fun ByteArray.withValidChecksumMutation(mutate: (ByteArray) -> Unit): ByteArray {
+        val payloadLength = size - SHA256_BYTES
+        val result = copyOf()
+        mutate(result)
+        val digest = MessageDigest.getInstance(SHA256).run {
+            update(result, 0, payloadLength)
+            digest()
+        }
+        digest.copyInto(result, destinationOffset = payloadLength)
+        return result
+    }
+
     private fun assertPreKeyEquals(expected: StoredPreKey, actual: StoredPreKey) {
         assertEquals(expected.id, actual.id)
         assertEquals(expected.createdAtEpochSeconds, actual.createdAtEpochSeconds)
@@ -133,5 +168,11 @@ class IdentityStateCodecTest {
         } else {
             assertArrayEquals(expected.signature, actual.signature)
         }
+    }
+
+    companion object {
+        private const val MAGIC_BYTES = 4
+        private const val SHA256 = "SHA-256"
+        private const val SHA256_BYTES = 32
     }
 }

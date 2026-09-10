@@ -56,6 +56,8 @@ export KENATO_KEY_PASSWORD='...'
 ./gradlew :android:app:assembleRelease :android:app:bundleRelease
 ```
 
+Gradle accepts either all four release-signing variables or none. A partial signing configuration fails during configuration rather than silently producing an unsigned release.
+
 Verify the resulting certificate identity independently before publication.
 
 Never add signing variables to committed shell scripts, Gradle files, `.env` files, or local properties tracked by Git.
