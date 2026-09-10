@@ -54,11 +54,12 @@ class IdentityPrimitivesTest {
         assertFalse(
             IdentityPrimitives.verifyP256Signature(
                 keyPair.public.encoded,
-                payload + 0x01,
+                payload + byteArrayOf(1),
                 signature,
             ),
         )
     }
 
-    private fun ByteArray.toHex(): String = joinToString(separator = "") { "%02x".format(it) }
+    private fun ByteArray.toHex(): String =
+        joinToString(separator = "") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 }
