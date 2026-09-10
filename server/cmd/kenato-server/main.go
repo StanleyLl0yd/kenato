@@ -45,9 +45,11 @@ func main() {
 		}
 	}()
 
+	contactService := contact.NewService(store)
+	sessionService := contact.NewSessionService(store, store)
 	server := &http.Server{
 		Addr:              listenAddress(),
-		Handler:           httpapi.NewHandler(contact.NewService(store)),
+		Handler:           httpapi.NewHandlerWithSession(contactService, sessionService),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
