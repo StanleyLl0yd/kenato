@@ -25,6 +25,7 @@ Kenato M1 uses the following local identity model:
 - the default one-time prekey pool is 32 and the persisted pool is hard-bounded at 100;
 - prekey ids are positive, monotonically increasing local integers and are never silently reused;
 - the complete local metadata/wrapped-prekey state is persisted as one versioned, bounded record with synchronous commit semantics;
+- the serialized record includes a SHA-256 corruption checksum so accidental bit-level corruption fails closed; this checksum is not treated as an authentication boundary, while secret/public-key bindings are protected by AES-GCM AAD and signed-prekey signatures;
 - state corruption, missing Keystore material, or a public-key/Keystore mismatch fails closed and never causes automatic identity regeneration;
 - destructive identity reset exists only as an explicit recovery primitive; product UI must require an explicit user decision before invoking it;
 - M1 does not publish any identity material to the server. Server publication, prekey distribution, and invite/session establishment belong to M2 or later milestones.
@@ -45,6 +46,7 @@ Benefits:
 - prekey private material is not persisted in plaintext;
 - supported Android 8+ devices share one auditable design;
 - state is bounded and failure behavior is explicit;
+- accidental persisted-record corruption is detected before state is accepted;
 - the design leaves network publication and protocol framing to M2 rather than prematurely coupling M1 to the server.
 
 Trade-offs:
