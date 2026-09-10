@@ -16,17 +16,25 @@ import (
 )
 
 const (
-	defaultListenAddress = "127.0.0.1:8080"
-	defaultDatabasePath  = "kenato.db"
+	defaultListenAddress  = "127.0.0.1:8080"
+	defaultDatabasePath   = "kenato.db"
+	inviteCleanupInterval = time.Hour
+	maintenanceTimeout    = 10 * time.Second
 )
 
 func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)
 
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
 	store, err := contact.OpenSQLiteStore(startupCtx, databasePath())
+	if err == nil {
+		_, err = store.PruneExpiredInvites(startupCtx, time.Now().UTC())
+	}
 	startupCancel()
 	if err != nil {
+		if store != nil {
+			_ = store.Close()
+		}
 		logger.Fatalf("contact store initialization failed")
 	}
 	defer func() {
@@ -55,17 +63,31 @@ func main() {
 	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
 
-	select {
-	case sig := <-signalCh:
-		logger.Printf("shutdown requested: %s", sig)
-	case err := <-errCh:
-		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatalf("server failed")
+	cleanupTicker := time.NewTicker(inviteCleanupInterval)
+	defer cleanupTicker.Stop()
+
+running:
+	for {
+		select {
+		case now := <-cleanupTicker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+			_, cleanupErr := store.PruneExpiredInvites(ctx, now.UTC())
+			cancel()
+			if cleanupErr != nil {
+				logger.Printf("contact retention cleanup failed")
+			}
+		case sig := <-signalCh:
+			logger.Printf("shutdown requested: %s", sig)
+			break running
+		case err := <-errCh:
+			if !errors.Is(err, http.ErrServerClosed) {
+				logger.Printf("server failed")
+			}
+			return
 		}
-		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
