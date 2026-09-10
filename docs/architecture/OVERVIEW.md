@@ -138,6 +138,10 @@ See the threat model for detail. Architecture changes must preserve:
 
 ## Deployment
 
-Initial deployment target is a small Linux VPS or free-tier cloud instance. Raspberry Pi remains a valid self-hosted deployment target, so backend resource usage should remain modest and dependencies minimal.
+The current non-production development host is an Oracle Cloud Infrastructure Ampere A1 ARM64 instance in Germany Central (Frankfurt), documented in `docs/development/OCI_HOST.md`.
+
+The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
+
+M1 is device-local and does not require deploying the backend. Public server exposure must wait for a reviewed deployment boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.
