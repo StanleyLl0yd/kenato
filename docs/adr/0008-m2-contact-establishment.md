@@ -24,14 +24,19 @@ M2 uses a narrow HTTPS API and an explicitly versioned `kenato.v1` Protocol Buff
 - redemption atomically changes an unexpired invite from unused to redeemed and returns the creator's authenticated current public identity bundle;
 - the redeemer signs the creator identity id, its own identity id, and the invite token. The server retains that bounded redemption proof only until the creator claims the completed invite or the invite record expires;
 - the creator claims a completed invite only by presenting the token and a valid creator identity signature over the canonical claim payload; the response contains the redeemer's authenticated public bundle and redemption proof;
+- successful creator claim deletes the invite relationship row in the same transaction used to retrieve the bounded claim result. Claim replay after success therefore returns not-found rather than retaining a server-side result cache;
+- expired invite rows are removed opportunistically during invite operations and by explicit retention cleanup at server startup and on an hourly schedule;
 - the redeemer verifies creator identity id derivation, creator bundle signatures, and the invite signature from the URI before pinning; the creator performs the analogous checks on the redeemer bundle and redemption proof before pinning;
 - server-visible M2 state contains public key material and invite lifecycle metadata only; no private keys, message plaintext, contact display names, address-book data, or M3 session keys are stored;
 - there is no public identity lookup or search endpoint. Creator public material is disclosed only to a requester holding an unexpired invite token; redeemer public material is disclosed only to the authenticated creator holding the same token;
+- a missing creator identity at the public HTTP boundary uses the same generic invalid-request category as malformed/unauthenticated contact input so the API does not provide a dedicated identity-existence oracle;
 - both clients pin the peer identity id and exact identity public key locally on first accepted contact establishment;
 - a later observation of the same identity id with different identity-public-key bytes, or an attempt to replace an existing local contact binding with a different identity id, fails closed and is never auto-accepted;
 - M2 publishes public prekeys but intentionally does not define one-time-prekey claim/consumption, Diffie-Hellman session-key derivation, Double Ratchet state, encrypted messages, or mailbox behavior. Those belong to M3/M4.
 
-All fields, request bodies, retained prekey counts, invite attempts, and expensive signature verifications are explicitly bounded. Pre-authentication rate limits apply before expensive cryptographic verification where practical, followed by authenticated per-identity quotas. Server persistence uses SQLite in WAL mode as already established by the architecture baseline.
+All fields, request bodies, retained prekey counts, invite attempts, and expensive signature verifications are explicitly bounded. The M2 loopback service applies a process-wide bounded pre-crypto concurrency/rate gate before expensive verification, plus per-identity active-invite quotas and global retained-state caps. Source-aware/distributed rate limiting belongs to the reviewed public TLS/reverse-proxy deployment boundary and must not be implemented by trusting arbitrary forwarded-address headers.
+
+Server persistence uses SQLite in WAL mode as already established by the architecture baseline.
 
 ## Compatibility
 
@@ -43,19 +48,22 @@ Canonical signature payloads are defined independently of protobuf serialization
 
 Benefits:
 
-- invite-only discovery remains non-enumerable;
+- invite-only discovery remains non-enumerable through an explicit lookup/search API;
 - token-to-creator and redemption-to-redeemer bindings are end-to-end verifiable rather than relying solely on an honest server;
 - server compromise exposes public keys and temporary invite/social metadata but not private identity keys or user-content plaintext;
 - replay/downgrade of identity publications is bounded by monotonic revisions;
+- expired temporary invite metadata is actively retired even when no later invite operation happens;
 - M2 creates a durable contact-identity trust anchor without prematurely implementing M3 cryptographic session state.
 
 Trade-offs:
 
 - the server observes that two identity ids are temporarily related while an invite is redeemed and waiting to be claimed;
 - devices must retain an invite token until the creator has claimed the result or it expires;
+- successful claim deliberately removes the server-side relationship/result immediately, so a claim response lost before local commit is recovered by establishing a fresh invite rather than replaying a retained server result;
+- the in-process abuse gate is coarse and process-wide; deployment-edge/source-aware controls remain a separate reviewed operational boundary;
 - M2 introduces server persistence and signature-verification work that requires explicit abuse limits;
 - availability still depends on the server and TLS transport; a malicious server can deny service even though it cannot silently substitute another identity without signature/hash checks failing.
 
 ## Security review
 
-This ADR changes invite-handshake, authentication, public identity publication, server persistence, and local contact-pinning boundaries. `docs/security/THREAT_MODEL.md` is updated as M2 implementation lands, and the milestone is not complete until malformed/oversized/replay/duplicate/substitution cases and exact-head repository security gates pass.
+This ADR changes invite-handshake, authentication, public identity publication, server persistence, and local contact-pinning boundaries. `docs/security/THREAT_MODEL.md` reflects the completed M2 implementation. The milestone exit requires malformed/oversized/replay/duplicate/substitution coverage, exact-head repository security gates, squash merge, and exact-main verification before M3 begins.
