@@ -29,18 +29,22 @@ Exit: device-local identity is persistent, bounded, fail-closed on corruption/ke
 
 ## M2 — Invite + Contact Establishment
 
-Status: **In progress** (started 2026-09-10).
+Status: **Complete** (2026-09-10).
 
-- server identity public material/prekeys;
-- single-use expiring invites;
-- QR/deep-link flow;
-- authenticated initial session establishment;
-- local contact identity pinning;
-- abuse/resource limits.
+- bounded publication of authenticated public identity material and public prekeys;
+- single-use 32-byte invites with fixed 24-hour expiry and SHA-256 hash-at-rest storage;
+- canonical QR/deep-link invite representation and strict parsing;
+- authenticated creator/redeemer contact-establishment proofs;
+- local contact identity pinning with no silent replacement;
+- bounded Android transport/state behavior and server abuse/resource limits;
+- SQLite/WAL invite lifecycle persistence with explicit expired-record cleanup;
+- malformed, duplicate, replay, expiry, identity-substitution and persistence regression coverage.
 
 Exit: public identity/prekey publication and invite/contact establishment are authenticated, bounded, single-use/expiring, locally identity-pinned, persistence-safe, documented, and repository-wide verified without introducing the M3 ratchet/session protocol.
 
 ## M3 — E2EE Session
+
+Status: **Not started**.
 
 - reviewed asynchronous session establishment;
 - Double Ratchet or equivalent mature reviewed protocol implementation;
