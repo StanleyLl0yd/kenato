@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math"
+	"time"
 )
 
 type SessionStore interface {
@@ -26,7 +27,7 @@ func NewSessionService(identityStore Store, sessionStore SessionStore) *SessionS
 	return &SessionService{
 		identityStore: identityStore,
 		sessionStore:  sessionStore,
-		clock: func() int64 { return unixNow() },
+		clock:         func() int64 { return time.Now().UTC().Unix() },
 	}
 }
 
@@ -209,7 +210,7 @@ func (s *SessionService) ClaimSessionInit(ctx context.Context, request ClaimSess
 	if err := ValidateSessionBootstrapBundle(redeemerSession, redeemerIdentity.IdentityPublicKey); err != nil {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored redeemer session bootstrap is invalid: %w", err)
 	}
-	if stored.OlmMessageType != OlmMessageTypePreKey || len(stored.OlmMessage) == 0 || len(stored.OlmMessage) > MaxSessionCiphertextBytes {
+	if stored.CreatorOneTimeKey.ID == 0 || len(stored.CreatorOneTimeKey.PublicKey) != OlmPublicKeyBytes || stored.OlmMessageType != OlmMessageTypePreKey || len(stored.OlmMessage) == 0 || len(stored.OlmMessage) > MaxSessionCiphertextBytes {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored session initialization is invalid: %w", ErrInvalidSessionBootstrap)
 	}
 	return ClaimSessionInitResult{
@@ -243,18 +244,10 @@ func (s *SessionService) loadIdentity(ctx context.Context, identityID []byte) (P
 
 func (s *SessionService) nowUnix() (int64, error) {
 	now := s.clock()
-	if now < 0 || now > math.MaxInt64-int64(InviteLifetime.Seconds()) {
+	if now < 0 || now > math.MaxInt64-int64(InviteLifetime/time.Second) {
 		return 0, fmt.Errorf("session service clock is outside the supported range")
 	}
 	return now, nil
-}
-
-func unixNow() int64 {
-	return timeNow().UTC().Unix()
-}
-
-var timeNow = func() interface{ UTC() interface{ Unix() int64 } } {
-	panic("replaced below")
 }
 
 func cloneSessionBundle(bundle SessionBootstrapBundle) SessionBootstrapBundle {
