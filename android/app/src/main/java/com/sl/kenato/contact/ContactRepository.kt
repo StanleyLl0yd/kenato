@@ -117,16 +117,13 @@ internal class ContactRepository(
             token = invite.token,
             signature = response.redemptionSignature,
         )
-        val contact = localState.pinVerifiedIdentity(
+        return localState.commitClaimedIdentity(
             ownerIdentityId = localBundle.identityId,
+            token = invite.token,
             identityId = response.redeemerBundle.identityId,
             identityPublicKey = response.redeemerBundle.identityPublicKey,
             pinnedAtEpochSeconds = nowEpochSeconds(),
         )
-        if (!localState.removePendingInvite(localBundle.identityId, invite.token)) {
-            throw ContactStateException("Claimed invite could not be removed from local pending state")
-        }
-        return contact
     }
 
     @Synchronized
