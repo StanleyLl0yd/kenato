@@ -2,6 +2,8 @@ package com.sl.kenato.contact
 
 import java.io.ByteArrayOutputStream
 
+private const val MAX_PROTOBUF_FIELD_NUMBER = 536_870_911
+
 internal data class PublishIdentityWireResponse(val acceptedRevision: Long)
 internal data class CreateInviteWireResponse(val expiresAtEpochSeconds: Long)
 internal data class RedeemInviteWireResponse(
@@ -280,7 +282,9 @@ private class ProtoWriter {
     private val output = ByteArrayOutputStream()
 
     fun uint(field: Int, value: Long) {
-        if (field <= 0 || value < 0) throw ContactProtocolException("Invalid protobuf integer field")
+        if (field !in 1..MAX_PROTOBUF_FIELD_NUMBER || value < 0) {
+            throw ContactProtocolException("Invalid protobuf integer field")
+        }
         tag(field, 0)
         var remaining = value
         while (remaining and -128L != 0L) {
@@ -292,7 +296,7 @@ private class ProtoWriter {
     }
 
     fun bytes(field: Int, value: ByteArray) {
-        if (field <= 0 || value.size > MAX_CONTACT_WIRE_BYTES) {
+        if (field !in 1..MAX_PROTOBUF_FIELD_NUMBER || value.size > MAX_CONTACT_WIRE_BYTES) {
             throw ContactProtocolException("Invalid protobuf bytes field")
         }
         tag(field, 2)
@@ -338,10 +342,12 @@ private class ProtoReader(data: ByteArray) {
     fun fields(block: (Int, Int) -> Unit) {
         while (position < data.size) {
             val tag = readVarint()
-            val field = (tag ushr 3).toInt()
+            val field = tag ushr 3
             val wireType = (tag and 7).toInt()
-            if (field <= 0) throw ContactProtocolException("Invalid protobuf field number")
-            block(field, wireType)
+            if (tag < 0 || field !in 1L..MAX_PROTOBUF_FIELD_NUMBER.toLong()) {
+                throw ContactProtocolException("Invalid protobuf field number")
+            }
+            block(field.toInt(), wireType)
         }
     }
 
