@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	sqliteSchemaVersion    = 1
-	setSQLiteSchemaVersion = "PRAGMA user_version = 1"
+	sqliteSchemaVersion    = 2
+	setSQLiteSchemaVersion = "PRAGMA user_version = 2"
 )
 
 const sqliteSchema = `
@@ -145,13 +145,16 @@ func (s *SQLiteStore) initialize(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read sqlite schema version: %w", err)
 	}
-	if version != 0 && version != sqliteSchemaVersion {
+	if version < 0 || version > sqliteSchemaVersion {
 		return fmt.Errorf("unsupported sqlite schema version %d", version)
 	}
 	if _, err := s.db.ExecContext(ctx, sqliteSchema); err != nil {
 		return fmt.Errorf("initialize sqlite schema: %w", err)
 	}
-	if version == 0 {
+	if _, err := s.db.ExecContext(ctx, sessionSQLiteSchema); err != nil {
+		return fmt.Errorf("initialize session sqlite schema: %w", err)
+	}
+	if version < sqliteSchemaVersion {
 		if _, err := s.db.ExecContext(ctx, setSQLiteSchemaVersion); err != nil {
 			return fmt.Errorf("set sqlite schema version: %w", err)
 		}
