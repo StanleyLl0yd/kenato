@@ -7,7 +7,7 @@ ACTION_REF = re.compile(r"^\s*uses:\s*([^\s#]+)")
 IMAGE = re.compile(r"^\s*image:\s*([^\s#]+)")
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
-TOP_LEVEL_EMPTY_PERMISSIONS = re.compile(r"(?m)^permissions:\s*\{\}\s*$")
+TOP_LEVEL_PERMISSIONS = re.compile(r"(?m)^permissions:\s*(.*?)\s*$")
 UNSAFE_DOWNLOAD_EXEC = re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash)\b")
 
 errors: list[str] = []
@@ -30,8 +30,13 @@ for root in ROOTS:
             errors.append(f"{path}: checkout credentials must not persist")
         if UNSAFE_DOWNLOAD_EXEC.search(text):
             errors.append(f"{path}: downloaded content must not be piped directly to a shell")
-        if path.parent == Path(".github/workflows") and not TOP_LEVEL_EMPTY_PERMISSIONS.search(text):
-            errors.append(f"{path}: top-level workflow permissions must be explicitly empty")
+
+        if path.parent == Path(".github/workflows"):
+            permission_matches = TOP_LEVEL_PERMISSIONS.findall(text)
+            if permission_matches != ["{}"]:
+                errors.append(
+                    f"{path}: exactly one explicitly empty top-level workflow permissions mapping is required"
+                )
 
         for number, line in enumerate(lines, start=1):
             action = ACTION_REF.match(line)
@@ -77,9 +82,7 @@ for root in ROOTS:
             if image:
                 target = image.group(1)
                 if target.startswith("${{"):
-                    errors.append(
-                        f"{path}:{number}: dynamic container images are forbidden"
-                    )
+                    errors.append(f"{path}:{number}: dynamic container images are forbidden")
                 elif not DIGEST.search(target):
                     errors.append(
                         f"{path}:{number}: container image must be pinned by sha256 digest"
