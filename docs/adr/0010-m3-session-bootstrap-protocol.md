@@ -1,6 +1,6 @@
 # ADR 0010 — M3 session-bootstrap protocol and server state
 
-Status: Proposed for M3 implementation  
+Status: Accepted  
 Date: 2026-09-10
 
 ## Context
@@ -25,7 +25,9 @@ Each device publishes a bounded `SessionBootstrapBundle` containing:
 - between 1 and 50 public Olm Curve25519 one-time keys;
 - a P-256 binding signature from the existing Kenato identity over all of the above.
 
-The server accepts the bundle only if the corresponding M2 identity publication exists and the binding signature verifies against that exact P-256 identity key. A device changing its Olm account must increment `account_generation`; a replacement generation starts at publication revision 1. Within one generation revisions are strictly monotonic except an exact same-revision replay, which is idempotent. Old generations and conflicting same-generation payloads are rejected.
+The server accepts the bundle only if the corresponding M2 identity publication exists and the binding signature verifies against that exact P-256 identity key. A device changing its Olm account must increment `account_generation` by exactly one and a replacement generation starts at publication revision 1. Within one generation, revisions are strictly monotonic except an exact same-revision replay, which is idempotent. The two Olm account identity public keys cannot change within one generation. Old/skipped generations, conflicting same-generation payloads, or a non-1 first revision for a replacement generation are rejected.
+
+The first locally created account may use any positive representable generation because M3 has no shipped predecessor state; subsequent replacement is strictly `previous + 1`. The Android/native implementation is expected to begin new installations at generation 1.
 
 The server never receives an Olm private key.
 
@@ -37,37 +39,44 @@ The M2 invite redeemer is the M3 initiator. The invite creator is the M3 respond
 
 After M2 redemption, the redeemer may present the still-live invite token and a P-256 reservation proof. The server verifies that the invite is already redeemed by that exact redeemer and atomically reserves exactly one currently unreserved creator one-time key from the creator's current published account generation.
 
-Reservation is bound to the invite token hash, creator identity id, redeemer identity id, creator account generation, and key id. Exact replay by the same redeemer returns the same reservation. A different redeemer, generation, or key for the same invite conflicts. If no creator key remains, the operation fails closed; M3 does not use Olm fallback keys.
+Reservation is bound to the invite token hash, creator identity id, redeemer identity id, creator account generation, and key id. Exact replay by the same redeemer returns the same signed creator snapshot and reservation. A different redeemer or conflicting reservation for the same invite fails closed. If no creator key remains, the operation fails closed; M3 does not use Olm fallback keys.
 
-Reserved keys are never offered to another invite, even if the initiating client disappears. They are retired when the invite is claimed or expires. Replenishment happens by publishing a later revision of the same account generation containing fresh one-time keys.
+Within a generation, one-time-key ids are positive, strictly increasing in each signed publication and tracked with a monotonic server high-water mark. A previously available/reserved key may remain present in a later signed publication with the exact same bytes, but a retired/consumed id cannot be reintroduced. Fresh replenishment therefore uses new ids above the prior high-water mark. Reserved keys are never offered to another invite, even if the initiating client disappears. They are retired when the invite is claimed or expires.
+
+The server deliberately does not retain an unbounded historical set of every prior OTK public-key byte string. Correct clients must generate genuinely fresh vodozemac OTK material when publishing a fresh bookkeeping id; reusing old private/public OTK material under a new id violates the client contract.
 
 ### Initial Olm frame
 
 The redeemer creates the outbound Olm session locally and submits exactly one opaque Olm pre-key frame. The submit proof covers both identity ids, the invite token, creator account generation, creator reserved-key id, redeemer account generation, message type, and SHA-256 of the opaque frame.
 
-The server verifies the redeemer's P-256 proof, verifies that the request matches the existing reservation, and retains the bounded opaque frame only as temporary invite-bootstrap state. It does not inspect or decrypt Olm content.
+The server verifies the redeemer's P-256 proof, verifies that the request matches the existing reservation, snapshots the redeemer's currently authenticated session bundle, and retains the bounded opaque frame only as temporary invite-bootstrap state. It does not inspect or decrypt Olm content.
 
-An exact replay of the same initial frame is idempotent. A different frame or metadata for the same invite conflicts.
+An exact replay of the same canonical submit payload is idempotent. A different frame or metadata for the same invite conflicts. Only Olm pre-key message type is accepted for this bootstrap operation.
 
 ### Creator claim
 
-The creator claims the completed M3 bootstrap with the same P-256 creator proof model used for M2 claim. A successful M3 claim returns:
+The creator claims the completed M3 bootstrap with a P-256 creator proof. A successful M3 claim returns:
 
 - the authenticated M2 redeemer identity bundle and redemption proof;
-- the authenticated redeemer M3 session bundle;
-- the creator one-time key that was reserved;
-- the opaque Olm pre-key frame.
+- the authenticated redeemer M3 session bundle captured for the submitted initialization;
+- the signed creator M3 snapshot from which the OTK was allocated;
+- the exact creator account generation and reserved one-time-key id/public key;
+- the opaque Olm pre-key frame;
+- the redeemer's original submit signature.
 
-The server deletes the invite relationship and associated temporary reservation/init state in the same transaction. As with M2's destructive claim, loss of a successful claim response before the creator durably commits local state requires a fresh invite rather than retaining social/session bootstrap metadata for replay recovery.
+The service re-validates the stored M2/M3 bundles, verifies that the reserved OTK belongs to the signed creator snapshot, reconstructs the submit canonical payload and re-verifies the redeemer signature before returning the result. Correct clients perform the corresponding peer/session verification before creating the inbound Olm session.
+
+The server deletes the invite relationship and associated temporary reservation/init state in the same SQLite transaction. As with M2's destructive claim, loss of a successful claim response before the creator durably commits local state requires a fresh invite rather than retaining social/session-bootstrap metadata for replay recovery.
 
 ### Resource bounds
 
-- session bootstrap wire request/response: 128 KiB maximum;
+- session-bootstrap wire request/response: 128 KiB maximum;
 - opaque Olm frame: 96 KiB maximum;
 - Olm public keys: exactly 32 bytes;
 - public one-time keys per bundle: 1..50;
-- retained session bootstrap rows: no more than the M2 identity-row cap;
-- all M3 HTTP handlers use the existing process-wide pre-crypto concurrency/rate gate and bounded operation deadline;
+- retained current session-bootstrap rows: no more than the M2 identity-row cap;
+- one reservation/init chain per bounded live invite;
+- all M3 HTTP handlers share the existing process-wide pre-crypto concurrency/rate gate and bounded operation deadline with M2;
 - SQLite writes remain serialized and subject to the existing busy timeout.
 
 ### M3/M4 boundary
@@ -76,16 +85,20 @@ The server deletes the invite relationship and associated temporary reservation/
 
 ## Persistence and failure semantics
 
-Session bootstrap publications and temporary invite-bootstrap state are stored in SQLite/WAL. Database state is fail-closed on unknown schema versions. Publication replacement, OTK reservation, init submission, and claim/deletion are transactional.
+M3 upgrades the additive SQLite schema from M2 `user_version = 1` to `user_version = 2`. Existing M2 identities/invites remain in their original tables; M3 adds current public session-account bundles, available OTKs, temporary invite reservations, and temporary init frames/proofs. Unknown newer schema versions fail closed.
 
-The server does not attempt to recreate missing or corrupt session bootstrap material. Clients must treat missing, mismatched, changed, or unverifiable M3 identity/account material as a failed bootstrap rather than silently starting a different session identity.
+Session bootstrap publication replacement, OTK reservation, init submission, and claim/deletion are transactional. Reservation deletes the chosen OTK from the available pool in the same transaction that creates the reservation. Successful claim deletes the invite; foreign-key cascades delete the reservation/init records in that transaction. Expired invites cannot reserve, submit, or claim; startup/hourly retention cleanup deletes expired invite rows and cascades temporary M3 rows.
+
+The server does not attempt to recreate missing or corrupt session-bootstrap material. Clients must treat missing, mismatched, changed, or unverifiable M3 identity/account material as a failed bootstrap rather than silently starting a different session identity.
 
 ## Compatibility
 
-The M3 schema extends the existing `kenato.v1` package in a separate file and does not reuse or change M2 field numbers. Unsupported `protocol_version` values fail explicitly. Kenato-owned signatures use domain-separated canonical byte framing independent of protobuf serialization. Deterministic vectors are documented in `docs/security/M3_TEST_VECTORS.md`.
+The M3 schema extends the existing `kenato.v1` package in a separate file and does not reuse or change M2 field numbers. Unsupported `protocol_version` values fail explicitly. Kenato-owned signatures use domain-separated canonical byte framing independent of protobuf serialization. Deterministic bootstrap/reservation/submit/claim vectors are documented in `docs/security/M3_TEST_VECTORS.md` and exercised by Go tests.
 
 ## Security impact
 
 This design exposes to the server only public Olm account material, a bounded one-time-key allocation decision, temporary invite relationship metadata already present in M2, and an opaque authenticated ciphertext frame. It does not expose any Kenato or Olm private key or plaintext.
 
-A malicious server can deny service or withhold/replay stale valid public session material within accepted version/generation rules. It cannot substitute a different M3 engine identity or alter the initial frame without causing a P-256 binding/proof verification failure at a correct client, assuming the pinned Kenato identity key remains uncompromised.
+A malicious server can deny service, withhold public keys/frames, exhaust allocations, or replay stale valid public session material within accepted version/generation rules. It cannot substitute a different M3 engine identity or alter/transplant the initial frame without causing P-256 binding/proof or local pin verification failure at a correct client, assuming the pinned Kenato identity key remains uncompromised.
+
+This ADR covers only the protocol/server bootstrap portion of M3. Native Olm account/session creation, encrypted snapshot persistence, rollback-resistant commit ordering, peer session pins, replay/reordering behavior, and JNI/NDK supply-chain controls remain governed by ADR 0009 and must be implemented and reviewed before M3 is complete.
