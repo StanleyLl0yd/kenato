@@ -3,6 +3,7 @@ package contact
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -278,25 +279,17 @@ func establishRedeemedInvite(
 	ctx context.Context,
 	service *Service,
 	creator PublicIdentityBundle,
-	creatorKey interface{ Public() any },
+	creatorKey *ecdsa.PrivateKey,
 	redeemer PublicIdentityBundle,
-	redeemerKey interface{ Public() any },
+	redeemerKey *ecdsa.PrivateKey,
 	token []byte,
 ) []byte {
 	t.Helper()
-	creatorPrivateKey, ok := creatorKey.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatal("unexpected creator key type")
-	}
-	redeemerPrivateKey, ok := redeemerKey.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatal("unexpected redeemer key type")
-	}
-	invite := signedInvite(t, creator, creatorPrivateKey, token)
+	invite := signedInvite(t, creator, creatorKey, token)
 	if _, err := service.CreateInvite(ctx, CreateInviteRequest{ProtocolVersion: ProtocolVersion, Invite: invite}); err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
-	proof := signedRedemption(t, creator.IdentityID, redeemer, redeemerPrivateKey, token)
+	proof := signedRedemption(t, creator.IdentityID, redeemer, redeemerKey, token)
 	if _, _, err := service.RedeemInvite(ctx, RedeemInviteRequest{
 		ProtocolVersion:     ProtocolVersion,
 		Invite:              invite,
