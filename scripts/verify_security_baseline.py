@@ -27,6 +27,8 @@ def parse_xml(path: Path) -> ET.Element | None:
 
 manifest = parse_xml(manifest_path)
 if manifest is not None:
+    if manifest.tag != "manifest":
+        errors.append("AndroidManifest.xml: root must be manifest")
     application_nodes = manifest.findall("application")
     if len(application_nodes) != 1:
         errors.append("AndroidManifest.xml: exactly one application element is required")
@@ -149,7 +151,7 @@ if "distributionSha256Sum=" not in wrapper:
 if re.search(r"(?m)^\s*require\s+(?:\(|\S)", go_mod) and not Path("server/go.sum").exists():
     errors.append("server: go.sum must be committed when module dependencies are present")
 
-required_ignores = (
+required_ignores = {
     ".env",
     ".env.*",
     ".envrc",
@@ -163,10 +165,15 @@ required_ignores = (
     "local.properties",
     "keystore.properties",
     "secrets.properties",
-)
-for pattern in required_ignores:
-    if pattern not in gitignore:
-        errors.append(f".gitignore: missing sensitive-file pattern {pattern}")
+}
+gitignore_patterns = {
+    line.strip()
+    for line in gitignore.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+}
+missing_ignores = required_ignores - gitignore_patterns
+for pattern in sorted(missing_ignores):
+    errors.append(f".gitignore: missing sensitive-file pattern {pattern}")
 
 tracked = subprocess.run(
     ["git", "ls-files"],
@@ -187,7 +194,7 @@ sensitive_suffixes = (".jks", ".keystore", ".p12", ".pfx", ".pkcs12", ".pem", ".
 for name in tracked:
     path = Path(name)
     lower_name = path.name.lower()
-    if lower_name == ".env.example":
+    if path.name == ".env.example":
         continue
     if (
         lower_name in sensitive_names
