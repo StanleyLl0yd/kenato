@@ -76,24 +76,25 @@ func TestSessionRoutesAreAbsentWithoutSessionService(t *testing.T) {
 }
 
 func TestSessionEndpointRejectsMalformedAndWrongContentTypeBeforeService(t *testing.T) {
-	for name, contentType, body, want := range map[string]struct {
+	tests := map[string]struct {
 		contentType string
 		body        string
 		want        int
 	}{
 		"wrong content type": {contentType: "application/json", body: "x", want: http.StatusUnsupportedMediaType},
 		"malformed wire":     {contentType: protobufContentType, body: "\x80", want: http.StatusBadRequest},
-	} {
+	}
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			service := &fakeSessionService{}
-			request := httptest.NewRequest(http.MethodPost, "/v1/session/bootstrap/publish", strings.NewReader(body))
-			request.Header.Set("Content-Type", contentType)
+			request := httptest.NewRequest(http.MethodPost, "/v1/session/bootstrap/publish", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", tc.contentType)
 			response := httptest.NewRecorder()
 
 			NewHandlerWithSession(&fakeContactService{}, service).ServeHTTP(response, request)
 
-			if response.Code != want {
-				t.Fatalf("status=%d, want %d", response.Code, want)
+			if response.Code != tc.want {
+				t.Fatalf("status=%d, want %d", response.Code, tc.want)
 			}
 			if service.publishCalls != 0 {
 				t.Fatalf("publish calls=%d", service.publishCalls)
