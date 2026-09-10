@@ -32,6 +32,19 @@ class IdentityStateCodecTest {
     }
 
     @Test
+    fun validLookingMetadataCorruptionIsRejected() {
+        val original = state()
+        val encoded = IdentityStateCodec.encode(original)
+        val signedTimestampLastByte =
+            4 + Int.SIZE_BYTES + Int.SIZE_BYTES + original.identityPublicKey.size + Int.SIZE_BYTES + Long.SIZE_BYTES - 1
+        encoded[signedTimestampLastByte] = (encoded[signedTimestampLastByte].toInt() xor 1).toByte()
+
+        assertThrows(IdentityStateException::class.java) {
+            IdentityStateCodec.decode(encoded)
+        }
+    }
+
+    @Test
     fun duplicatePrekeyIdsAreRejected() {
         val original = state()
         val duplicate = original.copy(
