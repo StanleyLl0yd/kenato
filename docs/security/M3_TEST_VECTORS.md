@@ -58,6 +58,26 @@ Expected canonical payload hex:
 
 The frame bytes in this vector are synthetic and are not intended to be a valid vodozemac ciphertext. Only their digest is included in the P-256-signed Kenato payload, so production Olm ciphertext remains opaque and randomized.
 
+## Session init inner control plaintext
+
+The first real Olm pre-key frame encrypts this Kenato control record as its plaintext. It is not user content. The server never parses it; the responder checks it after Olm authentication/decryption and before accepting the inbound session.
+
+Inputs:
+
+- creator identity id: `000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f`
+- redeemer identity id: `202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f`
+- invite token: `404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f`
+- SHA-256 of invite token: `ca2a4fe727faaecf16ecd130a86e0885c5540c05375340445071c0657555fd42`
+- creator account generation: `2`
+- creator one-time-prekey id: `7`
+- redeemer account generation: `4`
+
+Expected canonical plaintext hex:
+
+```text
+4b454e41544f2d53455353494f4e2d494e49542d434f4e54524f4c2d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fca2a4fe727faaecf16ecd130a86e0885c5540c05375340445071c0657555fd42000000000000000200000000000000070000000000000004
+```
+
 ## Creator claim proof
 
 Inputs:
