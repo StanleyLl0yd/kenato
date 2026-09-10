@@ -17,11 +17,15 @@ Exit: buildable, testable foundation with security gates and no unresolved found
 
 ## M1 — Local Identity
 
+Status: **Complete** (2026-09-10).
+
 - device-generated cryptographic identity;
 - Android Keystore-backed long-lived key protection;
 - signed prekey and one-time prekey lifecycle;
 - local identity persistence and failure handling;
 - deterministic protocol/crypto test vectors where applicable.
+
+Exit: device-local identity is persistent, bounded, fail-closed on corruption/key loss, backup-excluded, documented, and covered by required CI/security verification without introducing M2 server/contact behavior.
 
 ## M2 — Invite + Contact Establishment
 
