@@ -3,6 +3,7 @@ package contact
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"path/filepath"
 	"testing"
 	"time"
@@ -108,13 +109,9 @@ func signedSessionInitRequest(
 	reserved ReserveSessionBootstrapResult,
 	redeemerGeneration uint64,
 	message []byte,
-	redeemerKey interface{ Public() any },
+	redeemerKey *ecdsa.PrivateKey,
 ) SubmitSessionInitRequest {
 	t.Helper()
-	privateKey, ok := redeemerKey.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatal("unexpected redeemer key type")
-	}
 	request := SubmitSessionInitRequest{
 		ProtocolVersion:           SessionProtocolVersion,
 		CreatorIdentityID:         bytes.Clone(creatorIdentityID),
@@ -130,6 +127,6 @@ func signedSessionInitRequest(
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.SubmitSignature = signPayload(t, privateKey, payload)
+	request.SubmitSignature = signPayload(t, redeemerKey, payload)
 	return request
 }
