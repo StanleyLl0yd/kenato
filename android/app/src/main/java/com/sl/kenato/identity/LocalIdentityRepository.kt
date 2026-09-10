@@ -44,6 +44,10 @@ class LocalIdentityRepository internal constructor(
         return updated.toBundle()
     }
 
+    /**
+     * Retires an already-used one-time prekey. A later session layer must call this only after the
+     * corresponding private key has been used successfully; retirement is durable and irreversible.
+     */
     @Synchronized
     fun consumeOneTimePreKey(id: Int): Boolean {
         require(id > 0) { "Prekey id must be positive" }
@@ -126,10 +130,10 @@ class LocalIdentityRepository internal constructor(
             validateCryptographicState(state)
             persist(state)
             return state
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             try {
                 keyBackend.deleteManagedKeys()
-            } catch (cleanupError: Throwable) {
+            } catch (cleanupError: Exception) {
                 error.addSuppressed(cleanupError)
             }
             throw error
