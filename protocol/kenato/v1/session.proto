@@ -90,8 +90,10 @@ message ClaimSessionInitResponse {
   int64 redeemed_at_unix_seconds = 4;
   SessionBootstrapBundle redeemer_session_bundle = 5;
   SessionOneTimePreKey creator_one_time_prekey = 6;
-  uint32 olm_message_type = 7;
-  bytes olm_message = 8;
+  uint64 creator_account_generation = 7;
+  uint32 olm_message_type = 8;
+  bytes olm_message = 9;
+  bytes submit_signature = 10;
 }
 
 // SessionCiphertext is the M3 application/native boundary only. M3 does not
