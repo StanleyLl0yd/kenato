@@ -44,16 +44,23 @@ Exit: public identity/prekey publication and invite/contact establishment are au
 
 ## M3 — E2EE Session
 
-Status: **Not started**.
+Status: **In progress** (started 2026-09-10).
 
-- reviewed asynchronous session establishment;
-- Double Ratchet or equivalent mature reviewed protocol implementation;
-- replay/reordering/duplicate behavior;
-- bounded skipped-key handling;
-- identity-change handling;
-- persistence/restart tests.
+- reviewed asynchronous session establishment rooted in the pinned M1/M2 Kenato identity;
+- Apache-2.0 vodozemac Olm/Double Ratchet engine, exact-version pinned through the Android native boundary;
+- authenticated P-256 binding of engine-specific Curve25519/Ed25519 account material and one-time keys;
+- deterministic invite-redeemer initiator / invite-creator responder bootstrap;
+- bounded one-time session-key allocation with no fallback-key downgrade;
+- replay/reordering/duplicate behavior and the engine's bounded skipped-key handling;
+- crash-safe fail-closed session/account persistence and restart tests;
+- identity/session-account change handling;
+- native/JNI, dependency and protocol security review.
+
+Exit: a pinned contact can establish and persist a reviewed asynchronous ratcheted session, encrypt/decrypt bounded opaque application payloads with explicit replay/reordering behavior, survive restart without ratchet rollback, fail closed on identity/session-state corruption or replacement, and pass repository-wide exact-head/exact-main verification without introducing M4 routing/mailbox/product messaging behavior.
 
 ## M4 — Minimal Messaging
+
+Status: **Not started**.
 
 - WSS routing;
 - online direct delivery;
