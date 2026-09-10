@@ -232,6 +232,9 @@ private class TestContactServer : ContactTransport {
 private class TestContactIdentityProvider : ContactIdentityProvider {
     private val identity = keyPair()
     private val signedPreKey = keyPair()
+    private val signedPreKeySignature = signRaw(
+        ContactCanonical.signedPreKeyPayload(1, signedPreKey.public.encoded),
+    )
     private var oneTimePreKey = keyPair()
 
     override fun currentIdentity(): IdentityBundle = IdentityBundle(
@@ -240,7 +243,7 @@ private class TestContactIdentityProvider : ContactIdentityProvider {
         signedPreKey = SignedPreKey(
             id = 1,
             publicKey = encode(signedPreKey.public.encoded),
-            signature = encode(signRaw(ContactCanonical.signedPreKeyPayload(1, signedPreKey.public.encoded))),
+            signature = encode(signedPreKeySignature),
             createdAtEpochSeconds = 1_788_900_000L,
         ),
         oneTimePreKeys = listOf(
