@@ -103,7 +103,7 @@ func (s *SessionService) ReserveSessionBootstrap(ctx context.Context, request Re
 	if err := ValidateSessionBootstrapBundle(bundle, creatorIdentity.IdentityPublicKey); err != nil {
 		return ReserveSessionBootstrapResult{}, fmt.Errorf("stored creator session bootstrap is invalid: %w", err)
 	}
-	if stored.CreatorOneTimeKey.ID == 0 || len(stored.CreatorOneTimeKey.PublicKey) != OlmPublicKeyBytes {
+	if !sessionBundleContainsOneTimeKey(bundle, stored.CreatorOneTimeKey) {
 		return ReserveSessionBootstrapResult{}, fmt.Errorf("stored creator one-time key is invalid: %w", ErrInvalidSessionBootstrap)
 	}
 	return ReserveSessionBootstrapResult{
@@ -124,6 +124,10 @@ func (s *SessionService) SubmitSessionInit(ctx context.Context, request SubmitSe
 		return err
 	}
 	if err := VerifySessionSubmitProof(request, redeemerIdentity.IdentityPublicKey); err != nil {
+		return err
+	}
+	payload, err := SessionSubmitPayload(request)
+	if err != nil {
 		return err
 	}
 	redeemerBootstrap, err := s.sessionStore.GetSessionBootstrap(ctx, request.RedeemerIdentityID)
@@ -149,17 +153,18 @@ func (s *SessionService) SubmitSessionInit(ctx context.Context, request SubmitSe
 		return err
 	}
 	return s.sessionStore.SubmitSessionInit(ctx, SessionInitRecord{
-		TokenHash:                  tokenHash,
-		CreatorIdentityID:          bytes.Clone(request.CreatorIdentityID),
-		RedeemerIdentityID:         bytes.Clone(request.RedeemerIdentityID),
-		CreatorAccountGeneration:   request.CreatorAccountGeneration,
-		CreatorOneTimePreKeyID:     request.CreatorOneTimePreKeyID,
-		RedeemerAccountGeneration:  request.RedeemerAccountGeneration,
-		OlmMessageType:             request.OlmMessageType,
-		OlmMessage:                 bytes.Clone(request.OlmMessage),
-		SubmitSignature:            bytes.Clone(request.SubmitSignature),
-		RedeemerSessionBundle:      bytes.Clone(redeemerBootstrap.EncodedBundle),
-		SubmittedAt:                now,
+		TokenHash:                 tokenHash,
+		CreatorIdentityID:         bytes.Clone(request.CreatorIdentityID),
+		RedeemerIdentityID:        bytes.Clone(request.RedeemerIdentityID),
+		CreatorAccountGeneration:  request.CreatorAccountGeneration,
+		CreatorOneTimePreKeyID:    request.CreatorOneTimePreKeyID,
+		RedeemerAccountGeneration: request.RedeemerAccountGeneration,
+		OlmMessageType:            request.OlmMessageType,
+		OlmMessage:                bytes.Clone(request.OlmMessage),
+		SubmitSignature:           bytes.Clone(request.SubmitSignature),
+		SubmitPayloadHash:         sha256.Sum256(payload),
+		RedeemerSessionBundle:     bytes.Clone(redeemerBootstrap.EncodedBundle),
+		SubmittedAt:               now,
 	})
 }
 
@@ -203,6 +208,18 @@ func (s *SessionService) ClaimSessionInit(ctx context.Context, request ClaimSess
 	); err != nil {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored redemption proof is invalid: %w", err)
 	}
+
+	creatorSession, err := DecodeSessionBootstrapBundle(stored.CreatorSessionBundle)
+	if err != nil {
+		return ClaimSessionInitResult{}, fmt.Errorf("stored creator session bootstrap is invalid: %w", err)
+	}
+	if err := ValidateSessionBootstrapBundle(creatorSession, creatorIdentity.IdentityPublicKey); err != nil {
+		return ClaimSessionInitResult{}, fmt.Errorf("stored creator session bootstrap is invalid: %w", err)
+	}
+	if creatorSession.AccountGeneration != stored.CreatorAccountGeneration || !sessionBundleContainsOneTimeKey(creatorSession, stored.CreatorOneTimeKey) {
+		return ClaimSessionInitResult{}, fmt.Errorf("stored creator reservation is invalid: %w", ErrInvalidSessionBootstrap)
+	}
+
 	redeemerSession, err := DecodeSessionBootstrapBundle(stored.RedeemerSessionBundle)
 	if err != nil {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored redeemer session bootstrap is invalid: %w", err)
@@ -210,17 +227,35 @@ func (s *SessionService) ClaimSessionInit(ctx context.Context, request ClaimSess
 	if err := ValidateSessionBootstrapBundle(redeemerSession, redeemerIdentity.IdentityPublicKey); err != nil {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored redeemer session bootstrap is invalid: %w", err)
 	}
-	if stored.CreatorOneTimeKey.ID == 0 || len(stored.CreatorOneTimeKey.PublicKey) != OlmPublicKeyBytes || stored.OlmMessageType != OlmMessageTypePreKey || len(stored.OlmMessage) == 0 || len(stored.OlmMessage) > MaxSessionCiphertextBytes {
+	if stored.OlmMessageType != OlmMessageTypePreKey || len(stored.OlmMessage) == 0 || len(stored.OlmMessage) > MaxSessionCiphertextBytes || !validSignature(stored.SubmitSignature) {
 		return ClaimSessionInitResult{}, fmt.Errorf("stored session initialization is invalid: %w", ErrInvalidSessionBootstrap)
 	}
+	proof := SubmitSessionInitRequest{
+		ProtocolVersion:           SessionProtocolVersion,
+		CreatorIdentityID:         bytes.Clone(request.CreatorIdentityID),
+		RedeemerIdentityID:        bytes.Clone(redeemerIdentity.IdentityID),
+		InviteToken:               bytes.Clone(request.InviteToken),
+		CreatorAccountGeneration:  stored.CreatorAccountGeneration,
+		CreatorOneTimePreKeyID:    stored.CreatorOneTimeKey.ID,
+		RedeemerAccountGeneration: redeemerSession.AccountGeneration,
+		OlmMessageType:            stored.OlmMessageType,
+		OlmMessage:                bytes.Clone(stored.OlmMessage),
+		SubmitSignature:           bytes.Clone(stored.SubmitSignature),
+	}
+	if err := VerifySessionSubmitProof(proof, redeemerIdentity.IdentityPublicKey); err != nil {
+		return ClaimSessionInitResult{}, fmt.Errorf("stored session initialization proof is invalid: %w", err)
+	}
+
 	return ClaimSessionInitResult{
-		RedeemerIdentityBundle: redeemerIdentity,
-		RedemptionSignature:    bytes.Clone(stored.RedemptionSignature),
-		RedeemedAt:             stored.RedeemedAt,
-		RedeemerSessionBundle:  redeemerSession,
-		CreatorOneTimeKey:      cloneSessionOneTimePreKey(stored.CreatorOneTimeKey),
-		OlmMessageType:         stored.OlmMessageType,
-		OlmMessage:             bytes.Clone(stored.OlmMessage),
+		RedeemerIdentityBundle:   redeemerIdentity,
+		RedemptionSignature:      bytes.Clone(stored.RedemptionSignature),
+		RedeemedAt:               stored.RedeemedAt,
+		RedeemerSessionBundle:    redeemerSession,
+		CreatorOneTimeKey:        cloneSessionOneTimePreKey(stored.CreatorOneTimeKey),
+		CreatorAccountGeneration: stored.CreatorAccountGeneration,
+		OlmMessageType:           stored.OlmMessageType,
+		OlmMessage:               bytes.Clone(stored.OlmMessage),
+		SubmitSignature:          bytes.Clone(stored.SubmitSignature),
 	}, nil
 }
 
@@ -248,6 +283,18 @@ func (s *SessionService) nowUnix() (int64, error) {
 		return 0, fmt.Errorf("session service clock is outside the supported range")
 	}
 	return now, nil
+}
+
+func sessionBundleContainsOneTimeKey(bundle SessionBootstrapBundle, expected SessionOneTimePreKey) bool {
+	if expected.ID == 0 || len(expected.PublicKey) != OlmPublicKeyBytes {
+		return false
+	}
+	for _, key := range bundle.OneTimePreKeys {
+		if key.ID == expected.ID {
+			return bytes.Equal(key.PublicKey, expected.PublicKey)
+		}
+	}
+	return false
 }
 
 func cloneSessionBundle(bundle SessionBootstrapBundle) SessionBootstrapBundle {
