@@ -49,9 +49,9 @@ internal object IdentityStateCodec {
             output.writeBounded(state.identityPublicKey)
             output.writePreKey(state.signedPreKey)
             output.writeBoolean(state.previousSignedPreKey != null)
-            state.previousSignedPreKey?.let(output::writePreKey)
+            state.previousSignedPreKey?.let { output.writePreKey(it) }
             output.writeInt(state.oneTimePreKeys.size)
-            state.oneTimePreKeys.forEach(output::writePreKey)
+            state.oneTimePreKeys.forEach { output.writePreKey(it) }
             output.writeInt(state.nextPreKeyId)
         }
 
@@ -171,7 +171,7 @@ internal object IdentityStateCodec {
         writeBounded(preKey.encryptedPrivateKey)
         val signature = preKey.signature
         writeBoolean(signature != null)
-        signature?.let(::writeBounded)
+        signature?.let { writeBounded(it) }
     }
 
     private fun DataOutputStream.writeBounded(value: ByteArray) {
@@ -193,6 +193,6 @@ internal object IdentityStateCodec {
         if (length !in 1..maximum) {
             throw IdentityStateException("Identity state field size is invalid")
         }
-        return ByteArray(length).also(::readFully)
+        return ByteArray(length).also { readFully(it) }
     }
 }
