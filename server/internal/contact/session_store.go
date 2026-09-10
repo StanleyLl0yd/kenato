@@ -108,10 +108,21 @@ WHERE identity_id = ? AND account_generation = ? AND publication_revision = ?`,
 		if oldGeneration == math.MaxInt64 || newGeneration != oldGeneration+1 || newRevision != 1 {
 			return 0, 0, ErrSessionConflict
 		}
-		// Only a creator account rollover invalidates a reservation, because the
-		// reserved OTK belongs to that creator generation. A redeemer rollover
-		// does not consume another creator OTK: submit/claim already snapshot and
-		// authenticate the redeemer generation independently.
+		// A redeemer account rollover invalidates any pre-key frame produced by
+		// the replaced account, but it must not burn another creator OTK. Keep
+		// the reservation and remove only the submitted init so the same invite
+		// can submit a replacement frame using the new redeemer generation.
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM session_inits
+WHERE token_hash IN (
+    SELECT token_hash FROM session_reservations WHERE redeemer_identity_id = ?
+)`, record.Bundle.IdentityID); err != nil {
+			return 0, 0, fmt.Errorf("retire old-generation redeemer session init: %w", err)
+		}
+
+		// A creator account rollover does invalidate its reservations because
+		// their OTKs belong to the replaced creator generation. Deleting those
+		// reservations cascades any associated submitted init rows.
 		if _, err := tx.ExecContext(ctx,
 			"DELETE FROM session_reservations WHERE creator_identity_id = ?",
 			record.Bundle.IdentityID,
