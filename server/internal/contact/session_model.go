@@ -6,13 +6,13 @@ import (
 )
 
 const (
-	SessionProtocolVersion       uint32 = 1
-	OlmPublicKeyBytes                   = 32
-	MaxSessionOneTimePreKeys            = 50
-	TargetSessionOneTimePreKeys         = 32
-	MaxSessionCiphertextBytes           = 96 << 10
-	MaxSessionWireMessageBytes          = 128 << 10
-	MaxStoredSessionBootstraps          = MaxStoredIdentities
+	SessionProtocolVersion      uint32 = 1
+	OlmPublicKeyBytes                  = 32
+	MaxSessionOneTimePreKeys           = 50
+	TargetSessionOneTimePreKeys        = 32
+	MaxSessionCiphertextBytes          = 96 << 10
+	MaxSessionWireMessageBytes         = 128 << 10
+	MaxStoredSessionBootstraps         = MaxStoredIdentities
 )
 
 const (
@@ -116,18 +116,18 @@ type StoredSessionReservation struct {
 }
 
 type SessionInitRecord struct {
-	TokenHash                  [sha256.Size]byte
-	CreatorIdentityID          []byte
-	RedeemerIdentityID         []byte
-	CreatorAccountGeneration   uint64
-	CreatorOneTimePreKeyID     uint64
-	RedeemerAccountGeneration  uint64
-	OlmMessageType             uint32
-	OlmMessage                 []byte
-	SubmitSignature            []byte
-	SubmitPayloadHash          [sha256.Size]byte
-	RedeemerSessionBundle      []byte
-	SubmittedAt                int64
+	TokenHash                 [sha256.Size]byte
+	CreatorIdentityID         []byte
+	RedeemerIdentityID        []byte
+	CreatorAccountGeneration  uint64
+	CreatorOneTimePreKeyID    uint64
+	RedeemerAccountGeneration uint64
+	OlmMessageType            uint32
+	OlmMessage                []byte
+	SubmitSignature           []byte
+	SubmitPayloadHash         [sha256.Size]byte
+	RedeemerSessionBundle     []byte
+	SubmittedAt               int64
 }
 
 type SessionClaimRecord struct {
