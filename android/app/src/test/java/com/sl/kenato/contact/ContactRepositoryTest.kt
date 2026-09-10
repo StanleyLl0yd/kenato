@@ -240,7 +240,7 @@ private class TestContactIdentityProvider : ContactIdentityProvider {
         signedPreKey = SignedPreKey(
             id = 1,
             publicKey = encode(signedPreKey.public.encoded),
-            signature = encode(sign(ContactCanonical.signedPreKeyPayload(1, signedPreKey.public.encoded))),
+            signature = encode(signRaw(ContactCanonical.signedPreKeyPayload(1, signedPreKey.public.encoded))),
             createdAtEpochSeconds = 1_788_900_000L,
         ),
         oneTimePreKeys = listOf(
@@ -252,17 +252,18 @@ private class TestContactIdentityProvider : ContactIdentityProvider {
         ),
     )
 
-    override fun sign(payload: ByteArray): ByteArray = sign(payload)
+    override fun sign(payload: ByteArray): ByteArray = signRaw(payload)
 
     fun identityId(): ByteArray = ContactCrypto.identityId(identity.public.encoded)
 
-    fun signedBundle(revision: Long): M2PublicIdentityBundle = signPublicBundle(currentIdentity().toUnsignedContactBundle(revision))
+    fun signedBundle(revision: Long): M2PublicIdentityBundle =
+        signPublicBundle(currentIdentity().toUnsignedContactBundle(revision))
 
     fun replaceOneTimePreKeyMaterial() {
         oneTimePreKey = keyPair()
     }
 
-    private fun sign(payload: ByteArray): ByteArray = Signature.getInstance("SHA256withECDSA").run {
+    private fun signRaw(payload: ByteArray): ByteArray = Signature.getInstance("SHA256withECDSA").run {
         initSign(identity.private)
         update(payload)
         sign()
