@@ -141,6 +141,7 @@ type StoredSessionClaim struct {
 	RedemptionSignature      []byte
 	RedeemedAt               int64
 	RedeemerSessionBundle    []byte
+	CreatorSessionBundle     []byte
 	CreatorOneTimeKey        SessionOneTimePreKey
 	CreatorAccountGeneration uint64
 	OlmMessageType           uint32
