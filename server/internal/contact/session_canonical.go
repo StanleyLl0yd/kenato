@@ -47,7 +47,10 @@ func SessionReservePayload(creatorIdentityID, redeemerIdentityID, inviteToken []
 }
 
 func SessionSubmitPayload(request SubmitSessionInitRequest) ([]byte, error) {
-	if err := validateSessionInitShape(request); err != nil {
+	// The signature is intentionally not part of shape validation here: this
+	// canonical payload is what the caller signs. Signature validation happens
+	// at the verification/service boundary after the payload exists.
+	if err := validateSessionInitPayloadShape(request); err != nil {
 		return nil, err
 	}
 	digest := sha256.Sum256(request.OlmMessage)
@@ -108,13 +111,23 @@ func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignatu
 }
 
 func validateSessionInitShape(request SubmitSessionInitRequest) error {
+	if err := validateSessionInitPayloadShape(request); err != nil {
+		return err
+	}
+	if !validSignature(request.SubmitSignature) {
+		return ErrInvalidSessionBootstrap
+	}
+	return nil
+}
+
+func validateSessionInitPayloadShape(request SubmitSessionInitRequest) error {
 	if len(request.CreatorIdentityID) != IdentityIDBytes || len(request.RedeemerIdentityID) != IdentityIDBytes || bytes.Equal(request.CreatorIdentityID, request.RedeemerIdentityID) {
 		return ErrInvalidSessionBootstrap
 	}
 	if len(request.InviteToken) != InviteTokenBytes || request.CreatorAccountGeneration == 0 || request.CreatorAccountGeneration > math.MaxInt64 || request.CreatorOneTimePreKeyID == 0 || request.CreatorOneTimePreKeyID > math.MaxInt64 || request.RedeemerAccountGeneration == 0 || request.RedeemerAccountGeneration > math.MaxInt64 {
 		return ErrInvalidSessionBootstrap
 	}
-	if request.OlmMessageType != OlmMessageTypePreKey || len(request.OlmMessage) == 0 || len(request.OlmMessage) > MaxSessionCiphertextBytes || !validSignature(request.SubmitSignature) {
+	if request.OlmMessageType != OlmMessageTypePreKey || len(request.OlmMessage) == 0 || len(request.OlmMessage) > MaxSessionCiphertextBytes {
 		return ErrInvalidSessionBootstrap
 	}
 	return nil
