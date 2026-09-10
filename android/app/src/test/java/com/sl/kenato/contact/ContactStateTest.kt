@@ -34,7 +34,7 @@ class ContactStateTest {
         val decoded = ContactStateCodec.decode(ContactStateCodec.encode(state))
 
         assertArrayEquals(owner, decoded.ownerIdentityId)
-        assertEquals(3, decoded.publication?.revision)
+        assertEquals(3L, decoded.publication?.revision)
         assertArrayEquals(state.publication?.materialHash, decoded.publication?.materialHash)
         assertArrayEquals(state.pendingInvites.single().token, decoded.pendingInvites.single().token)
         assertArrayEquals(state.contacts.single().identityId, decoded.contacts.single().identityId)
@@ -49,9 +49,9 @@ class ContactStateTest {
         val retry = local.reservePublication(owner, ByteArray(32) { 2 })
         val changed = local.reservePublication(owner, ByteArray(32) { 3 })
 
-        assertEquals(1, first.revision)
-        assertEquals(1, retry.revision)
-        assertEquals(2, changed.revision)
+        assertEquals(1L, first.revision)
+        assertEquals(1L, retry.revision)
+        assertEquals(2L, changed.revision)
     }
 
     @Test
