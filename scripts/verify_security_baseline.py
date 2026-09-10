@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import re
 import subprocess
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from pathlib import Path
 
 errors: list[str] = []
@@ -15,12 +15,28 @@ wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text(encoding="u
 go_mod = Path("server/go.mod").read_text(encoding="utf-8")
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+MAX_POLICY_XML_BYTES = 64 * 1024
+FORBIDDEN_XML_DECLARATIONS = (b"<!DOCTYPE", b"<!ENTITY")
 
 
 def parse_xml(path: Path) -> ET.Element | None:
     try:
-        return ET.parse(path).getroot()
-    except (OSError, ET.ParseError) as error:
+        if path.stat().st_size > MAX_POLICY_XML_BYTES:
+            errors.append(f"Android: {path} exceeds the policy XML size limit")
+            return None
+        raw = path.read_bytes()
+    except OSError as error:
+        errors.append(f"Android: unable to read {path}: {error}")
+        return None
+
+    upper = raw.upper()
+    if any(marker in upper for marker in FORBIDDEN_XML_DECLARATIONS):
+        errors.append(f"Android: {path} must not contain DTD or entity declarations")
+        return None
+
+    try:
+        return ET.fromstring(raw)
+    except ET.ParseError as error:
         errors.append(f"Android: unable to parse {path}: {error}")
         return None
 
