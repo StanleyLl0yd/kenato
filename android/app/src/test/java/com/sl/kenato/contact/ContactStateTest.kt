@@ -41,6 +41,43 @@ class ContactStateTest {
     }
 
     @Test
+    fun codecRejectsInviteOwnedByAnotherIdentity() {
+        val owner = ByteArray(CONTACT_ID_BYTES) { 1 }
+        val otherOwner = ByteArray(CONTACT_ID_BYTES) { 2 }
+        val state = ContactState(
+            ownerIdentityId = owner,
+            publication = null,
+            pendingInvites = listOf(
+                PendingInvite(otherOwner, ByteArray(INVITE_TOKEN_BYTES) { 3 }, byteArrayOf(4), 2_000),
+            ),
+            contacts = emptyList(),
+        )
+
+        assertThrows(ContactStateException::class.java) { ContactStateCodec.encode(state) }
+    }
+
+    @Test
+    fun codecRejectsPinnedIdentityKeyMismatch() {
+        val owner = ByteArray(CONTACT_ID_BYTES) { 1 }
+        val peer = publicKey()
+        val state = ContactState(
+            ownerIdentityId = owner,
+            publication = null,
+            pendingInvites = emptyList(),
+            contacts = listOf(
+                PinnedContact(
+                    localId = ByteArray(ContactStateCodec.LOCAL_CONTACT_ID_BYTES) { 4 },
+                    identityId = ByteArray(CONTACT_ID_BYTES) { 9 },
+                    identityPublicKey = peer,
+                    pinnedAtEpochSeconds = 1_000,
+                ),
+            ),
+        )
+
+        assertThrows(ContactStateException::class.java) { ContactStateCodec.encode(state) }
+    }
+
+    @Test
     fun publicationReservationIsStableAndMonotonic() {
         val owner = ByteArray(CONTACT_ID_BYTES) { 1 }
         val local = ContactLocalState(MemoryContactStateStore(), deterministicRandom())
@@ -101,6 +138,45 @@ class ContactStateTest {
     }
 
     @Test
+    fun claimedIdentityCommitPinsAndRetiresInviteTogether() {
+        val owner = ByteArray(CONTACT_ID_BYTES) { 1 }
+        val token = ByteArray(INVITE_TOKEN_BYTES) { 5 }
+        val store = MemoryContactStateStore()
+        val local = ContactLocalState(store, deterministicRandom())
+        local.addPendingInvite(PendingInvite(owner, token, byteArrayOf(7), 2_000), 1_000)
+        val peerKey = publicKey()
+        val peerId = ContactCrypto.identityId(peerKey)
+
+        val contact = local.commitClaimedIdentity(owner, token, peerId, peerKey, 1_100)
+
+        assertArrayEquals(peerId, contact.identityId)
+        assertTrue(local.pendingInvites(owner, 1_100).isEmpty())
+        assertEquals(1, local.contacts(owner).size)
+    }
+
+    @Test
+    fun failedClaimCommitLeavesPendingInviteAndPinsUnchanged() {
+        val owner = ByteArray(CONTACT_ID_BYTES) { 1 }
+        val token = ByteArray(INVITE_TOKEN_BYTES) { 5 }
+        val store = MemoryContactStateStore()
+        val local = ContactLocalState(store, deterministicRandom())
+        local.addPendingInvite(PendingInvite(owner, token, byteArrayOf(7), 2_000), 1_000)
+        val durableBefore = requireNotNull(store.value).copyOf()
+        val peerKey = publicKey()
+        val peerId = ContactCrypto.identityId(peerKey)
+        store.failWrites = true
+
+        assertThrows(ContactStateException::class.java) {
+            local.commitClaimedIdentity(owner, token, peerId, peerKey, 1_100)
+        }
+
+        assertArrayEquals(durableBefore, requireNotNull(store.value))
+        store.failWrites = false
+        assertEquals(1, local.pendingInvites(owner, 1_100).size)
+        assertTrue(local.contacts(owner).isEmpty())
+    }
+
+    @Test
     fun stateForDifferentLocalIdentityFailsClosed() {
         val store = MemoryContactStateStore()
         val firstOwner = ByteArray(CONTACT_ID_BYTES) { 1 }
@@ -140,10 +216,12 @@ class ContactStateTest {
 private class MemoryContactStateStore : ContactStateStore {
     var value: ByteArray? = null
     var failClear = false
+    var failWrites = false
 
     override fun read(): ByteArray? = value?.copyOf()
 
     override fun write(value: ByteArray): Boolean {
+        if (failWrites) return false
         this.value = value.copyOf()
         return true
     }
