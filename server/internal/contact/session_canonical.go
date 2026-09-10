@@ -8,10 +8,11 @@ import (
 )
 
 var (
-	sessionBootstrapDomain = []byte("KENATO-SESSION-BOOTSTRAP-V1\x00")
-	sessionReserveDomain   = []byte("KENATO-SESSION-RESERVE-V1\x00")
-	sessionSubmitDomain    = []byte("KENATO-SESSION-INIT-SUBMIT-V1\x00")
-	sessionClaimDomain     = []byte("KENATO-SESSION-CLAIM-V1\x00")
+	sessionBootstrapDomain   = []byte("KENATO-SESSION-BOOTSTRAP-V1\x00")
+	sessionReserveDomain     = []byte("KENATO-SESSION-RESERVE-V1\x00")
+	sessionSubmitDomain      = []byte("KENATO-SESSION-INIT-SUBMIT-V1\x00")
+	sessionClaimDomain       = []byte("KENATO-SESSION-CLAIM-V1\x00")
+	sessionInitControlDomain = []byte("KENATO-SESSION-INIT-CONTROL-V1\x00")
 )
 
 func SessionBootstrapPayload(bundle SessionBootstrapBundle) ([]byte, error) {
@@ -67,6 +68,39 @@ func SessionSubmitPayload(request SubmitSessionInitRequest) ([]byte, error) {
 	return payload, nil
 }
 
+// SessionInitControlPayload is the exact plaintext placed inside the first Olm
+// pre-key frame. The server never parses these bytes; both peers use the
+// domain-separated binding to prevent a valid frame from being transplanted to
+// a different invite, contact, account generation, or creator OTK.
+func SessionInitControlPayload(
+	creatorIdentityID,
+	redeemerIdentityID,
+	inviteToken []byte,
+	creatorAccountGeneration,
+	creatorOneTimePreKeyID,
+	redeemerAccountGeneration uint64,
+) ([]byte, error) {
+	if len(creatorIdentityID) != IdentityIDBytes || len(redeemerIdentityID) != IdentityIDBytes || len(inviteToken) != InviteTokenBytes || bytes.Equal(creatorIdentityID, redeemerIdentityID) {
+		return nil, ErrInvalidSessionBootstrap
+	}
+	if creatorAccountGeneration == 0 || creatorAccountGeneration > math.MaxInt64 ||
+		creatorOneTimePreKeyID == 0 || creatorOneTimePreKeyID > math.MaxInt64 ||
+		redeemerAccountGeneration == 0 || redeemerAccountGeneration > math.MaxInt64 {
+		return nil, ErrInvalidSessionBootstrap
+	}
+
+	tokenHash := sha256.Sum256(inviteToken)
+	payload := make([]byte, 0, len(sessionInitControlDomain)+2*IdentityIDBytes+sha256.Size+3*8)
+	payload = append(payload, sessionInitControlDomain...)
+	payload = append(payload, creatorIdentityID...)
+	payload = append(payload, redeemerIdentityID...)
+	payload = append(payload, tokenHash[:]...)
+	payload = binary.BigEndian.AppendUint64(payload, creatorAccountGeneration)
+	payload = binary.BigEndian.AppendUint64(payload, creatorOneTimePreKeyID)
+	payload = binary.BigEndian.AppendUint64(payload, redeemerAccountGeneration)
+	return payload, nil
+}
+
 func SessionClaimPayload(creatorIdentityID, inviteToken []byte) ([]byte, error) {
 	if len(creatorIdentityID) != IdentityIDBytes || len(inviteToken) != InviteTokenBytes {
 		return nil, ErrInvalidSessionBootstrap
@@ -85,6 +119,9 @@ func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignatu
 	if len(bundle.OlmEd25519IdentityKey) != OlmPublicKeyBytes || len(bundle.OlmCurve25519IdentityKey) != OlmPublicKeyBytes || allZero(bundle.OlmEd25519IdentityKey) || allZero(bundle.OlmCurve25519IdentityKey) {
 		return ErrInvalidSessionBootstrap
 	}
+	if bytes.Equal(bundle.OlmEd25519IdentityKey, bundle.OlmCurve25519IdentityKey) {
+		return ErrInvalidSessionBootstrap
+	}
 	if len(bundle.OneTimePreKeys) == 0 || len(bundle.OneTimePreKeys) > MaxSessionOneTimePreKeys {
 		return ErrInvalidSessionBootstrap
 	}
@@ -98,6 +135,9 @@ func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignatu
 	seenKeys := make(map[string]struct{}, len(bundle.OneTimePreKeys))
 	for _, key := range bundle.OneTimePreKeys {
 		if key.ID == 0 || key.ID > math.MaxInt64 || key.ID <= previousID || len(key.PublicKey) != OlmPublicKeyBytes || allZero(key.PublicKey) {
+			return ErrInvalidSessionBootstrap
+		}
+		if bytes.Equal(key.PublicKey, bundle.OlmEd25519IdentityKey) || bytes.Equal(key.PublicKey, bundle.OlmCurve25519IdentityKey) {
 			return ErrInvalidSessionBootstrap
 		}
 		encoded := string(key.PublicKey)
