@@ -146,32 +146,53 @@ internal class ContactLocalState(
         pinnedAtEpochSeconds: Long,
     ): PinnedContact {
         requireOwner(ownerIdentityId)
-        if (pinnedAtEpochSeconds < 0) {
-            throw ContactStateException("Contact pin timestamp is invalid")
-        }
-        val derivedId = ContactCrypto.identityId(identityPublicKey)
-        if (!MessageDigest.isEqual(derivedId, identityId)) {
-            throw ContactIdentityConflictException("Peer identity id does not match its public key")
-        }
+        validatePeerIdentity(ownerIdentityId, identityId, identityPublicKey, pinnedAtEpochSeconds)
         val state = load(ownerIdentityId)
-        val existing = state.contacts.firstOrNull { it.identityId.contentEquals(identityId) }
+        val existing = findMatchingPin(state, identityId, identityPublicKey)
         if (existing != null) {
-            if (!existing.identityPublicKey.contentEquals(identityPublicKey)) {
-                throw ContactIdentityConflictException("Pinned contact identity key changed")
-            }
             return existing.copyDeep()
         }
         if (state.contacts.size >= ContactStateCodec.MAX_CONTACTS) {
             throw ContactStateException("Contact capacity reached")
         }
-        val localId = allocateLocalId(state.contacts)
-        val contact = PinnedContact(
-            localId = localId,
-            identityId = identityId.copyOf(),
-            identityPublicKey = identityPublicKey.copyOf(),
-            pinnedAtEpochSeconds = pinnedAtEpochSeconds,
-        )
+        val contact = newContact(state.contacts, identityId, identityPublicKey, pinnedAtEpochSeconds)
         persist(state.copy(contacts = state.contacts + contact))
+        return contact.copyDeep()
+    }
+
+    /**
+     * Commits the creator-side claim result and invite retirement in one local state write.
+     * The server claim may already be consumed, so a local write failure must never leave a
+     * partially updated contact record that looks committed while the pending invite remains.
+     */
+    @Synchronized
+    fun commitClaimedIdentity(
+        ownerIdentityId: ByteArray,
+        token: ByteArray,
+        identityId: ByteArray,
+        identityPublicKey: ByteArray,
+        pinnedAtEpochSeconds: Long,
+    ): PinnedContact {
+        requireOwner(ownerIdentityId)
+        if (token.size != INVITE_TOKEN_BYTES) {
+            throw ContactStateException("Invite token size is invalid")
+        }
+        validatePeerIdentity(ownerIdentityId, identityId, identityPublicKey, pinnedAtEpochSeconds)
+
+        val state = load(ownerIdentityId)
+        if (state.pendingInvites.none { it.token.contentEquals(token) }) {
+            throw ContactStateException("Claimed invite is not present in local pending state")
+        }
+        val existing = findMatchingPin(state, identityId, identityPublicKey)
+        val contact = existing ?: run {
+            if (state.contacts.size >= ContactStateCodec.MAX_CONTACTS) {
+                throw ContactStateException("Contact capacity reached")
+            }
+            newContact(state.contacts, identityId, identityPublicKey, pinnedAtEpochSeconds)
+        }
+        val retainedInvites = state.pendingInvites.filterNot { it.token.contentEquals(token) }
+        val contacts = if (existing == null) state.contacts + contact else state.contacts
+        persist(state.copy(pendingInvites = retainedInvites, contacts = contacts))
         return contact.copyDeep()
     }
 
@@ -231,6 +252,48 @@ internal class ContactLocalState(
             throw ContactStateException("Unable to commit local contact state")
         }
     }
+
+    private fun validatePeerIdentity(
+        ownerIdentityId: ByteArray,
+        identityId: ByteArray,
+        identityPublicKey: ByteArray,
+        pinnedAtEpochSeconds: Long,
+    ) {
+        if (pinnedAtEpochSeconds < 0) {
+            throw ContactStateException("Contact pin timestamp is invalid")
+        }
+        if (identityId.contentEquals(ownerIdentityId)) {
+            throw ContactIdentityConflictException("Local identity cannot be pinned as a contact")
+        }
+        val derivedId = ContactCrypto.identityId(identityPublicKey)
+        if (!MessageDigest.isEqual(derivedId, identityId)) {
+            throw ContactIdentityConflictException("Peer identity id does not match its public key")
+        }
+    }
+
+    private fun findMatchingPin(
+        state: ContactState,
+        identityId: ByteArray,
+        identityPublicKey: ByteArray,
+    ): PinnedContact? {
+        val existing = state.contacts.firstOrNull { it.identityId.contentEquals(identityId) } ?: return null
+        if (!existing.identityPublicKey.contentEquals(identityPublicKey)) {
+            throw ContactIdentityConflictException("Pinned contact identity key changed")
+        }
+        return existing
+    }
+
+    private fun newContact(
+        existing: List<PinnedContact>,
+        identityId: ByteArray,
+        identityPublicKey: ByteArray,
+        pinnedAtEpochSeconds: Long,
+    ): PinnedContact = PinnedContact(
+        localId = allocateLocalId(existing),
+        identityId = identityId.copyOf(),
+        identityPublicKey = identityPublicKey.copyOf(),
+        pinnedAtEpochSeconds = pinnedAtEpochSeconds,
+    )
 
     private fun pruneExpired(state: ContactState, nowEpochSeconds: Long): ContactState = state.copy(
         pendingInvites = state.pendingInvites.filter { it.expiresAtEpochSeconds > nowEpochSeconds },
