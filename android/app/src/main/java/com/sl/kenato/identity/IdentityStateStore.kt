@@ -17,9 +17,14 @@ internal class SharedPreferencesIdentityStateStore(context: Context) : IdentityS
     private val decoder = Base64.getUrlDecoder()
 
     override fun read(): ByteArray? {
-        val encoded = preferences.getString(STATE_KEY, null) ?: return null
-        if (encoded.length > MAX_ENCODED_STATE_CHARS) {
-            throw IdentityStateException("Persisted identity state is too large")
+        val encoded = try {
+            preferences.getString(STATE_KEY, null)
+        } catch (error: ClassCastException) {
+            throw IdentityStateException("Persisted identity state has an invalid storage type", error)
+        } ?: return null
+
+        if (encoded.isEmpty() || encoded.length > MAX_ENCODED_STATE_CHARS) {
+            throw IdentityStateException("Persisted identity state size is invalid")
         }
 
         return try {
@@ -47,6 +52,6 @@ internal class SharedPreferencesIdentityStateStore(context: Context) : IdentityS
     private companion object {
         const val PREFERENCES_NAME = "kenato_identity_v1"
         const val STATE_KEY = "state"
-        const val MAX_ENCODED_STATE_CHARS = IdentityStateCodec.MAX_STATE_BYTES * 2
+        const val MAX_ENCODED_STATE_CHARS = (IdentityStateCodec.MAX_STATE_BYTES * 4 + 2) / 3
     }
 }
