@@ -5,6 +5,7 @@ import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -76,6 +77,22 @@ class LocalIdentityRepositoryTest {
     }
 
     @Test
+    fun failedRotationCommitPreservesPreviouslyDurableState() {
+        val backend = TestIdentityKeyBackend()
+        val store = InMemoryIdentityStateStore()
+        val repository = repository(backend, store)
+        repository.loadOrCreate()
+        val durableBefore = requireNotNull(store.read())
+        store.failWrites = true
+
+        assertThrows(IdentityPersistenceException::class.java) {
+            repository.rotateSignedPreKey()
+        }
+
+        assertArrayEquals(durableBefore, requireNotNull(store.read()))
+    }
+
+    @Test
     fun signedPreKeyRotationRetainsOnlyOnePreviousKey() {
         val backend = TestIdentityKeyBackend()
         val store = InMemoryIdentityStateStore()
@@ -134,6 +151,23 @@ class LocalIdentityRepositoryTest {
         assertThrows(IllegalArgumentException::class.java) {
             repository.replenishOneTimePreKeys(IdentityStateCodec.MAX_ONE_TIME_PREKEYS + 1)
         }
+    }
+
+    @Test
+    fun failedRecoveryStateClearDoesNotDeleteManagedKeys() {
+        val backend = TestIdentityKeyBackend()
+        val store = InMemoryIdentityStateStore()
+        val repository = repository(backend, store)
+        repository.loadOrCreate()
+        store.failClears = true
+
+        assertThrows(IdentityPersistenceException::class.java) {
+            repository.resetLocalIdentityForRecovery()
+        }
+
+        assertTrue(backend.hasAllManagedKeys())
+        assertEquals(0, backend.deleteCalls)
+        assertTrue(store.read() != null)
     }
 
     @Test
@@ -214,6 +248,7 @@ class LocalIdentityRepositoryTest {
 
 private class InMemoryIdentityStateStore(
     var failWrites: Boolean = false,
+    var failClears: Boolean = false,
 ) : IdentityStateStore {
     var value: ByteArray? = null
 
@@ -228,6 +263,9 @@ private class InMemoryIdentityStateStore(
     }
 
     override fun clear(): Boolean {
+        if (failClears) {
+            return false
+        }
         value = null
         return true
     }
