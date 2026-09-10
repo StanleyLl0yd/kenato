@@ -27,14 +27,16 @@ func main() {
 
 	startupCtx, startupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
 	store, err := contact.OpenSQLiteStore(startupCtx, databasePath())
-	if err == nil {
-		_, err = store.PruneExpiredInvites(startupCtx, time.Now().UTC())
-	}
 	startupCancel()
 	if err != nil {
-		if store != nil {
-			_ = store.Close()
-		}
+		logger.Fatalf("contact store initialization failed")
+	}
+
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	_, err = store.PruneExpiredInvites(cleanupCtx, time.Now().UTC())
+	cleanupCancel()
+	if err != nil {
+		_ = store.Close()
 		logger.Fatalf("contact store initialization failed")
 	}
 	defer func() {
