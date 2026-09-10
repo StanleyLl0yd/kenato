@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.security.MessageDigest
 
 internal enum class PreKeyKind(val code: Int) {
     SIGNED(1),
@@ -37,13 +38,15 @@ internal object IdentityStateCodec {
     const val MAX_ENCRYPTED_PRIVATE_KEY_BYTES = 8 * 1024
 
     private const val FORMAT_VERSION = 1
+    private const val STATE_DIGEST = "SHA-256"
+    private const val STATE_DIGEST_BYTES = 32
     private val magic = byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'I'.code.toByte(), 'D'.code.toByte())
 
     fun encode(state: LocalIdentityState): ByteArray {
         validate(state)
 
-        val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { output ->
+        val payload = ByteArrayOutputStream()
+        DataOutputStream(payload).use { output ->
             output.write(magic)
             output.writeInt(FORMAT_VERSION)
             output.writeBounded(state.identityPublicKey)
@@ -55,20 +58,35 @@ internal object IdentityStateCodec {
             output.writeInt(state.nextPreKeyId)
         }
 
-        return bytes.toByteArray().also {
-            if (it.size > MAX_STATE_BYTES) {
-                throw IdentityStateException("Encoded identity state exceeds the maximum size")
-            }
+        val payloadBytes = payload.toByteArray()
+        if (payloadBytes.size > MAX_STATE_BYTES - STATE_DIGEST_BYTES) {
+            throw IdentityStateException("Encoded identity state exceeds the maximum size")
         }
+
+        val digest = MessageDigest.getInstance(STATE_DIGEST).digest(payloadBytes)
+        return ByteArrayOutputStream(payloadBytes.size + digest.size).apply {
+            write(payloadBytes)
+            write(digest)
+        }.toByteArray()
     }
 
     fun decode(bytes: ByteArray): LocalIdentityState {
-        if (bytes.isEmpty() || bytes.size > MAX_STATE_BYTES) {
+        if (bytes.size <= STATE_DIGEST_BYTES || bytes.size > MAX_STATE_BYTES) {
             throw IdentityStateException("Identity state size is invalid")
         }
 
+        val payloadLength = bytes.size - STATE_DIGEST_BYTES
+        val actualDigest = MessageDigest.getInstance(STATE_DIGEST).run {
+            update(bytes, 0, payloadLength)
+            digest()
+        }
+        val expectedDigest = bytes.copyOfRange(payloadLength, bytes.size)
+        if (!MessageDigest.isEqual(actualDigest, expectedDigest)) {
+            throw IdentityStateException("Identity state checksum is invalid")
+        }
+
         try {
-            DataInputStream(ByteArrayInputStream(bytes)).use { input ->
+            DataInputStream(ByteArrayInputStream(bytes, 0, payloadLength)).use { input ->
                 val actualMagic = ByteArray(magic.size)
                 input.readFully(actualMagic)
                 if (!actualMagic.contentEquals(magic)) {
