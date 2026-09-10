@@ -149,6 +149,23 @@ class ContactProtocolTest {
         }
     }
 
+    @Test
+    fun inviteVerificationRejectsSignerKeyWhoseIdentityIdDoesNotMatchInvite() {
+        val signer = newKeyPair("secp256r1")
+        val signerId = ContactCrypto.identityId(signer.public.encoded)
+        val substitutedId = signerId.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+        val token = ByteArray(INVITE_TOKEN_BYTES) { (it + 1).toByte() }
+        val invite = M2InviteDescriptor(
+            creatorIdentityId = substitutedId,
+            token = token,
+            signature = sign(signer, ContactCanonical.invitePayload(substitutedId, token)),
+        )
+
+        assertThrows(ContactProtocolException::class.java) {
+            ContactCrypto.verifyInvite(invite, signer.public.encoded)
+        }
+    }
+
     private fun newKeyPair(curve: String): KeyPair = KeyPairGenerator.getInstance("EC").run {
         initialize(ECGenParameterSpec(curve))
         generateKeyPair()
