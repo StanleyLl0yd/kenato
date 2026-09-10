@@ -89,7 +89,7 @@ The M2 invite redeemer is the deterministic initiator of the first M3 Olm sessio
 
 An M3 `SessionBootstrapBundle` contains only public material: the Kenato identity id, an account generation, a publication revision, 32-byte Olm Ed25519 and Curve25519 identity public keys, 1..50 32-byte Curve25519 one-time public keys, and a P-256 binding signature.
 
-Within one account generation, the Olm identity public keys do not change. Publication revisions increase monotonically; an exact same-revision replay is idempotent and conflicting reuse is rejected. An account replacement increments `account_generation` by exactly one and restarts `publication_revision` at 1. Old generation material and outstanding reservations are not silently carried across the replacement.
+Within one account generation, the Olm identity public keys do not change. Publication revisions increase monotonically; an exact same-revision replay is idempotent and conflicting reuse is rejected. An account replacement increments `account_generation` by exactly one and restarts `publication_revision` at 1. A creator account replacement invalidates reservations that consume an OTK from the replaced generation; a redeemer account replacement does not discard another identity's already reserved creator OTK.
 
 ### M3 session-account binding
 
@@ -106,7 +106,9 @@ KENATO-SESSION-BOOTSTRAP-V1\0
 || repeated(one_time_prekey_id:u64 || one_time_prekey_public_key[32])
 ```
 
-One-time-prekey ids are positive and strictly increasing. Public-key bytes must be unique inside the publication. The binding signature itself is excluded from the signed payload.
+One-time-prekey ids are positive and strictly increasing. Public-key bytes must be unique inside the publication and must not alias either Olm account identity public key. The binding signature itself is excluded from the signed payload.
+
+A monotonic high-water mark prevents old OTK bookkeeping ids from becoming available again. A currently available or reserved id may remain in a later signed publication only with identical public-key bytes. If an invite expires after reserving an OTK before the creator learns which OTK was consumed, the same id/key may remain in the immediately following signed publication without blocking fresh replenishment, but the server treats that stale entry as historical and does not reinsert it into the available pool. An id already omitted by the previous signed publication remains retired. Fresh OTKs use ids above the high-water mark, and a currently known OTK public key cannot be aliased under another id.
 
 ### M3 one-time-key reservation
 
@@ -119,11 +121,27 @@ KENATO-SESSION-RESERVE-V1\0
 || invite_token[32]
 ```
 
-The server verifies the redeemer's pinned P-256 identity and atomically reserves exactly one available creator M3 one-time key. An exact retry for the same invite/redeemer returns the same reservation. A reserved key is never returned to another invite. Kenato M3 deliberately does not use Olm fallback keys; exhaustion fails closed until the creator publishes fresh one-time keys.
+The server verifies the redeemer's pinned P-256 identity and atomically reserves exactly one available creator M3 one-time key. An exact retry for the same invite/redeemer returns the same reservation while that creator account generation remains current. A creator account-generation replacement retires old-generation reservations and requires allocation from the replacement generation. A reserved key is never returned to another invite. Kenato M3 deliberately does not use Olm fallback keys; exhaustion fails closed until the creator publishes fresh one-time keys.
+
+### M3 initial-session control plaintext
+
+Before creating the first Olm pre-key frame, the redeemer constructs this exact protocol-control plaintext:
+
+```text
+KENATO-SESSION-INIT-CONTROL-V1\0
+|| creator_identity_id[32]
+|| redeemer_identity_id[32]
+|| sha256(invite_token)[32]
+|| creator_account_generation:u64
+|| creator_one_time_prekey_id:u64
+|| redeemer_account_generation:u64
+```
+
+This is protocol control data, not user content. It is encrypted and authenticated by the first Olm pre-key message. The server never receives it in plaintext and never parses it. After accepting/decrypting the pre-key frame, the creator must compare the complete control record against the expected invite/contact identities, invite-token hash, local creator account generation/OTK, and authenticated redeemer account generation before committing the inbound session. A mismatch fails closed.
 
 ### M3 initial-session submission
 
-The redeemer creates the outbound Olm session locally and submits one opaque Olm pre-key frame. The P-256 submit proof signs SHA-256 of:
+The redeemer submits the resulting opaque Olm pre-key frame. The P-256 submit proof signs SHA-256 of:
 
 ```text
 KENATO-SESSION-INIT-SUBMIT-V1\0
@@ -137,7 +155,7 @@ KENATO-SESSION-INIT-SUBMIT-V1\0
 || sha256(olm_message)[32]
 ```
 
-For this operation `olm_message_type` must be the Olm pre-key type. The server does not parse or decrypt `olm_message`. Exact retries are idempotent by the authenticated canonical payload; conflicting replacement of the initialization frame is rejected.
+For this operation `olm_message_type` must be the Olm pre-key type. The server does not parse or decrypt `olm_message`. Exact retries are idempotent by the authenticated canonical payload; conflicting replacement of the initialization frame is rejected. The outer P-256 proof and inner Olm-encrypted control record intentionally bind the same bootstrap context at different trust boundaries.
 
 ### M3 creator claim
 
@@ -147,7 +165,7 @@ The creator authenticates the terminal session-bootstrap claim with:
 KENATO-SESSION-CLAIM-V1\0 || creator_identity_id[32] || invite_token[32]
 ```
 
-The response contains the authenticated M2 redeemer identity/proof, the redeemer's authenticated M3 public session bundle, the exact creator account generation and reserved one-time public key, the opaque Olm pre-key frame, and the redeemer's submit signature. The creator therefore verifies every binding locally rather than trusting the server to assert a session identity or initialization frame.
+The response contains the authenticated M2 redeemer identity/proof, the redeemer's authenticated M3 public session bundle, the exact creator account generation and reserved one-time public key, the opaque Olm pre-key frame, and the redeemer's submit signature. The server also retains and re-validates internally the signed creator session snapshot from which the reservation was allocated; that snapshot is not redundantly returned because the creator owns the corresponding local account state. The creator must verify the returned generation/key against that local account before creating the inbound Olm session and then verify the decrypted control plaintext before committing it.
 
 A successful M3 claim deletes the invite and temporary reservation/init state in the same transaction. A claim replay returns not-found. Expired invites remain unusable at the exact expiry boundary and normal retention cleanup deletes their cascaded M3 temporary state.
 
@@ -161,7 +179,7 @@ Through M3 the server may retain only the minimum state required by the implemen
 - current session-account generation/publication revision and bounded key-allocation state;
 - while a redeemed invite is awaiting creator claim, the reserved creator public one-time key and a bounded opaque Olm pre-key frame plus authenticated proof metadata.
 
-The server never receives a Kenato private identity key, an Olm private/session key, or plaintext user content. There is no public identity or session-key lookup/search endpoint; M3 bootstrap disclosure is reachable only through the authenticated live invite relationship.
+The server never receives a Kenato private identity key, an Olm private/session key, the session-init control record in plaintext, or plaintext user content. There is no public identity or session-key lookup/search endpoint; M3 bootstrap disclosure is reachable only through the authenticated live invite relationship.
 
 ## Resource limits
 
