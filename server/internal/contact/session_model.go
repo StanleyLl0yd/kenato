@@ -92,14 +92,15 @@ type ClaimSessionInitRequest struct {
 }
 
 type ClaimSessionInitResult struct {
-	RedeemerIdentityBundle PublicIdentityBundle
-	RedemptionSignature    []byte
-	RedeemedAt             int64
-	RedeemerSessionBundle  SessionBootstrapBundle
-	CreatorOneTimeKey      SessionOneTimePreKey
-	OlmMessageType         uint32
-	OlmMessage             []byte
-	SubmitSignature        []byte
+	RedeemerIdentityBundle   PublicIdentityBundle
+	RedemptionSignature      []byte
+	RedeemedAt               int64
+	RedeemerSessionBundle    SessionBootstrapBundle
+	CreatorOneTimeKey        SessionOneTimePreKey
+	CreatorAccountGeneration uint64
+	OlmMessageType           uint32
+	OlmMessage               []byte
+	SubmitSignature          []byte
 }
 
 type SessionReservationRecord struct {
@@ -136,12 +137,13 @@ type SessionClaimRecord struct {
 }
 
 type StoredSessionClaim struct {
-	RedeemerIdentityBundle []byte
-	RedemptionSignature    []byte
-	RedeemedAt             int64
-	RedeemerSessionBundle  []byte
-	CreatorOneTimeKey      SessionOneTimePreKey
-	OlmMessageType         uint32
-	OlmMessage             []byte
-	SubmitSignature        []byte
+	RedeemerIdentityBundle   []byte
+	RedemptionSignature      []byte
+	RedeemedAt               int64
+	RedeemerSessionBundle    []byte
+	CreatorOneTimeKey        SessionOneTimePreKey
+	CreatorAccountGeneration uint64
+	OlmMessageType           uint32
+	OlmMessage               []byte
+	SubmitSignature          []byte
 }
