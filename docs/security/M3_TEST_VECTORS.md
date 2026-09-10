@@ -36,6 +36,28 @@ Expected canonical payload hex:
 4b454e41544f2d53455353494f4e2d524553455256452d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f
 ```
 
+## Session init submit proof
+
+Inputs:
+
+- creator identity id: `000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f`
+- redeemer identity id: `202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f`
+- invite token: `404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f`
+- creator account generation: `2`
+- creator one-time-prekey id: `7`
+- redeemer account generation: `4`
+- Olm message type: `0` (pre-key)
+- opaque Olm frame bytes for this framing vector: ASCII `opaque-pre-key-frame`
+- SHA-256 of those frame bytes: `cfaac14d99379ff5a9887f3342cca9eaaa70803f570bf7e8913aef9b0403e9e4`
+
+Expected canonical payload hex:
+
+```text
+4b454e41544f2d53455353494f4e2d494e49542d5355424d49542d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f00000000000000020000000000000007000000000000000400000000cfaac14d99379ff5a9887f3342cca9eaaa70803f570bf7e8913aef9b0403e9e4
+```
+
+The frame bytes in this vector are synthetic and are not intended to be a valid vodozemac ciphertext. Only their digest is included in the P-256-signed Kenato payload, so production Olm ciphertext remains opaque and randomized.
+
 ## Creator claim proof
 
 Inputs:
@@ -48,5 +70,3 @@ Expected canonical payload hex:
 ```text
 4b454e41544f2d53455353494f4e2d434c41494d2d563100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f
 ```
-
-The submit-init proof additionally includes SHA-256 of the opaque Olm pre-key frame. Its deterministic framing is exercised directly in Go tests while the ciphertext itself remains intentionally opaque and randomized by the session engine.
