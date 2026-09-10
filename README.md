@@ -36,7 +36,7 @@ docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-**M0 — Foundation is complete.** **M1 — Local Identity** is the next planned milestone and has not started.
+**M0 — Foundation** and **M1 — Local Identity** are complete. **M2 — Invite + Contact Establishment** is the next planned milestone and has not started.
 
 ## Security
 

@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0 architecture baseline. M0 is complete; this model remains authoritative until implementation changes require an update.
+Status: M1 Local Identity implementation. This model is authoritative for the implemented M0 foundation plus M1 local-identity boundary.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -32,6 +32,10 @@ Trusted to protect application secrets while the operating system and applicatio
 
 Kenato cannot protect plaintext from a fully compromised device or OS.
 
+M1 generates the long-lived identity signing key inside Android Keystore. Its private key is non-exportable. Prekey private keys are generated in process memory and immediately persisted only after AES-256-GCM wrapping with a separate non-exportable Android Keystore key. Hardware backing is used when the device provides it but is not assumed by the security model.
+
+Loss, corruption, or mismatch of the M1 persisted identity record and required Keystore entries fails closed. Kenato does not silently create a replacement identity in that condition; replacement requires an explicit destructive recovery action.
+
 ### Kenato server
 
 The server is not trusted with user content.
@@ -46,6 +50,8 @@ It may process:
 - operational state needed to deliver traffic.
 
 Compromise of the server must not reveal message or voice plaintext.
+
+M1 does not upload identity material or prekeys. Server publication begins only in a later reviewed milestone.
 
 ### TURN server
 
@@ -135,6 +141,8 @@ Mitigations:
 - unexpected identity change must be visible;
 - new key must not be silently trusted.
 
+M1 additionally derives the local identity identifier from the full SHA-256 digest of the exact encoded public identity key, signs the current signed prekey with the non-exportable identity key, and rejects local identity-state/key mismatches rather than silently rotating identity.
+
 ### User enumeration and spam
 
 An attacker tries to discover users or flood them.
@@ -161,13 +169,16 @@ Mitigations:
 - short-lived TURN credentials;
 - rate limiting.
 
+The M1 persisted identity record has an explicit maximum serialized size and the one-time prekey pool is hard-bounded. Corrupt lengths/counts are rejected before allocation beyond those limits.
+
 ### Local data leakage
 
 Backups, logs, crash reports, screenshots, or local storage may expose sensitive information.
 
 Mitigations:
 
-- secrets in Android Keystore;
+- long-lived identity and prekey-wrapping keys in Android Keystore;
+- prekey private material persisted only as AES-256-GCM authenticated ciphertext bound to its kind, id, and public key;
 - cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
 - cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
 - backup policy is enforced by repository checks and Android build/lint validation;
