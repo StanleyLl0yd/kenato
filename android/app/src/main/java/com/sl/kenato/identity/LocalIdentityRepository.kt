@@ -87,6 +87,16 @@ class LocalIdentityRepository internal constructor(
         return updated.toBundle()
     }
 
+    /** Signs an already domain-separated, bounded protocol payload without exposing the private key. */
+    @Synchronized
+    internal fun signIdentityProtocolPayload(payload: ByteArray): ByteArray {
+        if (payload.isEmpty() || payload.size > MAX_PROTOCOL_SIGNING_BYTES) {
+            throw IdentityStateException("Identity protocol signing payload size is invalid")
+        }
+        requireInitializedState()
+        return keyBackend.signIdentity(payload)
+    }
+
     /**
      * Destructive recovery primitive. A caller must require an explicit user decision before invoking it.
      */
@@ -259,6 +269,7 @@ class LocalIdentityRepository internal constructor(
     companion object {
         const val DEFAULT_ONE_TIME_PREKEYS = 32
         private const val FIRST_PREKEY_ID = 1
+        private const val MAX_PROTOCOL_SIGNING_BYTES = 64 shl 10
 
         fun create(context: Context): LocalIdentityRepository = LocalIdentityRepository(
             keyBackend = AndroidIdentityKeyBackend(),
