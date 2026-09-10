@@ -160,10 +160,9 @@ internal object ContactStateCodec {
         if (state.pendingInvites.size > MAX_PENDING_INVITES) {
             throw ContactStateException("Too many pending invites")
         }
-        val inviteTokens = HashSet<String>()
-        state.pendingInvites.forEach { invite ->
+        state.pendingInvites.forEachIndexed { index, invite ->
             if (
-                invite.creatorIdentityId.size != CONTACT_ID_BYTES ||
+                !invite.creatorIdentityId.contentEquals(state.ownerIdentityId) ||
                 invite.token.size != INVITE_TOKEN_BYTES ||
                 invite.signature.isEmpty() ||
                 invite.signature.size > MAX_CONTACT_SIGNATURE_BYTES ||
@@ -171,29 +170,37 @@ internal object ContactStateCodec {
             ) {
                 throw ContactStateException("Pending invite is invalid")
             }
-            val tokenKey = invite.token.contentHashCode().toString() + ":" + invite.token.joinToString("")
-            if (!inviteTokens.add(tokenKey)) {
+            if (state.pendingInvites.take(index).any { it.token.contentEquals(invite.token) }) {
                 throw ContactStateException("Duplicate pending invite token")
             }
         }
         if (state.contacts.size > MAX_CONTACTS) {
             throw ContactStateException("Too many contacts")
         }
-        val localIds = HashSet<String>()
-        val identityIds = HashSet<String>()
-        state.contacts.forEach { contact ->
+        state.contacts.forEachIndexed { index, contact ->
             if (
                 contact.localId.size != LOCAL_CONTACT_ID_BYTES ||
                 contact.identityId.size != CONTACT_ID_BYTES ||
                 contact.identityPublicKey.isEmpty() ||
                 contact.identityPublicKey.size > MAX_CONTACT_PUBLIC_KEY_BYTES ||
-                contact.pinnedAtEpochSeconds < 0
+                contact.pinnedAtEpochSeconds < 0 ||
+                contact.identityId.contentEquals(state.ownerIdentityId)
             ) {
                 throw ContactStateException("Pinned contact is invalid")
             }
-            val localKey = contact.localId.joinToString("")
-            val identityKey = contact.identityId.joinToString("")
-            if (!localIds.add(localKey) || !identityIds.add(identityKey)) {
+            val derivedIdentityId = try {
+                ContactCrypto.identityId(contact.identityPublicKey)
+            } catch (error: ContactProtocolException) {
+                throw ContactStateException("Pinned contact public key is invalid", error)
+            }
+            if (!MessageDigest.isEqual(derivedIdentityId, contact.identityId)) {
+                throw ContactStateException("Pinned contact identity id does not match its public key")
+            }
+            val previous = state.contacts.take(index)
+            if (
+                previous.any { it.localId.contentEquals(contact.localId) } ||
+                previous.any { it.identityId.contentEquals(contact.identityId) }
+            ) {
                 throw ContactStateException("Contact state contains duplicate pins")
             }
         }
