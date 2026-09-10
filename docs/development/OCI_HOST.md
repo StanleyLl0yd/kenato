@@ -16,26 +16,32 @@ Kenato's initial non-production development host is an Oracle Cloud Infrastructu
 
 The instance public IP, SSH private keys, host fingerprints, credentials, and other host-specific secrets are operational data and must not be committed to this repository. Administrators should keep a local SSH alias such as `kenato` in `~/.ssh/config`.
 
-## Security baseline
+## Security state
 
-The development host is intentionally kept minimal. The current baseline includes:
+The last captured interactive verification established:
 
 - root SSH login disabled;
 - password and keyboard-interactive SSH authentication disabled;
 - public-key SSH authentication enabled;
-- Fail2ban for `sshd`;
-- unattended package security updates;
+- Fail2ban active for `sshd`;
+- unattended package-update timers enabled;
+- system clock synchronized with NTP active;
+- Oracle-provided instance-service firewall rules preserved after host-firewall package recovery.
+
+The following hardening items are desired before production use but are not treated by this repository document as verified runtime facts until fresh host evidence confirms them:
+
 - persistent systemd journal with bounded retention;
-- `auditd` enabled;
-- AppArmor enabled;
+- `auditd` active;
+- AppArmor policy state verified;
 - unused `rpcbind` disabled;
 - conservative kernel/network sysctl hardening;
-- Oracle-provided instance-service firewall rules preserved.
+- final host-firewall policy preserving OCI instance-service rules;
+- backup policy and restore test.
 
-Source-IP restriction for SSH and final production perimeter rules are deliberately deferred until the deployment milestone. The development host must not be treated as a production security boundary.
+Source-IP restriction for SSH and final production perimeter rules are deliberately deferred. The development host must not be treated as a production security boundary, and this document is not a substitute for live host verification.
 
 ## Milestone boundary
 
-M1 (`Local Identity`) is device-local. It must not depend on this host or require deploying the Kenato backend. Server-side identity publication, prekey upload, and invite/contact establishment belong to M2.
+M1 (`Local Identity`) is complete and remains entirely device-local. M2 (`Invite + Contact Establishment`) has not started; server-side identity publication, prekey upload, and invite/contact establishment belong to that milestone.
 
-Do not expose the M0 server skeleton publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
+Do not expose the foundation server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
