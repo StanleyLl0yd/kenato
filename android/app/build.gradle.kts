@@ -18,7 +18,7 @@ val hasAnyReleaseSigning = releaseSigningValues.any { !it.isNullOrBlank() }
 val hasReleaseSigning = releaseSigningValues.all { !it.isNullOrBlank() }
 
 check(!hasAnyReleaseSigning || hasReleaseSigning) {
-    "Release signing configuration is incomplete; set all KENATO_KEYSTORE_* variables or none"
+    "Release signing configuration is incomplete; set all four Kenato release-signing variables or none"
 }
 
 android {
