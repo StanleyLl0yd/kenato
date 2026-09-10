@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
@@ -89,7 +90,7 @@ internal class AndroidIdentityKeyBackend : IdentityKeyBackend {
     }
 
     override fun signIdentity(payload: ByteArray): ByteArray {
-        val privateKey = keyStore.getKey(IDENTITY_ALIAS, null)
+        val privateKey = keyStore.getKey(IDENTITY_ALIAS, null) as? PrivateKey
             ?: throw IdentityStateException("Android Keystore identity private key is unavailable")
         return try {
             Signature.getInstance(ECDSA_SIGNATURE).run {
