@@ -11,17 +11,33 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/StanleyLl0yd/kenato/server/internal/contact"
 	"github.com/StanleyLl0yd/kenato/server/internal/httpapi"
 )
 
-const defaultListenAddress = "127.0.0.1:8080"
+const (
+	defaultListenAddress = "127.0.0.1:8080"
+	defaultDatabasePath  = "kenato.db"
+)
 
 func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)
 
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	store, err := contact.OpenSQLiteStore(startupCtx, databasePath())
+	startupCancel()
+	if err != nil {
+		logger.Fatalf("contact store initialization failed")
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Printf("contact store close failed")
+		}
+	}()
+
 	server := &http.Server{
 		Addr:              listenAddress(),
-		Handler:           httpapi.NewHandler(),
+		Handler:           httpapi.NewHandler(contact.NewService(store)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -44,7 +60,7 @@ func main() {
 		logger.Printf("shutdown requested: %s", sig)
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatalf("server failed: %v", err)
+			logger.Fatalf("server failed")
 		}
 		return
 	}
@@ -53,9 +69,9 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Printf("graceful shutdown failed: %v", err)
+		logger.Printf("graceful shutdown failed")
 		if closeErr := server.Close(); closeErr != nil {
-			logger.Printf("forced shutdown failed: %v", closeErr)
+			logger.Printf("forced shutdown failed")
 		}
 	}
 }
@@ -65,4 +81,11 @@ func listenAddress() string {
 		return address
 	}
 	return defaultListenAddress
+}
+
+func databasePath() string {
+	if path := strings.TrimSpace(os.Getenv("KENATO_DB_PATH")); path != "" {
+		return path
+	}
+	return defaultDatabasePath
 }

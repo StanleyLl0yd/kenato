@@ -11,7 +11,7 @@ func TestHealth(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	NewHandler(nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
@@ -31,7 +31,7 @@ func TestHealthRejectsUnsupportedMethod(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	NewHandler(nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
@@ -43,7 +43,7 @@ func TestRejectsKnownOversizedRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/healthz", body)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	NewHandler(nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)

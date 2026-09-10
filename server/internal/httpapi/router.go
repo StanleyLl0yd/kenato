@@ -3,17 +3,22 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/StanleyLl0yd/kenato/server/internal/contact"
 )
 
-const maxRequestBodyBytes int64 = 64 << 10
+const maxRequestBodyBytes int64 = contact.MaxWireMessageBytes
 
 type healthResponse struct {
 	Status string `json:"status"`
 }
 
-func NewHandler() http.Handler {
+func NewHandler(service contactService) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
+	if service != nil {
+		newContactAPI(service).register(mux)
+	}
 	return withSecurityHeaders(withRequestLimit(mux))
 }
 

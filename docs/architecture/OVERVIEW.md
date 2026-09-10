@@ -67,23 +67,24 @@ Infrastructure
 
 ## Server
 
-Initial server:
+Current server:
 
-- Go
-- single service binary: `kenato-server`
-- SQLite/WAL
-- WebSocket + HTTPS
-- systemd deployment
-- coturn as a separate service
-- loopback listener by default; public deployment must explicitly expose it behind the reviewed TLS boundary
+- Go single-service binary: `kenato-server`;
+- SQLite/WAL persistence;
+- bounded HTTP/Protocol Buffers M2 identity/invite API;
+- authenticated public identity and prekey publication;
+- single-use expiring invite lifecycle with token hashes at rest;
+- no public identity lookup/search endpoint;
+- loopback listener by default;
+- intended systemd deployment behind a reviewed TLS-terminating reverse proxy.
 
-No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
+Later milestones add WebSocket routing, bounded mailbox behavior and TURN credential issuance. No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
 
 ## Protocol
 
 The wire protocol is versioned independently of implementation language.
 
-Planned serialization: Protocol Buffers.
+Serialization is Protocol Buffers. M2 canonical signature payloads are defined independently of protobuf serialization so unknown-field handling and implementation language cannot alter signature bytes.
 
 Transport-level metadata must contain only fields required for routing and protocol evolution. Message type and user content should remain inside authenticated ciphertext whenever the server does not require them.
 
@@ -93,7 +94,10 @@ Transport-level metadata must contain only fields required for routing and proto
 - No phone number or email is required.
 - No public user search exists.
 - New contacts are established only by an invite.
+- M2 invite tokens are 32 random bytes, single-use, expire after 24 hours, and are represented at rest on the server only by SHA-256 hashes.
+- Creator and redeemer prove their respective invite/contact actions with long-lived identity signatures.
 - Contact identity keys are pinned locally and must not silently change.
+- M2 deliberately stops before DH session establishment, one-time-prekey consumption and Double Ratchet state; those belong to M3.
 
 ## Messaging
 
@@ -142,6 +146,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M1 is complete and remains device-local. M2 has not started, and public server exposure must still wait for an explicitly reviewed deployment boundary.
+M1 is complete. M2 is in progress: the protocol contract is accepted and the bounded server identity/invite backend is being implemented. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.
