@@ -99,6 +99,7 @@ type ClaimSessionInitResult struct {
 	CreatorOneTimeKey      SessionOneTimePreKey
 	OlmMessageType         uint32
 	OlmMessage             []byte
+	SubmitSignature        []byte
 }
 
 type SessionReservationRecord struct {
@@ -123,6 +124,7 @@ type SessionInitRecord struct {
 	OlmMessageType             uint32
 	OlmMessage                 []byte
 	SubmitSignature            []byte
+	SubmitPayloadHash          [sha256.Size]byte
 	RedeemerSessionBundle      []byte
 	SubmittedAt                int64
 }
@@ -141,4 +143,5 @@ type StoredSessionClaim struct {
 	CreatorOneTimeKey      SessionOneTimePreKey
 	OlmMessageType         uint32
 	OlmMessage             []byte
+	SubmitSignature        []byte
 }
