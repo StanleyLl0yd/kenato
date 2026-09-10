@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 errors: list[str] = []
@@ -39,6 +40,23 @@ required_backup_domains = {
 }
 
 
+def validate_backup_section(path: Path, name: str, section: ET.Element) -> None:
+    if any(node.tag == "include" for node in section.iter()):
+        errors.append(f"Android: {path.name} {name} must not include app data")
+
+    excluded = {
+        node.attrib.get("domain")
+        for node in section.iter("exclude")
+        if node.attrib.get("path") == "."
+    }
+    missing_domains = required_backup_domains - excluded
+    if missing_domains:
+        errors.append(
+            f"Android: {path.name} {name} does not exclude: "
+            + ", ".join(sorted(missing_domains))
+        )
+
+
 def validate_backup_rules(
     path: Path,
     expected_root: str,
@@ -48,37 +66,25 @@ def validate_backup_rules(
         errors.append(f"Android: {path.name} is required")
         return
 
-    text = path.read_text(encoding="utf-8")
-    if f"<{expected_root}>" not in text or f"</{expected_root}>" not in text:
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as error:
+        errors.append(f"Android: {path.name} is not valid XML: {error}")
+        return
+
+    if root.tag != expected_root:
         errors.append(f"Android: {path.name} root must be {expected_root}")
         return
 
-    sections: list[tuple[str, str]] = []
     if section_names:
         for name in section_names:
-            opening = f"<{name}>"
-            closing = f"</{name}>"
-            if opening not in text or closing not in text:
-                errors.append(f"Android: missing {name} backup rules")
+            matching = [section for section in root if section.tag == name]
+            if len(matching) != 1:
+                errors.append(f"Android: {path.name} must contain exactly one {name} section")
                 continue
-            sections.append((name, text.split(opening, 1)[1].split(closing, 1)[0]))
+            validate_backup_section(path, name, matching[0])
     else:
-        sections.append((path.name, text))
-
-    for name, section in sections:
-        if "<include " in section:
-            errors.append(f"Android: {name} must not include app data")
-
-        missing_domains = {
-            domain
-            for domain in required_backup_domains
-            if f'<exclude domain="{domain}" path="." />' not in section
-        }
-        if missing_domains:
-            errors.append(
-                f"Android: {name} does not exclude: "
-                + ", ".join(sorted(missing_domains))
-            )
+        validate_backup_section(path, expected_root, root)
 
 
 validate_backup_rules(
