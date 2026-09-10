@@ -99,7 +99,7 @@ internal object IdentityStateCodec {
 
                 val identityPublicKey = input.readBounded(IdentityPrimitives.MAX_PUBLIC_KEY_BYTES)
                 val signedPreKey = input.readPreKey()
-                val previousSignedPreKey = if (input.readBoolean()) input.readPreKey() else null
+                val previousSignedPreKey = if (input.readCanonicalBoolean()) input.readPreKey() else null
 
                 val oneTimeCount = input.readInt()
                 if (oneTimeCount !in 0..MAX_ONE_TIME_PREKEYS) {
@@ -202,8 +202,14 @@ internal object IdentityStateCodec {
         val createdAtEpochSeconds = readLong()
         val publicKey = readBounded(IdentityPrimitives.MAX_PUBLIC_KEY_BYTES)
         val encryptedPrivateKey = readBounded(MAX_ENCRYPTED_PRIVATE_KEY_BYTES)
-        val signature = if (readBoolean()) readBounded(IdentityPrimitives.MAX_SIGNATURE_BYTES) else null
+        val signature = if (readCanonicalBoolean()) readBounded(IdentityPrimitives.MAX_SIGNATURE_BYTES) else null
         return StoredPreKey(id, createdAtEpochSeconds, publicKey, encryptedPrivateKey, signature)
+    }
+
+    private fun DataInputStream.readCanonicalBoolean(): Boolean = when (val value = readUnsignedByte()) {
+        0 -> false
+        1 -> true
+        else -> throw IdentityStateException("Identity state boolean is invalid: $value")
     }
 
     private fun DataInputStream.readBounded(maximum: Int): ByteArray {
