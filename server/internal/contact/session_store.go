@@ -85,7 +85,7 @@ FROM session_bootstraps WHERE identity_id = ?`, record.Bundle.IdentityID).Scan(
 			!bytes.Equal(existing.OlmCurve25519IdentityKey, record.Bundle.OlmCurve25519IdentityKey) {
 			return 0, 0, ErrSessionConflict
 		}
-		maxSeen, err := reconcileSessionPreKeysTx(ctx, tx, record.Bundle, uint64(existingMaxPreKeyID))
+		maxSeen, err := reconcileSessionPreKeysTx(ctx, tx, existing, record.Bundle, uint64(existingMaxPreKeyID))
 		if err != nil {
 			return 0, 0, err
 		}
@@ -540,7 +540,7 @@ VALUES(?, ?, ?, ?)`,
 	return nil
 }
 
-func reconcileSessionPreKeysTx(ctx context.Context, tx *sql.Tx, bundle SessionBootstrapBundle, maxSeen uint64) (uint64, error) {
+func reconcileSessionPreKeysTx(ctx context.Context, tx *sql.Tx, previous, bundle SessionBootstrapBundle, maxSeen uint64) (uint64, error) {
 	available, err := loadAvailableSessionPreKeysTx(ctx, tx, bundle.IdentityID, bundle.AccountGeneration)
 	if err != nil {
 		return 0, err
@@ -550,9 +550,35 @@ func reconcileSessionPreKeysTx(ctx context.Context, tx *sql.Tx, bundle SessionBo
 		return 0, err
 	}
 
+	previousByID := make(map[uint64][]byte, len(previous.OneTimePreKeys))
+	previousIDsByKey := make(map[string]uint64, len(previous.OneTimePreKeys))
+	for _, key := range previous.OneTimePreKeys {
+		previousByID[key.ID] = key.PublicKey
+		previousIDsByKey[string(key.PublicKey)] = key.ID
+	}
+	availableIDsByKey := make(map[string]uint64, len(available))
+	for id, publicKey := range available {
+		availableIDsByKey[string(publicKey)] = id
+	}
+	reservedIDsByKey := make(map[string]uint64, len(reserved))
+	for id, publicKey := range reserved {
+		reservedIDsByKey[string(publicKey)] = id
+	}
+
 	desired := make(map[uint64][]byte, len(bundle.OneTimePreKeys))
 	for _, key := range bundle.OneTimePreKeys {
 		desired[key.ID] = key.PublicKey
+		encodedKey := string(key.PublicKey)
+		if id, ok := availableIDsByKey[encodedKey]; ok && id != key.ID {
+			return 0, ErrSessionConflict
+		}
+		if id, ok := reservedIDsByKey[encodedKey]; ok && id != key.ID {
+			return 0, ErrSessionConflict
+		}
+		if id, ok := previousIDsByKey[encodedKey]; ok && id != key.ID {
+			return 0, ErrSessionConflict
+		}
+
 		switch {
 		case available[key.ID] != nil:
 			if !bytes.Equal(available[key.ID], key.PublicKey) {
@@ -563,7 +589,15 @@ func reconcileSessionPreKeysTx(ctx context.Context, tx *sql.Tx, bundle SessionBo
 				return 0, ErrSessionConflict
 			}
 		case key.ID <= maxSeen:
-			return 0, ErrSessionConflict
+			// A reservation may disappear when its invite expires before the
+			// creator learns which OTK was consumed. Permit that exact key to
+			// remain in the immediately following signed snapshot, but never
+			// put it back into the available pool. A key that the previous
+			// publication had already omitted remains retired and cannot be
+			// resurrected by reusing its bookkeeping id.
+			if previousKey, ok := previousByID[key.ID]; !ok || !bytes.Equal(previousKey, key.PublicKey) {
+				return 0, ErrSessionConflict
+			}
 		default:
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO session_one_time_prekeys(identity_id, account_generation, key_id, public_key)
