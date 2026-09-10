@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"math"
 )
 
 var (
@@ -75,10 +76,10 @@ func SessionClaimPayload(creatorIdentityID, inviteToken []byte) ([]byte, error) 
 }
 
 func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignature bool) error {
-	if len(bundle.IdentityID) != IdentityIDBytes || bundle.AccountGeneration == 0 || bundle.PublicationRevision == 0 {
+	if len(bundle.IdentityID) != IdentityIDBytes || bundle.AccountGeneration == 0 || bundle.AccountGeneration > math.MaxInt64 || bundle.PublicationRevision == 0 || bundle.PublicationRevision > math.MaxInt64 {
 		return ErrInvalidSessionBootstrap
 	}
-	if len(bundle.OlmEd25519IdentityKey) != OlmPublicKeyBytes || len(bundle.OlmCurve25519IdentityKey) != OlmPublicKeyBytes {
+	if len(bundle.OlmEd25519IdentityKey) != OlmPublicKeyBytes || len(bundle.OlmCurve25519IdentityKey) != OlmPublicKeyBytes || allZero(bundle.OlmEd25519IdentityKey) || allZero(bundle.OlmCurve25519IdentityKey) {
 		return ErrInvalidSessionBootstrap
 	}
 	if len(bundle.OneTimePreKeys) == 0 || len(bundle.OneTimePreKeys) > MaxSessionOneTimePreKeys {
@@ -91,14 +92,13 @@ func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignatu
 		return ErrInvalidSessionBootstrap
 	}
 	var previousID uint64
-	seenKeys := make(map[[OlmPublicKeyBytes]byte]struct{}, len(bundle.OneTimePreKeys))
+	seenKeys := make(map[string]struct{}, len(bundle.OneTimePreKeys))
 	for _, key := range bundle.OneTimePreKeys {
-		if key.ID == 0 || key.ID <= previousID || len(key.PublicKey) != OlmPublicKeyBytes {
+		if key.ID == 0 || key.ID > math.MaxInt64 || key.ID <= previousID || len(key.PublicKey) != OlmPublicKeyBytes || allZero(key.PublicKey) {
 			return ErrInvalidSessionBootstrap
 		}
-		var encoded [OlmPublicKeyBytes]byte
-		copy(encoded[:], key.PublicKey)
-		if _, exists := seenKeys[encoded]; exists {
+		encoded := string(key.PublicKey)
+		if _, duplicate := seenKeys[encoded]; duplicate {
 			return ErrInvalidSessionBootstrap
 		}
 		seenKeys[encoded] = struct{}{}
@@ -111,11 +111,20 @@ func validateSessionInitShape(request SubmitSessionInitRequest) error {
 	if len(request.CreatorIdentityID) != IdentityIDBytes || len(request.RedeemerIdentityID) != IdentityIDBytes || bytes.Equal(request.CreatorIdentityID, request.RedeemerIdentityID) {
 		return ErrInvalidSessionBootstrap
 	}
-	if len(request.InviteToken) != InviteTokenBytes || request.CreatorAccountGeneration == 0 || request.CreatorOneTimePreKeyID == 0 || request.RedeemerAccountGeneration == 0 {
+	if len(request.InviteToken) != InviteTokenBytes || request.CreatorAccountGeneration == 0 || request.CreatorAccountGeneration > math.MaxInt64 || request.CreatorOneTimePreKeyID == 0 || request.CreatorOneTimePreKeyID > math.MaxInt64 || request.RedeemerAccountGeneration == 0 || request.RedeemerAccountGeneration > math.MaxInt64 {
 		return ErrInvalidSessionBootstrap
 	}
 	if request.OlmMessageType != OlmMessageTypePreKey || len(request.OlmMessage) == 0 || len(request.OlmMessage) > MaxSessionCiphertextBytes || !validSignature(request.SubmitSignature) {
 		return ErrInvalidSessionBootstrap
 	}
 	return nil
+}
+
+func allZero(value []byte) bool {
+	for _, b := range value {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }
