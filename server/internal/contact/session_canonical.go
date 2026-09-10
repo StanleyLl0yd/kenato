@@ -91,16 +91,18 @@ func validateSessionBootstrapShape(bundle SessionBootstrapBundle, requireSignatu
 		return ErrInvalidSessionBootstrap
 	}
 	var previousID uint64
-	var previousKey []byte
+	seenKeys := make(map[[OlmPublicKeyBytes]byte]struct{}, len(bundle.OneTimePreKeys))
 	for _, key := range bundle.OneTimePreKeys {
 		if key.ID == 0 || key.ID <= previousID || len(key.PublicKey) != OlmPublicKeyBytes {
 			return ErrInvalidSessionBootstrap
 		}
-		if previousKey != nil && bytes.Compare(previousKey, key.PublicKey) >= 0 {
+		var encoded [OlmPublicKeyBytes]byte
+		copy(encoded[:], key.PublicKey)
+		if _, exists := seenKeys[encoded]; exists {
 			return ErrInvalidSessionBootstrap
 		}
+		seenKeys[encoded] = struct{}{}
 		previousID = key.ID
-		previousKey = key.PublicKey
 	}
 	return nil
 }
