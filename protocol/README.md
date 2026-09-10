@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity only. M2 adds the first server-visible public identity and invite/contact-establishment contract under the existing `kenato.v1` package.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 is complete and defines the first server-visible public identity and invite/contact-establishment contract under the existing `kenato.v1` package.
 
 The current schemas live under:
 
@@ -46,7 +46,7 @@ The publication signature uses SHA-256 with ECDSA P-256 over this exact byte seq
 9. one-time-prekey count;
 10. each one-time prekey in strictly increasing id order: id, creation timestamp, public-key length, public-key bytes.
 
-The publication signature itself is excluded from the signed payload. A publication revision is positive and must increase when the published bundle changes; an implementation may accept an exact byte-for-byte replay of the same revision idempotently but must reject a different payload at an already accepted revision.
+The publication signature itself is excluded from the signed payload. A publication revision is positive and must increase when the published bundle changes; an implementation may accept an exact replay of the same revision idempotently but must reject a different payload at an already accepted revision.
 
 ### Invite creation/binding
 
@@ -68,6 +68,8 @@ KENATO-REDEEM-V1\0 || creator_identity_id[32] || redeemer_identity_id[32] || inv
 
 The server retains this bounded signature only until the creator claims the completed invite or the invite record expires. The creator verifies it before pinning the redeemer identity.
 
+An exact redemption retry by the same redeemer identity is idempotent and returns the original redemption timestamp. A different redeemer cannot replace the first successful redemption.
+
 ### Claim authentication
 
 The creator signs:
@@ -77,6 +79,8 @@ KENATO-CLAIM-V1\0 || creator_identity_id[32] || invite_token[32]
 ```
 
 Possession of the token alone is therefore not sufficient to retrieve the redeemer bundle from the server.
+
+Successful claim is intentionally destructive: the server deletes the invite relationship row after retrieving the bounded result. A repeated claim therefore returns not-found. If the successful response is lost before the creator commits its local contact state, recovery uses a fresh invite rather than a retained server-side replay cache.
 
 ## M2 server-visible state
 
@@ -92,6 +96,8 @@ The server may retain only the minimum M2 state required to implement the protoc
 
 There is no public identity lookup/search endpoint. Creator public material is disclosed only to a party presenting a valid unexpired invite token; redeemer public material is disclosed only to the authenticated creator of that invite.
 
+Successful claims remove the relationship row immediately. Unclaimed expired rows are removed by implementation retention cleanup and are never redeemable or claimable at or after the exact expiry boundary.
+
 ## Rules
 
 - Unknown protocol versions must fail safely.
@@ -101,5 +107,6 @@ There is no public identity lookup/search endpoint. Creator public material is d
 - Private identity/prekey keys and plaintext user content never belong in server-visible protocol messages.
 - Identity public keys, signed-prekey public keys/signatures, one-time public prekeys, signature sizes, repeated counts, request bodies, invite attempts, and retained state are explicitly bounded by implementations.
 - Contact identity is pinned locally after verification and must not change silently.
+- M2 contact establishment stops before one-time-prekey consumption, DH session derivation, Double Ratchet state, encrypted messaging, mailbox routing, or calling behavior.
 
 Numeric resource limits are enforced by implementations/configuration and documented alongside the relevant behavior.
