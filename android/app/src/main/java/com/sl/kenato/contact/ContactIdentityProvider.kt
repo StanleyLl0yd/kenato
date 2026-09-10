@@ -18,37 +18,36 @@ internal class LocalContactIdentityProvider(
     override fun sign(payload: ByteArray): ByteArray = repository.signIdentityProtocolPayload(payload)
 }
 
-internal fun ContactIdentityProvider.unsignedPublicBundle(revision: Long): M2PublicIdentityBundle {
+internal fun IdentityBundle.toUnsignedContactBundle(revision: Long): M2PublicIdentityBundle {
     if (revision <= 0) throw ContactProtocolException("Publication revision is invalid")
-    val identity = currentIdentity()
-    val identityId = decodeCanonicalBase64Url(identity.identityId, CONTACT_ID_BYTES, "local identity id")
-    val identityPublicKey = decodeCanonicalBase64Url(
-        identity.identityPublicKey,
+    val identityId = decodeCanonicalBase64Url(identityId, CONTACT_ID_BYTES, "local identity id")
+    val identityPublicKeyBytes = decodeCanonicalBase64Url(
+        identityPublicKey,
         MAX_CONTACT_PUBLIC_KEY_BYTES,
         "local identity public key",
         exact = false,
     )
-    val derived = ContactCrypto.identityId(identityPublicKey)
+    val derived = ContactCrypto.identityId(identityPublicKeyBytes)
     if (!derived.contentEquals(identityId)) {
         throw ContactProtocolException("Local identity id does not match the local public key")
     }
-    val signedPreKey = M2SignedPreKey(
-        id = identity.signedPreKey.id.toLong(),
+    val contactSignedPreKey = M2SignedPreKey(
+        id = signedPreKey.id.toLong(),
         publicKey = decodeCanonicalBase64Url(
-            identity.signedPreKey.publicKey,
+            signedPreKey.publicKey,
             MAX_CONTACT_PUBLIC_KEY_BYTES,
             "local signed prekey",
             exact = false,
         ),
         signature = decodeCanonicalBase64Url(
-            identity.signedPreKey.signature,
+            signedPreKey.signature,
             MAX_CONTACT_SIGNATURE_BYTES,
             "local signed prekey signature",
             exact = false,
         ),
-        createdAtEpochSeconds = identity.signedPreKey.createdAtEpochSeconds,
+        createdAtEpochSeconds = signedPreKey.createdAtEpochSeconds,
     )
-    val oneTimePreKeys = identity.oneTimePreKeys.map { preKey ->
+    val contactOneTimePreKeys = oneTimePreKeys.map { preKey ->
         M2OneTimePreKey(
             id = preKey.id.toLong(),
             publicKey = decodeCanonicalBase64Url(
@@ -62,18 +61,19 @@ internal fun ContactIdentityProvider.unsignedPublicBundle(revision: Long): M2Pub
     }
     return M2PublicIdentityBundle(
         identityId = identityId,
-        identityPublicKey = identityPublicKey,
+        identityPublicKey = identityPublicKeyBytes,
         publicationRevision = revision,
-        signedPreKey = signedPreKey,
-        oneTimePreKeys = oneTimePreKeys,
+        signedPreKey = contactSignedPreKey,
+        oneTimePreKeys = contactOneTimePreKeys,
         publicationSignature = ByteArray(0),
     ).also { validateBundleShape(it, requirePublicationSignature = false) }
 }
 
-internal fun ContactIdentityProvider.signedPublicBundle(
-    revision: Long,
-): M2PublicIdentityBundle {
-    val unsigned = unsignedPublicBundle(revision)
+internal fun ContactIdentityProvider.signPublicBundle(unsigned: M2PublicIdentityBundle): M2PublicIdentityBundle {
+    validateBundleShape(unsigned, requirePublicationSignature = false)
+    if (unsigned.publicationSignature.isNotEmpty()) {
+        throw ContactProtocolException("Unsigned publication unexpectedly contains a signature")
+    }
     val signature = sign(ContactCanonical.publicationPayload(unsigned))
     if (signature.isEmpty() || signature.size > MAX_CONTACT_SIGNATURE_BYTES) {
         throw ContactProtocolException("Local publication signature size is invalid")
