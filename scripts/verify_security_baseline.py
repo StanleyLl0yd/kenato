@@ -124,10 +124,12 @@ if re.search(r"(?m)^\s*require\s+(?:\(|\S)", go_mod) and not Path("server/go.sum
 
 required_ignores = (
     ".env",
+    ".env.*",
     "*.jks",
     "*.keystore",
     "*.p12",
     "*.pfx",
+    "*.pkcs12",
     "*.pem",
     "*.key",
     "local.properties",
@@ -151,13 +153,17 @@ sensitive_names = {
     "keystore.properties",
     "secrets.properties",
 }
-sensitive_suffixes = (".jks", ".keystore", ".p12", ".pfx", ".pem", ".key")
+sensitive_suffixes = (".jks", ".keystore", ".p12", ".pfx", ".pkcs12", ".pem", ".key")
 
 for name in tracked:
     path = Path(name)
     if path.name == ".env.example":
         continue
-    if path.name in sensitive_names or path.name.lower().endswith(sensitive_suffixes):
+    if (
+        path.name in sensitive_names
+        or path.name.startswith(".env.")
+        or path.name.lower().endswith(sensitive_suffixes)
+    ):
         errors.append(f"tracked sensitive file is forbidden: {name}")
 
 if errors:
