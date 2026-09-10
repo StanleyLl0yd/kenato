@@ -108,12 +108,15 @@ WHERE identity_id = ? AND account_generation = ? AND publication_revision = ?`,
 		if oldGeneration == math.MaxInt64 || newGeneration != oldGeneration+1 || newRevision != 1 {
 			return 0, 0, ErrSessionConflict
 		}
+		// Only a creator account rollover invalidates a reservation, because the
+		// reserved OTK belongs to that creator generation. A redeemer rollover
+		// does not consume another creator OTK: submit/claim already snapshot and
+		// authenticate the redeemer generation independently.
 		if _, err := tx.ExecContext(ctx,
-			"DELETE FROM session_reservations WHERE creator_identity_id = ? OR redeemer_identity_id = ?",
-			record.Bundle.IdentityID,
+			"DELETE FROM session_reservations WHERE creator_identity_id = ?",
 			record.Bundle.IdentityID,
 		); err != nil {
-			return 0, 0, fmt.Errorf("retire old-generation session reservations: %w", err)
+			return 0, 0, fmt.Errorf("retire old-generation creator session reservations: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM session_one_time_prekeys WHERE identity_id = ?", record.Bundle.IdentityID); err != nil {
 			return 0, 0, fmt.Errorf("retire old-generation session prekeys: %w", err)
@@ -677,9 +680,10 @@ FROM invites WHERE token_hash = ?`, tokenHash[:]).Scan(
 		return fmt.Errorf("read invite for session bootstrap: %w", err)
 	}
 	if expiresAt <= now {
-		if _, deleteErr := tx.ExecContext(ctx, "DELETE FROM invites WHERE token_hash = ?", tokenHash[:]); deleteErr != nil {
-			return fmt.Errorf("delete expired session invite: %w", deleteErr)
-		}
+		// Do not attempt a delete inside this caller-owned transaction and then
+		// return an error: the caller would roll that delete back. Expiry is
+		// enforced exactly here; startup/hourly retention cleanup performs the
+		// durable delete and cascades reservation/init rows.
 		return ErrInviteExpired
 	}
 	if !redeemedAt.Valid || len(redeemerID) != IdentityIDBytes {
