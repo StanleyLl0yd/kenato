@@ -73,6 +73,32 @@ class IdentityStateCodecTest {
     }
 
     @Test
+    fun aggregateSerializedStateSizeIsHardBounded() {
+        val largePool = (1..IdentityStateCodec.MAX_ONE_TIME_PREKEYS).map { index ->
+            preKey(id = index + 1, signed = false).copy(
+                encryptedPrivateKey = ByteArray(IdentityStateCodec.MAX_ENCRYPTED_PRIVATE_KEY_BYTES) { 1 },
+            )
+        }
+        val original = state().copy(
+            oneTimePreKeys = largePool,
+            nextPreKeyId = IdentityStateCodec.MAX_ONE_TIME_PREKEYS + 2,
+        )
+
+        assertThrows(IdentityStateException::class.java) {
+            IdentityStateCodec.encode(original)
+        }
+    }
+
+    @Test
+    fun oversizedSerializedInputIsRejectedBeforeParsing() {
+        val oversized = ByteArray(IdentityStateCodec.MAX_STATE_BYTES + 1)
+
+        assertThrows(IdentityStateException::class.java) {
+            IdentityStateCodec.decode(oversized)
+        }
+    }
+
+    @Test
     fun nextPrekeyIdMustBeStrictlyGreaterThanAllPersistedIds() {
         val original = state().copy(nextPreKeyId = 2)
 
