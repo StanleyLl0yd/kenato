@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M2 Invite + Contact Establishment in progress. This model is authoritative for the implemented M0/M1 foundation and the accepted M2 contact-establishment design as implementation lands.
+Status: M2 Invite + Contact Establishment complete. This model is authoritative for the implemented M0/M1/M2 foundation. M3 session cryptography has not started.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -40,6 +40,8 @@ Loss, corruption, or mismatch of the M1 persisted identity record and required K
 
 M2 adds local contact identity pins. A newly established peer binding is accepted only after the peer public identity bundle and invite/redemption proof have been cryptographically verified. An existing pin is never silently replaced.
 
+Pending M2 invite bearer secrets and contact pins are app-private and excluded from Android cloud backup and device-to-device transfer under the repository's all-domain backup policy.
+
 ### Kenato server
 
 The server is not trusted with user content or private identity/prekey material.
@@ -52,14 +54,16 @@ It may process:
 - invite token bytes transiently while handling a bounded request;
 - SHA-256 invite-token hashes at rest;
 - invite creation/expiry/redemption state;
-- temporary creator/redeemer identity-id relationship metadata until claim/expiry;
+- temporary creator/redeemer identity-id relationship metadata until claim/expiry cleanup;
 - routing identifiers;
 - opaque encrypted payloads in later messaging milestones;
 - bounded operational state needed to deliver traffic.
 
 Compromise of the server must not reveal message or voice plaintext or any device private key.
 
-M2 deliberately exposes no public identity search/lookup endpoint. A creator bundle is disclosed only to a requester presenting a valid unexpired invite token; a redeemer bundle is disclosed only to the authenticated creator presenting the same token.
+M2 exposes no public identity search/lookup endpoint. A creator bundle is disclosed only to a requester presenting a valid unexpired invite token; a redeemer bundle is disclosed only to the authenticated creator presenting the same token.
+
+Successful creator claim deletes the invite relationship row in the same transaction that retrieves the bounded claim result. Unclaimed expired rows are removed opportunistically by invite operations and by explicit retention cleanup at server startup and on an hourly schedule.
 
 ### TURN server
 
@@ -112,8 +116,8 @@ Mitigations:
 - TLS for client-server transport;
 - identity-key signatures over M2 publication/invite/redemption/claim canonical payloads;
 - authenticated end-to-end encryption for user payloads in later milestones;
-- authenticated call signaling;
-- explicit replay handling.
+- authenticated call signaling in later milestones;
+- explicit replay handling at each protocol layer.
 
 TLS protects invite bearer secrets in transit from passive/active network attackers, while M2 identity signatures make token-to-identity and redemption-to-identity bindings independently verifiable by the clients.
 
@@ -131,12 +135,12 @@ Mitigations:
 - clients derive identity ids from exact public-key bytes and validate publication/signed-prekey signatures before pinning;
 - publication revisions are monotonic and signed;
 - no public identity enumeration endpoint;
-- completed/expired invite state is short-lived and removed by retention cleanup;
+- successful claims delete the temporary relationship record and expired invite state is removed by bounded retention cleanup;
 - minimum durable metadata;
 - secrets isolated from logs;
 - contact identity verification performed by clients.
 
-A malicious server can deny service, suppress a redemption, or return stale-but-valid public material within protocol limits. It must not be able to make a client silently pin a different identity without a signature/hash verification failure, assuming SHA-256 and ECDSA P-256 remain secure and the peer private identity key is uncompromised.
+A malicious server can deny service, suppress a redemption, retain metadata outside Kenato's intended implementation policy, or return stale-but-valid public material within protocol limits. It must not be able to make a client silently pin a different identity without a signature/hash verification failure, assuming SHA-256 and ECDSA P-256 remain secure and the peer private identity key is uncompromised.
 
 ### Invite theft, replay, and substitution
 
@@ -153,9 +157,12 @@ Mitigations:
 - creator claim requires both token possession and a valid creator identity signature;
 - exact duplicate/idempotency behavior is explicit;
 - malformed/expired/redeemed/wrong-identity requests fail without disclosing unrelated identities;
-- pre-authentication and authenticated rate/resource limits.
+- a process-wide bounded pre-crypto concurrency/rate gate runs before expensive service verification;
+- per-identity active-invite quotas and global retained-state caps bound persistent abuse.
 
 Anyone who obtains an unused invite URI before its intended recipient redeems it can attempt redemption. Invite secrecy is therefore a bearer-capability assumption until first use or expiry; Kenato does not claim recipient-specific confidentiality for a shared invite before redemption.
+
+M2 creator claim is intentionally destructive on the server: a successful claim removes the temporary relationship row rather than retaining a replay cache. If the successful claim response is lost before the creator commits the local contact pin, the creator must establish a fresh invite rather than recovering the consumed claim from the server. This trades retry availability for lower relationship-metadata retention and does not permit silent identity substitution.
 
 ### Message tampering and replay
 
@@ -169,7 +176,7 @@ Mitigations in later session/messaging milestones:
 - bounded skipped-message handling;
 - explicit replay tests.
 
-M2 does not yet implement encrypted-message session state and must not claim those later protections as implemented.
+M2 does not implement encrypted-message session state and must not claim those later protections as implemented.
 
 ### Identity substitution
 
@@ -197,30 +204,36 @@ Mitigations:
 - invite-only discovery;
 - single-use/expiring invites;
 - active-invite quotas;
-- pre-authentication source limits before expensive verification;
-- authenticated per-identity rate limits after verification;
-- request-body, field, collection, and database-retention bounds;
-- indistinguishable/not-overly-informative failure responses where identity existence would otherwise be exposed.
+- bounded total retained identity/invite rows;
+- process-wide concurrency/rate limits before expensive cryptographic verification;
+- request-body, field and collection limits;
+- missing-identity failures at the public HTTP boundary use the same generic invalid-request category as malformed/unauthenticated contact requests rather than exposing a dedicated identity-existence response.
+
+M2's in-process rate gate is deliberately a coarse resource bound, not a full public-edge anti-abuse system. Source-aware/distributed rate limiting must be designed together with the reviewed TLS/reverse-proxy deployment boundary rather than trusting arbitrary forwarded-address headers inside the loopback service.
 
 ### Resource exhaustion
 
 Malformed or excessive requests attempt to exhaust memory, CPU, storage, signature verification, SQLite locks, WebSocket slots, prekeys, mailbox capacity, or TURN allocations.
 
-Mitigations:
+Mitigations implemented through M2:
 
-- request and envelope size limits;
-- bounded parser fields/repeated counts;
+- 64 KiB contact request/response limits;
+- bounded parser fields and repeated one-time-prekey counts;
 - strict public-key/signature/token sizes before cryptographic parsing;
-- bounded queues and connection lifetimes;
-- invite quotas and expiry cleanup;
-- pre-authentication IP/source limits before expensive signature work;
-- authenticated identity limits after verification;
-- SQLite busy timeout, bounded transactions, indexes, and retention cleanup;
-- mailbox quotas in M4;
-- short-lived TURN credentials in voice milestones;
-- cancellation and request timeouts.
+- process-wide pre-crypto concurrency and operation-window limits;
+- active invite quotas, global row caps, exact expiry checks and periodic expired-invite cleanup;
+- SQLite busy timeout, bounded transactions, indexes and serialized writes;
+- HTTP header/body and operation timeouts;
+- cancellation propagation through request contexts.
 
-The M1 persisted identity record has an explicit maximum serialized size and the one-time prekey pool is hard-bounded. M2 preserves that bound for published prekey collections.
+Later milestones must additionally bound:
+
+- WebSocket connections and queues;
+- mailbox quotas and retention;
+- session skipped-key state;
+- TURN allocations and credential lifetimes.
+
+The M1 persisted identity record has an explicit maximum serialized size and the one-time prekey pool is hard-bounded. M2 preserves that bound for published prekey collections. Android contact state is also hard-bounded in serialized size, pending-invite count and contact-pin count.
 
 ### Local data leakage
 
@@ -234,7 +247,7 @@ Mitigations:
 - cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
 - cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
 - backup policy is enforced by repository checks and Android build/lint validation;
-- no raw invite tokens, private keys, signatures over secret-bearing payloads, or plaintext user content in logs;
+- no raw invite tokens, private keys, signatures over secret-bearing payloads, or plaintext user content are intentionally written to logs;
 - minimum telemetry;
 - UI screenshot restrictions considered only where they improve privacy without harming normal UX.
 
@@ -248,6 +261,8 @@ Kenato does not claim to provide:
 - guaranteed concealment of communication timing or traffic volume;
 - recipient-specific confidentiality of an invite URI before it is redeemed;
 - protection from denial of service by a malicious/compromised Kenato server;
+- distributed/source-aware public-edge anti-DoS protection from the M2 loopback service alone;
+- server-side replay recovery after a successful creator claim whose response is lost before local commit;
 - guaranteed recovery of identity/history after device loss when no secure backup exists.
 
 These limitations must not be obscured in marketing.
@@ -278,7 +293,7 @@ Before the first stable public release:
 
 - threat model updated to match implementation;
 - protocol test vectors checked;
-- malformed/replayed/reordered input tests exist;
+- malformed/replayed/reordered input tests exist for the protocol layers that implement those semantics;
 - invite lifecycle and abuse limits validated;
 - mailbox and TURN abuse limits validated in their milestones;
 - dependency and supply-chain review completed;
