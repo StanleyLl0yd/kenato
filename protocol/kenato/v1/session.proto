@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package kenato.v1;
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
+
+import "kenato/v1/contact.proto";
+
+// SessionOneTimePreKey is a server-allocatable Olm Curve25519 public key.
+// id is a Kenato monotonic bookkeeping id within one session-account generation.
+message SessionOneTimePreKey {
+  uint64 id = 1;
+  bytes public_key = 2;
+}
+
+// SessionBootstrapBundle contains only public M3 Olm account material.
+// binding_signature is an ECDSA P-256 signature from the existing Kenato
+// identity over the canonical M3 bootstrap payload defined in protocol/README.md.
+message SessionBootstrapBundle {
+  bytes identity_id = 1;
+  uint64 account_generation = 2;
+  uint64 publication_revision = 3;
+  bytes olm_ed25519_identity_key = 4;
+  bytes olm_curve25519_identity_key = 5;
+  repeated SessionOneTimePreKey one_time_prekeys = 6;
+  bytes binding_signature = 7;
+}
+
+message PublishSessionBootstrapRequest {
+  uint32 protocol_version = 1;
+  SessionBootstrapBundle bundle = 2;
+}
+
+message PublishSessionBootstrapResponse {
+  uint32 protocol_version = 1;
+  uint64 accepted_account_generation = 2;
+  uint64 accepted_publication_revision = 3;
+}
+
+// The already-authenticated invite redeemer reserves exactly one creator M3
+// one-time key. reserve_signature proves intent using the redeemer's pinned
+// Kenato P-256 identity key.
+message ReserveSessionBootstrapRequest {
+  uint32 protocol_version = 1;
+  bytes creator_identity_id = 2;
+  bytes redeemer_identity_id = 3;
+  bytes invite_token = 4;
+  bytes reserve_signature = 5;
+}
+
+message ReserveSessionBootstrapResponse {
+  uint32 protocol_version = 1;
+  SessionBootstrapBundle creator_bundle = 2;
+  SessionOneTimePreKey creator_one_time_prekey = 3;
+}
+
+// The redeemer submits the initial Olm pre-key frame after an authenticated
+// reservation. The server treats olm_message as opaque bytes.
+message SubmitSessionInitRequest {
+  uint32 protocol_version = 1;
+  bytes creator_identity_id = 2;
+  bytes redeemer_identity_id = 3;
+  bytes invite_token = 4;
+  uint64 creator_account_generation = 5;
+  uint64 creator_one_time_prekey_id = 6;
+  uint64 redeemer_account_generation = 7;
+  uint32 olm_message_type = 8;
+  bytes olm_message = 9;
+  bytes submit_signature = 10;
+}
+
+message SubmitSessionInitResponse {
+  uint32 protocol_version = 1;
+}
+
+// M3 claim is the creator-side terminal invite operation when session init was
+// used. It returns the M2 peer proof plus the authenticated M3 bootstrap and
+// opaque Olm pre-key frame, then the server deletes the invite relationship.
+message ClaimSessionInitRequest {
+  uint32 protocol_version = 1;
+  bytes creator_identity_id = 2;
+  bytes invite_token = 3;
+  bytes claim_signature = 4;
+}
+
+message ClaimSessionInitResponse {
+  uint32 protocol_version = 1;
+  PublicIdentityBundle redeemer_identity_bundle = 2;
+  bytes redemption_signature = 3;
+  int64 redeemed_at_unix_seconds = 4;
+  SessionBootstrapBundle redeemer_session_bundle = 5;
+  SessionOneTimePreKey creator_one_time_prekey = 6;
+  uint32 olm_message_type = 7;
+  bytes olm_message = 8;
+}
+
+// SessionCiphertext is the M3 application/native boundary only. M3 does not
+// route or store these envelopes on the server; transport/mailbox is M4.
+message SessionCiphertext {
+  uint32 protocol_version = 1;
+  bytes sender_identity_id = 2;
+  bytes recipient_identity_id = 3;
+  uint64 sender_account_generation = 4;
+  uint64 recipient_account_generation = 5;
+  uint32 olm_message_type = 6;
+  bytes olm_message = 7;
+}
