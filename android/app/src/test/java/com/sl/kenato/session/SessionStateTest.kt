@@ -30,6 +30,13 @@ class SessionStateTest {
         assertEquals("session-1", session.sessionId)
         assertTrue(session.initiator)
         assertArrayEquals(original.sessions.single().snapshot.ciphertext, session.snapshot.ciphertext)
+        val pending = session.pendingInit!!
+        assertArrayEquals(original.sessions.single().pendingInit!!.inviteTokenHash, pending.inviteTokenHash)
+        assertEquals(7L, pending.creatorAccountGeneration)
+        assertEquals(4L, pending.creatorOneTimePreKeyId)
+        assertEquals(1L, pending.redeemerAccountGeneration)
+        assertEquals(0, pending.messageType)
+        assertArrayEquals("pre-key-frame".toByteArray(), pending.olmMessage)
     }
 
     @Test
@@ -52,6 +59,38 @@ class SessionStateTest {
 
         assertThrows(SessionStateException::class.java) {
             SessionStateCodec.encode(original.copy(sessions = listOf(original.sessions.single(), duplicate)))
+        }
+    }
+
+    @Test
+    fun pendingInitIsRestrictedToExactInitiatorProvenance() {
+        val original = sampleState()
+        val session = original.sessions.single()
+
+        assertThrows(SessionStateException::class.java) {
+            SessionStateCodec.encode(original.copy(sessions = listOf(session.copy(initiator = false))))
+        }
+        assertThrows(SessionStateException::class.java) {
+            SessionStateCodec.encode(
+                original.copy(
+                    sessions = listOf(
+                        session.copy(
+                            pendingInit = session.pendingInit!!.copy(creatorAccountGeneration = 8),
+                        ),
+                    ),
+                ),
+            )
+        }
+        assertThrows(SessionStateException::class.java) {
+            SessionStateCodec.encode(
+                original.copy(
+                    sessions = listOf(
+                        session.copy(
+                            pendingInit = session.pendingInit!!.copy(redeemerAccountGeneration = 2),
+                        ),
+                    ),
+                ),
+            )
         }
     }
 
@@ -131,6 +170,14 @@ class SessionStateTest {
                 snapshot = WrappedSessionSnapshot(
                     ciphertext = "session-pickle".toByteArray(),
                     wrappedPickleKey = bytes(0x71, 64),
+                ),
+                pendingInit = PendingSessionInit(
+                    inviteTokenHash = bytes(0x72, 32),
+                    creatorAccountGeneration = 7,
+                    creatorOneTimePreKeyId = 4,
+                    redeemerAccountGeneration = 1,
+                    messageType = 0,
+                    olmMessage = "pre-key-frame".toByteArray(),
                 ),
             ),
         ),
