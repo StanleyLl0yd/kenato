@@ -1,0 +1,25 @@
+[package]
+name = "kenato-session-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[dependencies]
+rand = "=0.8.5"
+vodozemac = { version = "=0.10.0", default-features = false }
+zeroize = "=1.8.2"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+unused_import_braces = "deny"
+unused_qualifications = "deny"
+rust_2018_idioms = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

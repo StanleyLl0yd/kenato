@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import subprocess
+import tomllib
 import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from pathlib import Path
 
@@ -13,6 +14,9 @@ gitignore = Path(".gitignore").read_text(encoding="utf-8")
 versions = Path("gradle/libs.versions.toml").read_text(encoding="utf-8")
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text(encoding="utf-8")
 go_mod = Path("server/go.mod").read_text(encoding="utf-8")
+native_manifest_path = Path("native/session-engine/Cargo.toml")
+native_lock_path = Path("native/session-engine/Cargo.lock")
+native_toolchain_path = Path("native/session-engine/rust-toolchain.toml")
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 MAX_POLICY_XML_BYTES = 64 * 1024
@@ -167,6 +171,55 @@ if "distributionSha256Sum=" not in wrapper:
 if re.search(r"(?m)^\s*require\s+(?:\(|\S)", go_mod) and not Path("server/go.sum").exists():
     errors.append("server: go.sum must be committed when module dependencies are present")
 
+if not native_manifest_path.exists():
+    errors.append("native/session-engine: Cargo.toml is required for M3")
+else:
+    try:
+        native_manifest = tomllib.loads(native_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-engine: unable to parse Cargo.toml: {error}")
+    else:
+        package = native_manifest.get("package", {})
+        if package.get("rust-version") != "1.85":
+            errors.append("native/session-engine: rust-version must remain 1.85")
+        if package.get("edition") != "2024":
+            errors.append("native/session-engine: Rust edition must remain 2024")
+        if package.get("publish") is not False:
+            errors.append("native/session-engine: publishing to crates.io must remain disabled")
+
+        dependencies = native_manifest.get("dependencies", {})
+        vodozemac = dependencies.get("vodozemac")
+        if not isinstance(vodozemac, dict):
+            errors.append("native/session-engine: vodozemac dependency must use an explicit table")
+        else:
+            if vodozemac.get("version") != "=0.10.0":
+                errors.append("native/session-engine: vodozemac must remain exactly pinned to =0.10.0")
+            if vodozemac.get("default-features") is not False:
+                errors.append("native/session-engine: vodozemac default features must remain disabled")
+            if vodozemac.get("features"):
+                errors.append("native/session-engine: vodozemac optional features are not approved in M3")
+
+        rust_lints = native_manifest.get("lints", {}).get("rust", {})
+        if rust_lints.get("unsafe_code") != "deny":
+            errors.append("native/session-engine: unsafe Rust must remain denied in the crypto core")
+
+if not native_toolchain_path.exists():
+    errors.append("native/session-engine: rust-toolchain.toml is required")
+else:
+    try:
+        toolchain = tomllib.loads(native_toolchain_path.read_text(encoding="utf-8")).get("toolchain", {})
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-engine: unable to parse rust-toolchain.toml: {error}")
+    else:
+        if toolchain.get("channel") != "1.85.0":
+            errors.append("native/session-engine: CI/toolchain channel must remain exactly 1.85.0")
+        components = toolchain.get("components", [])
+        if sorted(components) != ["clippy", "rustfmt"]:
+            errors.append("native/session-engine: rustfmt and clippy must remain pinned toolchain components")
+
+if not native_lock_path.exists():
+    errors.append("native/session-engine: Cargo.lock must be present and committed")
+
 required_ignores = {
     ".env",
     ".env.*",
@@ -190,6 +243,9 @@ gitignore_patterns = {
 missing_ignores = required_ignores - gitignore_patterns
 for pattern in sorted(missing_ignores):
     errors.append(f".gitignore: missing sensitive-file pattern {pattern}")
+
+if "target/" not in gitignore_patterns:
+    errors.append(".gitignore: Rust target/ output must be ignored")
 
 tracked = subprocess.run(
     ["git", "ls-files"],

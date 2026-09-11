@@ -16,7 +16,7 @@ jobs:
   android:
     name: Android
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -27,6 +27,36 @@ jobs:
 
       - name: Verify CI supply-chain policy
         run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Set up Rust 1.85.0
+        run: >
+          rustup toolchain install 1.85.0
+          --profile minimal
+          --component clippy
+          --component rustfmt
+
+      - name: Verify native Rust session engine
+        working-directory: native/session-engine
+        run: |
+          generated_lock=0
+          if ! git ls-files --error-unmatch Cargo.lock >/dev/null 2>&1; then
+            cargo +1.85.0 generate-lockfile
+            generated_lock=1
+            echo '::group::generated native/session-engine/Cargo.lock'
+            cat Cargo.lock
+            echo '::endgroup::'
+          fi
+
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 check --locked
+          cargo +1.85.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.85.0 test --locked
+          cargo +1.85.0 build --locked --release
+
+          if [ "$generated_lock" -ne 0 ]; then
+            echo 'native/session-engine/Cargo.lock must be committed'
+            exit 1
+          fi
 
       - name: Verify repository security baseline
         run: python3 scripts/verify_security_baseline.py
