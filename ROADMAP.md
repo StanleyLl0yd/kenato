@@ -44,19 +44,23 @@ Exit: public identity/prekey publication and invite/contact establishment are au
 
 ## M3 — E2EE Session
 
-Status: **In progress** (started 2026-09-10).
+Status: **In progress — #34 implementation is in final PR verification; #35 repository-wide audit/verification remains pending** (started 2026-09-10).
 
 - reviewed asynchronous session establishment rooted in the pinned M1/M2 Kenato identity;
 - Apache-2.0 vodozemac Olm/Double Ratchet engine, exact-version pinned through the Android native boundary;
 - authenticated P-256 binding of engine-specific Curve25519/Ed25519 account material and one-time keys;
 - deterministic invite-redeemer initiator / invite-creator responder bootstrap;
 - bounded one-time session-key allocation with no fallback-key downgrade;
+- exact persisted retry of the initial pre-key frame until successful submission is durably committed;
 - replay/reordering/duplicate behavior and the engine's bounded skipped-key handling;
-- crash-safe fail-closed session/account persistence and restart tests;
-- identity/session-account change handling;
-- native/JNI, dependency and protocol security review.
+- crash-safe fail-closed account/session persistence with fresh Keystore-wrapped per-snapshot pickle keys;
+- atomic inbound account-OTK consumption/session creation and explicit destructive-claim failure semantics;
+- restart, corruption/key-loss, partial-write, cancellation, identity/account/OTK-substitution regression coverage;
+- pinned Rust/JNI/NDK three-ABI Android build and dependency/protocol security review.
 
 Exit: a pinned contact can establish and persist a reviewed asynchronous ratcheted session, encrypt/decrypt bounded opaque application payloads with explicit replay/reordering behavior, survive restart without ratchet rollback, fail closed on identity/session-state corruption or replacement, and pass repository-wide exact-head/exact-main verification without introducing M4 routing/mailbox/product messaging behavior.
+
+M3 is complete only after #34 is squash-merged on all exact-head gates, #35 performs a literal full repository-wide audit/refactor and fixes its findings, final exact-main repository-wide verification is green, and M3 tracking is closed. M4 must not begin before that point.
 
 ## M4 — Minimal Messaging
 
