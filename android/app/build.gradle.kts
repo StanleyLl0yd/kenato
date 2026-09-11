@@ -8,6 +8,7 @@ val releaseStorePassword = providers.environmentVariable("KENATO_KEYSTORE_PASSWO
 val releaseKeyAlias = providers.environmentVariable("KENATO_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("KENATO_KEY_PASSWORD").orNull
 val m3NativeJniDir = layout.buildDirectory.dir("generated/m3JniLibs")
+val m3NativeJniPath = m3NativeJniDir.get().asFile.absolutePath
 
 val releaseSigningValues = listOf(
     releaseKeystorePath,
@@ -83,7 +84,7 @@ android {
             // The native build is an explicit CI/release prerequisite, so this is a static input.
             // Resolve the Provider before passing it to AGP's legacy source-set API: AGP 9 expects
             // a directory path here rather than a Provider or File instance.
-            jniLibs.directories.add(m3NativeJniDir.get().asFile.absolutePath)
+            jniLibs.directories.add(m3NativeJniPath)
         }
     }
 
@@ -95,7 +96,7 @@ android {
 }
 
 val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
-    inputs.dir(m3NativeJniDir)
+    inputs.dir(m3NativeJniPath)
 
     doLast {
         val expected = setOf(
@@ -103,7 +104,7 @@ val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
             "arm64-v8a/libkenato_session_jni.so",
             "x86_64/libkenato_session_jni.so",
         )
-        val root = inputs.files.singleFile
+        val root = java.io.File(m3NativeJniPath)
         val actual = if (root.isDirectory) {
             root.walkTopDown()
                 .filter { it.isFile && it.extension == "so" }
