@@ -1,0 +1,95 @@
+name: M3 Core Bound Repair Temporary
+
+on:
+  push:
+    branches:
+      - m3/android-session-engine
+    paths:
+      - .github/workflows/m3-core-bound-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Rust 1.85.0
+        run: rustup toolchain install 1.85.0 --profile minimal --component clippy --component rustfmt
+
+      - name: Enforce total unpublished OTK bound
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('native/session-engine/src/lib.rs')
+          source = path.read_text()
+          old = '''    let mut account = load_account(ciphertext, pickle_key)?;
+    let generated = account.generate_one_time_keys(count);
+'''
+          new = '''    let mut account = load_account(ciphertext, pickle_key)?;
+    if account.one_time_keys().len().saturating_add(count) > MAX_ONE_TIME_KEYS_PER_PUBLICATION {
+        return Err(EngineError::InvalidInput(
+            "total unpublished one-time-key count exceeds the M3 publication bound",
+        ));
+    }
+    let generated = account.generate_one_time_keys(count);
+'''
+          if source.count(old) != 1:
+              raise SystemExit('expected exactly one generation block')
+          source = source.replace(old, new)
+
+          marker = '''    #[test]
+    fn outbound_inbound_roundtrip_and_replay_fail_closed() -> Result<(), EngineError> {
+'''
+          test = '''    #[test]
+    fn one_time_key_generation_rejects_total_unpublished_overflow() -> Result<(), EngineError> {
+        let account = create_account()?;
+        let remaining = MAX_ONE_TIME_KEYS_PER_PUBLICATION - INITIAL_ONE_TIME_KEYS;
+        let filled = generate_account_one_time_keys(
+            account.snapshot.ciphertext(),
+            account.snapshot.pickle_key(),
+            remaining,
+        )?;
+        assert_eq!(
+            filled.public.unpublished_one_time_keys.len(),
+            MAX_ONE_TIME_KEYS_PER_PUBLICATION
+        );
+
+        let overflow = generate_account_one_time_keys(
+            filled.snapshot.ciphertext(),
+            filled.snapshot.pickle_key(),
+            1,
+        );
+        assert!(matches!(overflow, Err(EngineError::InvalidInput(_))));
+        Ok(())
+    }
+
+'''
+          if source.count(marker) != 1:
+              raise SystemExit('expected outbound test marker once')
+          source = source.replace(marker, test + marker)
+          path.write_text(source)
+          PY
+
+          cd native/session-engine
+          cargo +1.85.0 fmt --all
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 check --locked
+          cargo +1.85.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.85.0 test --locked
+
+      - name: Commit exact bound hardening
+        run: |
+          git diff --check
+          git add native/session-engine/src/lib.rs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'M3: bound total unpublished Olm one-time keys'
+          git push origin HEAD:m3/android-session-engine
