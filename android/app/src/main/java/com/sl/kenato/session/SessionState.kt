@@ -60,7 +60,7 @@ internal class SessionStateException(message: String, cause: Throwable? = null) 
 internal object SessionStateCodec {
     const val MAX_STATE_BYTES = 16 * 1024 * 1024
     const val MAX_SESSIONS = 256
-    const val MAX_TRACKED_ONE_TIME_KEYS = 100
+    const val MAX_TRACKED_ONE_TIME_KEYS = SESSION_MAX_ONE_TIME_KEYS
     const val IDENTITY_ID_BYTES = 32
     const val LOCAL_CONTACT_ID_BYTES = 16
     const val OLM_PUBLIC_KEY_BYTES = 32
