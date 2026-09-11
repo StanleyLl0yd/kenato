@@ -3,21 +3,36 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/StanleyLl0yd/kenato/server/internal/contact"
 )
 
-const maxRequestBodyBytes int64 = contact.MaxWireMessageBytes
+const maxRequestBodyBytes int64 = contact.MaxSessionWireMessageBytes
 
 type healthResponse struct {
 	Status string `json:"status"`
 }
 
 func NewHandler(service contactService) http.Handler {
+	return newHandler(service, nil)
+}
+
+func NewHandlerWithSession(service contactService, sessions sessionService) http.Handler {
+	return newHandler(service, sessions)
+}
+
+func newHandler(service contactService, sessions sessionService) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
+	gate := newCryptoGate(time.Now)
 	if service != nil {
-		newContactAPI(service).register(mux)
+		api := newContactAPI(service)
+		api.gate = gate
+		api.register(mux)
+	}
+	if sessions != nil {
+		newSessionAPI(sessions, gate).register(mux)
 	}
 	return withSecurityHeaders(withRequestLimit(mux))
 }

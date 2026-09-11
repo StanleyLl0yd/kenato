@@ -94,7 +94,12 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Format check
-        run: test -z "$(gofmt -l .)"
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf 'Unformatted Go files:\n%s\n' "$files"
+            exit 1
+          fi
 
       - name: Test
         run: go test ./...
@@ -146,3 +151,4 @@ jobs:
           --descriptor_set_out=/tmp/kenato.pb
           protocol/kenato/v1/envelope.proto
           protocol/kenato/v1/contact.proto
+          protocol/kenato/v1/session.proto
