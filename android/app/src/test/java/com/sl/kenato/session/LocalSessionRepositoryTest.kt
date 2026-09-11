@@ -27,6 +27,27 @@ class LocalSessionRepositoryTest {
     }
 
     @Test
+    fun completedBootstrapPublicationHasNoPendingBatchAfterRestart() {
+        val fixture = Fixture()
+        val owner = bytes(0x11, 32)
+        fixture.repository.loadOrCreateAccount(owner)
+
+        val pending = fixture.repository.prepareBootstrapPublicationOrNull(owner)!!
+        assertEquals(1L, pending.accountGeneration)
+        assertEquals(1L, pending.publicationRevision)
+        assertEquals(2, pending.oneTimePreKeys.size)
+
+        fixture.repository.completeBootstrapPublication(
+            ownerIdentityId = owner,
+            acceptedAccountGeneration = pending.accountGeneration,
+            acceptedPublicationRevision = pending.publicationRevision,
+        )
+
+        assertEquals(null, fixture.newRepository().prepareBootstrapPublicationOrNull(owner))
+        assertEquals(2, fixture.newRepository().currentState(owner)!!.account.oneTimeKeys.size)
+    }
+
+    @Test
     fun persistedStateWithoutKeystoreKeyFailsClosed() {
         val fixture = Fixture()
         val owner = bytes(0x11, 32)
@@ -397,9 +418,15 @@ class LocalSessionRepositoryTest {
         )
 
         override fun inspectAccount(snapshot: NativeSessionSnapshot): NativeAccountPublicState {
-            val stored = if (String(snapshot.ciphertext).startsWith("account-consumed")) 1 else 2
+            val snapshotName = String(snapshot.ciphertext)
+            val stored = if (snapshotName.startsWith("account-consumed")) 1 else 2
+            val unpublished = if (snapshotName == "account-0") {
+                accountPublic.unpublishedOneTimeKeys.map(ByteArray::copyOf)
+            } else {
+                emptyList()
+            }
             return accountPublic.copy(
-                unpublishedOneTimeKeys = emptyList(),
+                unpublishedOneTimeKeys = unpublished,
                 storedOneTimeKeyCount = stored,
             )
         }
