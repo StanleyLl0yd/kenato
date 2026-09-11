@@ -301,7 +301,7 @@ class SessionCoordinatorTest {
         val transport = FakeTransport().also { it.claimResponse = claimResponse }
         val contacts = FakeContacts()
 
-        private inner class FakeContacts : SessionContactBoundary {
+        inner class FakeContacts : SessionContactBoundary {
             var commitCalls = 0
             var failCommit = false
             var committedPin: SessionPinnedContact? = null
