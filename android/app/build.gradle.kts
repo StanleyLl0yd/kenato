@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -104,7 +106,7 @@ val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
             "arm64-v8a/libkenato_session_jni.so",
             "x86_64/libkenato_session_jni.so",
         )
-        val root = java.io.File(m3NativeJniPath)
+        val root = File(m3NativeJniPath)
         val actual = if (root.isDirectory) {
             root.walkTopDown()
                 .filter { it.isFile && it.extension == "so" }
