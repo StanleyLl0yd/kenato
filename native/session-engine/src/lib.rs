@@ -65,7 +65,9 @@ impl fmt::Display for EngineError {
             Self::InvalidSessionState => formatter.write_str("invalid encrypted session state"),
             Self::InvalidMessageType => formatter.write_str("unsupported Olm message type"),
             Self::InvalidMessage => formatter.write_str("invalid Olm message"),
-            Self::SessionEstablishmentFailed => formatter.write_str("Olm session establishment failed"),
+            Self::SessionEstablishmentFailed => {
+                formatter.write_str("Olm session establishment failed")
+            }
             Self::EncryptionFailed => formatter.write_str("Olm encryption failed"),
             Self::DecryptionFailed => formatter.write_str("Olm decryption failed"),
             Self::RandomnessUnavailable => formatter.write_str("secure randomness unavailable"),
@@ -246,7 +248,9 @@ pub fn generate_account_one_time_keys(
     count: usize,
 ) -> Result<AccountMutation, EngineError> {
     if count == 0 || count > MAX_ONE_TIME_KEYS_PER_PUBLICATION {
-        return Err(EngineError::InvalidInput("one-time-key generation count is out of bounds"));
+        return Err(EngineError::InvalidInput(
+            "one-time-key generation count is out of bounds",
+        ));
     }
 
     let mut account = load_account(ciphertext, pickle_key)?;
@@ -291,7 +295,11 @@ pub fn create_outbound_session(
 
     let session_id = session.session_id();
     let session = snapshot_session(&session)?;
-    Ok(OutboundSessionResult { session, session_id, initial_message })
+    Ok(OutboundSessionResult {
+        session,
+        session_id,
+        initial_message,
+    })
 }
 
 /// Create the invite-creator inbound session from an authenticated pre-key frame.
@@ -321,7 +329,9 @@ pub fn create_inbound_session(
         .map_err(|_| EngineError::SessionEstablishmentFailed)?;
 
     if result.plaintext.len() > MAX_PLAINTEXT_BYTES {
-        return Err(EngineError::InvalidInput("decrypted plaintext exceeds the M3 bound"));
+        return Err(EngineError::InvalidInput(
+            "decrypted plaintext exceeds the M3 bound",
+        ));
     }
 
     let session_id = result.session.session_id();
@@ -367,10 +377,14 @@ pub fn decrypt_session(
 ) -> Result<DecryptResult, EngineError> {
     let message = decode_message(message_type, olm_message)?;
     let mut session = load_session(session_ciphertext, session_pickle_key)?;
-    let plaintext = session.decrypt(&message).map_err(|_| EngineError::DecryptionFailed)?;
+    let plaintext = session
+        .decrypt(&message)
+        .map_err(|_| EngineError::DecryptionFailed)?;
 
     if plaintext.len() > MAX_PLAINTEXT_BYTES {
-        return Err(EngineError::InvalidInput("decrypted plaintext exceeds the M3 bound"));
+        return Err(EngineError::InvalidInput(
+            "decrypted plaintext exceeds the M3 bound",
+        ));
     }
 
     let session = snapshot_session(&session)?;
@@ -378,14 +392,20 @@ pub fn decrypt_session(
 }
 
 fn public_account_state(account: &Account) -> AccountPublicState {
-    let ed25519 = *account.ed25519_key().to_bytes();
+    let ed25519 = *account.ed25519_key().as_bytes();
     let curve25519 = account.curve25519_key().to_bytes();
-    let mut unpublished_one_time_keys: Vec<[u8; 32]> =
-        account.one_time_keys().into_values().map(|key| key.to_bytes()).collect();
+    let mut unpublished_one_time_keys: Vec<[u8; 32]> = account
+        .one_time_keys()
+        .into_values()
+        .map(|key| key.to_bytes())
+        .collect();
     unpublished_one_time_keys.sort_unstable();
 
     AccountPublicState {
-        identity: AccountIdentity { ed25519, curve25519 },
+        identity: AccountIdentity {
+            ed25519,
+            curve25519,
+        },
         unpublished_one_time_keys,
         stored_one_time_key_count: account.stored_one_time_key_count(),
     }
@@ -406,7 +426,9 @@ fn parse_curve25519(bytes: &[u8]) -> Result<Curve25519PublicKey, EngineError> {
 fn encode_message(message: &OlmMessage) -> Result<SessionMessage, EngineError> {
     let (message_type, ciphertext) = message.to_parts();
     if ciphertext.is_empty() || ciphertext.len() > MAX_OLM_MESSAGE_BYTES {
-        return Err(EngineError::InvalidInput("encoded Olm message is out of bounds"));
+        return Err(EngineError::InvalidInput(
+            "encoded Olm message is out of bounds",
+        ));
     }
 
     let message_type = match message_type {
@@ -414,12 +436,17 @@ fn encode_message(message: &OlmMessage) -> Result<SessionMessage, EngineError> {
         1 => 1,
         _ => return Err(EngineError::InvalidMessageType),
     };
-    Ok(SessionMessage { message_type, ciphertext })
+    Ok(SessionMessage {
+        message_type,
+        ciphertext,
+    })
 }
 
 fn decode_message(message_type: u32, ciphertext: &[u8]) -> Result<OlmMessage, EngineError> {
     if ciphertext.is_empty() || ciphertext.len() > MAX_OLM_MESSAGE_BYTES {
-        return Err(EngineError::InvalidInput("encoded Olm message is out of bounds"));
+        return Err(EngineError::InvalidInput(
+            "encoded Olm message is out of bounds",
+        ));
     }
 
     let message_type = match message_type {
@@ -432,7 +459,11 @@ fn decode_message(message_type: u32, ciphertext: &[u8]) -> Result<OlmMessage, En
 }
 
 fn load_account(ciphertext: &str, pickle_key: &[u8]) -> Result<Account, EngineError> {
-    check_snapshot(ciphertext, MAX_ACCOUNT_SNAPSHOT_BYTES, "account snapshot is out of bounds")?;
+    check_snapshot(
+        ciphertext,
+        MAX_ACCOUNT_SNAPSHOT_BYTES,
+        "account snapshot is out of bounds",
+    )?;
     let mut key = copy_pickle_key(pickle_key)?;
     let result = AccountPickle::from_encrypted(ciphertext, &key)
         .map(Account::from_pickle)
@@ -442,7 +473,11 @@ fn load_account(ciphertext: &str, pickle_key: &[u8]) -> Result<Account, EngineEr
 }
 
 fn load_session(ciphertext: &str, pickle_key: &[u8]) -> Result<Session, EngineError> {
-    check_snapshot(ciphertext, MAX_SESSION_SNAPSHOT_BYTES, "session snapshot is out of bounds")?;
+    check_snapshot(
+        ciphertext,
+        MAX_SESSION_SNAPSHOT_BYTES,
+        "session snapshot is out of bounds",
+    )?;
     let mut key = copy_pickle_key(pickle_key)?;
     let result = SessionPickle::from_encrypted(ciphertext, &key)
         .map(Session::from_pickle)
@@ -458,7 +493,10 @@ fn snapshot_account(account: &Account) -> Result<EncryptedSnapshot, EngineError>
         pickle_key.zeroize();
         return Err(EngineError::InvalidAccountState);
     }
-    Ok(EncryptedSnapshot { ciphertext, pickle_key })
+    Ok(EncryptedSnapshot {
+        ciphertext,
+        pickle_key,
+    })
 }
 
 fn snapshot_session(session: &Session) -> Result<EncryptedSnapshot, EngineError> {
@@ -468,7 +506,10 @@ fn snapshot_session(session: &Session) -> Result<EncryptedSnapshot, EngineError>
         pickle_key.zeroize();
         return Err(EngineError::InvalidSessionState);
     }
-    Ok(EncryptedSnapshot { ciphertext, pickle_key })
+    Ok(EncryptedSnapshot {
+        ciphertext,
+        pickle_key,
+    })
 }
 
 fn check_snapshot(
@@ -485,7 +526,9 @@ fn check_snapshot(
 
 fn copy_pickle_key(pickle_key: &[u8]) -> Result<[u8; PICKLE_KEY_BYTES], EngineError> {
     if pickle_key.len() != PICKLE_KEY_BYTES {
-        return Err(EngineError::InvalidInput("pickle key must be exactly 32 bytes"));
+        return Err(EngineError::InvalidInput(
+            "pickle key must be exactly 32 bytes",
+        ));
     }
     let mut key = [0u8; PICKLE_KEY_BYTES];
     key.copy_from_slice(pickle_key);
@@ -495,7 +538,8 @@ fn copy_pickle_key(pickle_key: &[u8]) -> Result<[u8; PICKLE_KEY_BYTES], EngineEr
 fn random_pickle_key() -> Result<[u8; PICKLE_KEY_BYTES], EngineError> {
     let mut key = [0u8; PICKLE_KEY_BYTES];
     let mut rng = OsRng;
-    rng.try_fill_bytes(&mut key).map_err(|_| EngineError::RandomnessUnavailable)?;
+    rng.try_fill_bytes(&mut key)
+        .map_err(|_| EngineError::RandomnessUnavailable)?;
     Ok(key)
 }
 
@@ -506,10 +550,17 @@ mod tests {
     #[test]
     fn account_lifecycle_is_bounded_and_roundtrips() -> Result<(), EngineError> {
         let account = create_account()?;
-        assert_eq!(account.public.unpublished_one_time_keys.len(), INITIAL_ONE_TIME_KEYS);
-        assert_eq!(account.public.stored_one_time_key_count, INITIAL_ONE_TIME_KEYS);
+        assert_eq!(
+            account.public.unpublished_one_time_keys.len(),
+            INITIAL_ONE_TIME_KEYS
+        );
+        assert_eq!(
+            account.public.stored_one_time_key_count,
+            INITIAL_ONE_TIME_KEYS
+        );
 
-        let inspected = inspect_account(account.snapshot.ciphertext(), account.snapshot.pickle_key())?;
+        let inspected =
+            inspect_account(account.snapshot.ciphertext(), account.snapshot.pickle_key())?;
         assert_eq!(inspected, account.public);
 
         let published = mark_account_keys_published(
@@ -520,13 +571,13 @@ mod tests {
         assert!(inspected.unpublished_one_time_keys.is_empty());
         assert_eq!(inspected.stored_one_time_key_count, INITIAL_ONE_TIME_KEYS);
 
-        let replenished = generate_account_one_time_keys(
-            published.ciphertext(),
-            published.pickle_key(),
-            5,
-        )?;
+        let replenished =
+            generate_account_one_time_keys(published.ciphertext(), published.pickle_key(), 5)?;
         assert_eq!(replenished.public.unpublished_one_time_keys.len(), 5);
-        assert_eq!(replenished.public.stored_one_time_key_count, INITIAL_ONE_TIME_KEYS + 5);
+        assert_eq!(
+            replenished.public.stored_one_time_key_count,
+            INITIAL_ONE_TIME_KEYS + 5
+        );
         Ok(())
     }
 
@@ -650,7 +701,8 @@ mod tests {
             return Err(EngineError::InvalidAccountState);
         }
         corrupted[0] = if corrupted[0] == b'A' { b'B' } else { b'A' };
-        let corrupted = String::from_utf8(corrupted).map_err(|_| EngineError::InvalidAccountState)?;
+        let corrupted =
+            String::from_utf8(corrupted).map_err(|_| EngineError::InvalidAccountState)?;
 
         let result = inspect_account(&corrupted, account.snapshot.pickle_key());
         assert!(matches!(result, Err(EngineError::InvalidAccountState)));
@@ -673,7 +725,10 @@ mod tests {
         let oversized_message = vec![0u8; MAX_OLM_MESSAGE_BYTES + 1];
         let malformed = decode_message(1, &oversized_message);
         assert!(matches!(malformed, Err(EngineError::InvalidInput(_))));
-        assert!(matches!(decode_message(2, &[1]), Err(EngineError::InvalidMessageType)));
+        assert!(matches!(
+            decode_message(2, &[1]),
+            Err(EngineError::InvalidMessageType)
+        ));
         Ok(())
     }
 }
