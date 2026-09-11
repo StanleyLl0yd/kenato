@@ -29,6 +29,138 @@ internal class LocalSessionRepository(
         return loadValidatedStateOrNull(ownerIdentityId)?.copyForCaller()
     }
 
+    /**
+     * Reserves the next monotonic publication revision before exposing a signed payload candidate.
+     * A crash after this commit can skip a revision on retry, but can never reuse a committed
+     * revision for different account material.
+     */
+    @Synchronized
+    fun prepareBootstrapPublication(ownerIdentityId: ByteArray): SessionBootstrapBundle {
+        val state = requireState(ownerIdentityId)
+        val native = inspectNativeAccount(state)
+        if (native.unpublishedOneTimeKeys.isEmpty()) {
+            throw SessionStateException("No unpublished M3 one-time keys are available for publication")
+        }
+        if (state.account.oneTimeKeys.size !in 1..SESSION_MAX_ONE_TIME_KEYS) {
+            throw SessionStateException("Tracked M3 one-time-key count cannot be published")
+        }
+        for (unpublished in native.unpublishedOneTimeKeys) {
+            if (state.account.oneTimeKeys.none { it.publicKey.contentEquals(unpublished) }) {
+                throw SessionStateException("Native unpublished M3 key is missing from local bookkeeping")
+            }
+        }
+        if (state.account.publicationRevision == Long.MAX_VALUE) {
+            throw SessionStateException("M3 publication revision space is exhausted")
+        }
+        val revision = state.account.publicationRevision + 1
+        val bundle = SessionBootstrapBundle(
+            identityId = state.ownerIdentityId.copyOf(),
+            accountGeneration = state.account.accountGeneration,
+            publicationRevision = revision,
+            olmEd25519IdentityKey = state.account.olmEd25519IdentityKey.copyOf(),
+            olmCurve25519IdentityKey = state.account.olmCurve25519IdentityKey.copyOf(),
+            oneTimePreKeys = state.account.oneTimeKeys
+                .sortedBy { it.id }
+                .map { SessionOneTimePreKey(it.id, it.publicKey.copyOf()) },
+            bindingSignature = ByteArray(0),
+        )
+        SessionCanonical.validateBootstrap(bundle, requireSignature = false)
+        persist(state.copy(account = state.account.copy(publicationRevision = revision)))
+        return bundle
+    }
+
+    /**
+     * Completes a server-accepted publication by advancing the local account snapshot. The
+     * advanced snapshot is persisted before the caller may treat the publication as complete.
+     */
+    @Synchronized
+    fun completeBootstrapPublication(
+        ownerIdentityId: ByteArray,
+        acceptedAccountGeneration: Long,
+        acceptedPublicationRevision: Long,
+    ) {
+        val state = requireState(ownerIdentityId)
+        if (
+            acceptedAccountGeneration != state.account.accountGeneration ||
+            acceptedPublicationRevision != state.account.publicationRevision
+        ) {
+            throw SessionStateException("Server accepted unexpected M3 publication provenance")
+        }
+        val account = unwrapAccount(state)
+        val advanced = try {
+            engine.markAccountKeysPublished(account)
+        } finally {
+            account.pickleKey.zeroize()
+        }
+        val wrapped = wrapAccountSnapshot(
+            state.ownerIdentityId,
+            state.account.accountGeneration,
+            advanced,
+        )
+        persist(state.copy(account = state.account.copy(snapshot = wrapped)))
+    }
+
+    /**
+     * Replenishes the locally retained OTK set up to [targetCount]. A new batch is generated only
+     * after the previous native unpublished batch has been committed as published.
+     */
+    @Synchronized
+    fun replenishOneTimeKeys(
+        ownerIdentityId: ByteArray,
+        targetCount: Int = TARGET_ONE_TIME_KEYS,
+    ): SessionAccountState {
+        if (targetCount !in 1..SESSION_MAX_ONE_TIME_KEYS) {
+            throw SessionStateException("M3 one-time-key replenishment target is invalid")
+        }
+        val state = requireState(ownerIdentityId)
+        val inspected = inspectNativeAccount(state)
+        if (inspected.unpublishedOneTimeKeys.isNotEmpty()) {
+            throw SessionStateException("Existing M3 one-time keys must be published before replenishment")
+        }
+        val needed = targetCount - state.account.oneTimeKeys.size
+        if (needed <= 0) return state.account.copyForCaller()
+        if (state.account.oneTimeKeys.size + needed > SESSION_MAX_ONE_TIME_KEYS) {
+            throw SessionStateException("M3 one-time-key publication bound would be exceeded")
+        }
+        if (state.account.nextOneTimeKeyId > Long.MAX_VALUE - needed.toLong()) {
+            throw SessionStateException("M3 one-time-key id space is exhausted")
+        }
+
+        val account = unwrapAccount(state)
+        val mutation = try {
+            engine.generateAccountOneTimeKeys(account, needed)
+        } finally {
+            account.pickleKey.zeroize()
+        }
+        if (mutation.publicState.unpublishedOneTimeKeys.size != needed) {
+            mutation.snapshot.pickleKey.zeroize()
+            throw SessionStateException("Native M3 replenishment returned an unexpected key count")
+        }
+        val fresh = mutation.publicState.unpublishedOneTimeKeys.mapIndexed { index, key ->
+            TrackedSessionOneTimeKey(
+                state.account.nextOneTimeKeyId + index.toLong(),
+                key.copyOf(),
+            )
+        }
+        val allKeys = state.account.oneTimeKeys + fresh
+        if (mutation.publicState.storedOneTimeKeyCount != allKeys.size) {
+            mutation.snapshot.pickleKey.zeroize()
+            throw SessionStateException("Native M3 retained key count does not match replenished bookkeeping")
+        }
+        val wrapped = wrapAccountSnapshot(
+            state.ownerIdentityId,
+            state.account.accountGeneration,
+            mutation.snapshot,
+        )
+        val updated = state.account.copy(
+            nextOneTimeKeyId = state.account.nextOneTimeKeyId + needed.toLong(),
+            oneTimeKeys = allKeys,
+            snapshot = wrapped,
+        )
+        persist(state.copy(account = updated))
+        return updated.copyForCaller()
+    }
+
     @Synchronized
     fun createOutboundSession(
         ownerIdentityId: ByteArray,
@@ -249,7 +381,7 @@ internal class LocalSessionRepository(
             val keys = mutation.publicState.unpublishedOneTimeKeys.mapIndexed { index, key ->
                 TrackedSessionOneTimeKey(index.toLong() + FIRST_ONE_TIME_KEY_ID, key.copyOf())
             }
-            val nextId = FIRST_ONE_TIME_KEY_ID + keys.size
+            val nextId = FIRST_ONE_TIME_KEY_ID + keys.size.toLong()
             val state = SessionState(
                 ownerIdentityId = ownerIdentityId.copyOf(),
                 account = SessionAccountState(
@@ -298,12 +430,7 @@ internal class LocalSessionRepository(
     }
 
     private fun validateNativeAccount(state: SessionState) {
-        val native = unwrapAccount(state)
-        val public = try {
-            engine.inspectAccount(native)
-        } finally {
-            native.pickleKey.zeroize()
-        }
+        val public = inspectNativeAccount(state)
         if (
             !public.olmEd25519IdentityKey.contentEquals(state.account.olmEd25519IdentityKey) ||
             !public.olmCurve25519IdentityKey.contentEquals(state.account.olmCurve25519IdentityKey)
@@ -317,6 +444,15 @@ internal class LocalSessionRepository(
             if (state.account.oneTimeKeys.none { it.publicKey.contentEquals(unpublished) }) {
                 throw SessionStateException("Native M3 account contains an untracked unpublished one-time key")
             }
+        }
+    }
+
+    private fun inspectNativeAccount(state: SessionState): NativeAccountPublicState {
+        val native = unwrapAccount(state)
+        return try {
+            engine.inspectAccount(native)
+        } finally {
+            native.pickleKey.zeroize()
         }
     }
 
@@ -494,6 +630,7 @@ internal class LocalSessionRepository(
     companion object {
         private const val FIRST_ACCOUNT_GENERATION = 1L
         private const val FIRST_ONE_TIME_KEY_ID = 1L
+        private const val TARGET_ONE_TIME_KEYS = 32
 
         fun create(context: Context): LocalSessionRepository = LocalSessionRepository(
             engine = JniSessionEngine(),
