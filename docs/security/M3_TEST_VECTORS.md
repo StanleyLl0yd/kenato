@@ -67,7 +67,7 @@ Inputs:
 - creator identity id: `000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f`
 - redeemer identity id: `202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f`
 - invite token: `404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f`
-- SHA-256 of invite token: `ca2a4fe727faaecf16ecd130a86e0885c5540c05375340445071c0657555fd42`
+- SHA-256 of the synthetic invite token, shown as two concatenated hex halves: `ca2a4fe727faaecf16ecd130a86e0885` + `c5540c05375340445071c0657555fd42`
 - creator account generation: `2`
 - creator one-time-prekey id: `7`
 - redeemer account generation: `4`
