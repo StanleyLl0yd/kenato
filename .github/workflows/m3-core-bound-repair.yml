@@ -30,54 +30,17 @@ jobs:
           from pathlib import Path
           path = Path('native/session-engine/src/lib.rs')
           source = path.read_text()
-          old = '''    let mut account = load_account(ciphertext, pickle_key)?;
-    let generated = account.generate_one_time_keys(count);
-'''
-          new = '''    let mut account = load_account(ciphertext, pickle_key)?;
-    if account.one_time_keys().len().saturating_add(count) > MAX_ONE_TIME_KEYS_PER_PUBLICATION {
-        return Err(EngineError::InvalidInput(
-            "total unpublished one-time-key count exceeds the M3 publication bound",
-        ));
-    }
-    let generated = account.generate_one_time_keys(count);
-'''
+          old = "    let mut account = load_account(ciphertext, pickle_key)?;\n    let generated = account.generate_one_time_keys(count);\n"
+          new = "    let mut account = load_account(ciphertext, pickle_key)?;\n    if account.one_time_keys().len().saturating_add(count) > MAX_ONE_TIME_KEYS_PER_PUBLICATION {\n        return Err(EngineError::InvalidInput(\n            \"total unpublished one-time-key count exceeds the M3 publication bound\",\n        ));\n    }\n    let generated = account.generate_one_time_keys(count);\n"
           if source.count(old) != 1:
               raise SystemExit('expected exactly one generation block')
           source = source.replace(old, new)
-
-          marker = '''    #[test]
-    fn outbound_inbound_roundtrip_and_replay_fail_closed() -> Result<(), EngineError> {
-'''
-          test = '''    #[test]
-    fn one_time_key_generation_rejects_total_unpublished_overflow() -> Result<(), EngineError> {
-        let account = create_account()?;
-        let remaining = MAX_ONE_TIME_KEYS_PER_PUBLICATION - INITIAL_ONE_TIME_KEYS;
-        let filled = generate_account_one_time_keys(
-            account.snapshot.ciphertext(),
-            account.snapshot.pickle_key(),
-            remaining,
-        )?;
-        assert_eq!(
-            filled.public.unpublished_one_time_keys.len(),
-            MAX_ONE_TIME_KEYS_PER_PUBLICATION
-        );
-
-        let overflow = generate_account_one_time_keys(
-            filled.snapshot.ciphertext(),
-            filled.snapshot.pickle_key(),
-            1,
-        );
-        assert!(matches!(overflow, Err(EngineError::InvalidInput(_))));
-        Ok(())
-    }
-
-'''
+          marker = "    #[test]\n    fn outbound_inbound_roundtrip_and_replay_fail_closed() -> Result<(), EngineError> {\n"
+          test = "    #[test]\n    fn one_time_key_generation_rejects_total_unpublished_overflow() -> Result<(), EngineError> {\n        let account = create_account()?;\n        let remaining = MAX_ONE_TIME_KEYS_PER_PUBLICATION - INITIAL_ONE_TIME_KEYS;\n        let filled = generate_account_one_time_keys(\n            account.snapshot.ciphertext(),\n            account.snapshot.pickle_key(),\n            remaining,\n        )?;\n        assert_eq!(\n            filled.public.unpublished_one_time_keys.len(),\n            MAX_ONE_TIME_KEYS_PER_PUBLICATION\n        );\n        let overflow = generate_account_one_time_keys(\n            filled.snapshot.ciphertext(),\n            filled.snapshot.pickle_key(),\n            1,\n        );\n        assert!(matches!(overflow, Err(EngineError::InvalidInput(_))));\n        Ok(())\n    }\n\n"
           if source.count(marker) != 1:
               raise SystemExit('expected outbound test marker once')
-          source = source.replace(marker, test + marker)
-          path.write_text(source)
+          path.write_text(source.replace(marker, test + marker))
           PY
-
           cd native/session-engine
           cargo +1.85.0 fmt --all
           cargo +1.85.0 fmt --all -- --check
