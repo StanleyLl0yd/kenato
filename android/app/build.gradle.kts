@@ -80,7 +80,10 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDir(m3NativeJniDir)
+            // The native build is an explicit CI/release prerequisite, so this is a static input.
+            // Resolve the Provider before passing it to AGP's legacy source-set API: AGP 9 rejects
+            // Provider instances here and requires the directory itself.
+            jniLibs.directories.add(m3NativeJniDir.get().asFile)
         }
     }
 
