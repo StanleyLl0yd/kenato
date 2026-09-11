@@ -1,6 +1,7 @@
 package com.sl.kenato.session
 
 import android.content.Context
+import java.security.MessageDigest
 
 /**
  * Owns the M3 local Olm account/session lifecycle. All methods are synchronous and must be
@@ -169,7 +170,9 @@ internal class LocalSessionRepository(
         peerAccountGeneration: Long,
         peerOlmEd25519IdentityKey: ByteArray,
         peerOlmCurve25519IdentityKey: ByteArray,
+        creatorOneTimePreKeyId: Long,
         peerOneTimeKey: ByteArray,
+        inviteToken: ByteArray,
         initialPlaintext: ByteArray,
     ): NativeSessionMessage {
         validatePeerContext(
@@ -180,6 +183,12 @@ internal class LocalSessionRepository(
             peerOlmEd25519IdentityKey,
             peerOlmCurve25519IdentityKey,
         )
+        if (creatorOneTimePreKeyId <= 0) {
+            throw SessionStateException("Creator session one-time-key id is invalid")
+        }
+        if (inviteToken.size != SESSION_INVITE_TOKEN_BYTES) {
+            throw SessionStateException("M3 invite token size is invalid")
+        }
         requireOlmKey(peerOneTimeKey, "peer one-time key")
         val state = requireState(ownerIdentityId)
         requireNoActiveSession(state, localContactId, peerIdentityId)
@@ -214,9 +223,75 @@ internal class LocalSessionRepository(
             sessionId = result.sessionId,
             initiator = true,
             snapshot = wrappedSession,
+            pendingInit = PendingSessionInit(
+                inviteTokenHash = MessageDigest.getInstance("SHA-256").digest(inviteToken),
+                creatorAccountGeneration = peerAccountGeneration,
+                creatorOneTimePreKeyId = creatorOneTimePreKeyId,
+                redeemerAccountGeneration = state.account.accountGeneration,
+                messageType = result.initialMessage.messageType,
+                olmMessage = result.initialMessage.ciphertext.copyOf(),
+            ),
         )
         persist(state.copy(sessions = state.sessions + persisted))
         return result.initialMessage.copyForCaller()
+    }
+
+    @Synchronized
+    fun pendingOutboundInit(
+        ownerIdentityId: ByteArray,
+        localContactId: ByteArray,
+        inviteToken: ByteArray,
+        creatorAccountGeneration: Long,
+        creatorOneTimePreKeyId: Long,
+    ): NativeSessionMessage? {
+        if (inviteToken.size != SESSION_INVITE_TOKEN_BYTES) {
+            throw SessionStateException("M3 invite token size is invalid")
+        }
+        val state = requireState(ownerIdentityId)
+        val session = state.sessions[requireSessionIndex(state, localContactId)]
+        if (!session.initiator) {
+            throw SessionStateException("Existing M3 session is not the deterministic invite initiator")
+        }
+        val pending = session.pendingInit ?: return null
+        requirePendingInitContext(
+            pending,
+            inviteToken,
+            creatorAccountGeneration,
+            creatorOneTimePreKeyId,
+            state.account.accountGeneration,
+        )
+        return NativeSessionMessage(pending.messageType, pending.olmMessage.copyOf())
+    }
+
+    @Synchronized
+    fun markOutboundInitSubmitted(
+        ownerIdentityId: ByteArray,
+        localContactId: ByteArray,
+        inviteToken: ByteArray,
+        creatorAccountGeneration: Long,
+        creatorOneTimePreKeyId: Long,
+    ) {
+        if (inviteToken.size != SESSION_INVITE_TOKEN_BYTES) {
+            throw SessionStateException("M3 invite token size is invalid")
+        }
+        val state = requireState(ownerIdentityId)
+        val index = requireSessionIndex(state, localContactId)
+        val session = state.sessions[index]
+        if (!session.initiator || session.peerAccountGeneration != creatorAccountGeneration) {
+            throw SessionStateException("M3 submitted-init session provenance is invalid")
+        }
+        val pending = session.pendingInit ?: return
+        requirePendingInitContext(
+            pending,
+            inviteToken,
+            creatorAccountGeneration,
+            creatorOneTimePreKeyId,
+            state.account.accountGeneration,
+        )
+        val sessions = state.sessions.toMutableList().also {
+            it[index] = session.copy(pendingInit = null)
+        }
+        persist(state.copy(sessions = sessions))
     }
 
     @Synchronized
@@ -307,6 +382,9 @@ internal class LocalSessionRepository(
         val state = requireState(ownerIdentityId)
         val index = requireSessionIndex(state, localContactId)
         val persisted = state.sessions[index]
+        if (persisted.pendingInit != null) {
+            throw SessionStateException("M3 application encryption is unavailable until session init submission completes")
+        }
         val native = unwrapSession(state, persisted)
         val result = try {
             engine.encryptSession(native, plaintext)
@@ -339,6 +417,9 @@ internal class LocalSessionRepository(
         val state = requireState(ownerIdentityId)
         val index = requireSessionIndex(state, localContactId)
         val persisted = state.sessions[index]
+        if (persisted.pendingInit != null) {
+            throw SessionStateException("M3 application decryption is unavailable until session init submission completes")
+        }
         val native = unwrapSession(state, persisted)
         val result = try {
             engine.decryptSession(native, messageType, olmMessage)
@@ -535,6 +616,24 @@ internal class LocalSessionRepository(
         }
     }
 
+    private fun requirePendingInitContext(
+        pending: PendingSessionInit,
+        inviteToken: ByteArray,
+        creatorAccountGeneration: Long,
+        creatorOneTimePreKeyId: Long,
+        redeemerAccountGeneration: Long,
+    ) {
+        val tokenHash = MessageDigest.getInstance("SHA-256").digest(inviteToken)
+        if (
+            !MessageDigest.isEqual(pending.inviteTokenHash, tokenHash) ||
+            pending.creatorAccountGeneration != creatorAccountGeneration ||
+            pending.creatorOneTimePreKeyId != creatorOneTimePreKeyId ||
+            pending.redeemerAccountGeneration != redeemerAccountGeneration
+        ) {
+            throw SessionStateException("Pending M3 init does not match the authenticated invite reservation")
+        }
+    }
+
     private fun requireNoActiveSession(
         state: SessionState,
         localContactId: ByteArray,
@@ -620,6 +719,10 @@ internal class LocalSessionRepository(
                 snapshot = session.snapshot.copy(
                     ciphertext = session.snapshot.ciphertext.copyOf(),
                     wrappedPickleKey = session.snapshot.wrappedPickleKey.copyOf(),
+                ),
+                pendingInit = session.pendingInit?.copy(
+                    inviteTokenHash = session.pendingInit.inviteTokenHash.copyOf(),
+                    olmMessage = session.pendingInit.olmMessage.copyOf(),
                 ),
             )
         },
