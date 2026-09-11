@@ -98,7 +98,10 @@ android {
 }
 
 val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
-    inputs.dir(m3NativeJniPath)
+    // Keep the execution-time action configuration-cache-safe: Kotlin DSL task actions cannot
+    // capture top-level build-script variables, so snapshot the immutable path in task scope.
+    val nativeJniPath = m3NativeJniPath
+    inputs.dir(nativeJniPath)
 
     doLast {
         val expected = setOf(
@@ -106,7 +109,7 @@ val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
             "arm64-v8a/libkenato_session_jni.so",
             "x86_64/libkenato_session_jni.so",
         )
-        val root = File(m3NativeJniPath)
+        val root = File(nativeJniPath)
         val actual = if (root.isDirectory) {
             root.walkTopDown()
                 .filter { it.isFile && it.extension == "so" }
