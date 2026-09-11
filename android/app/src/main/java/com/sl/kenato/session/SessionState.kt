@@ -27,6 +27,15 @@ internal data class SessionAccountState(
     val snapshot: WrappedSessionSnapshot,
 )
 
+internal data class PendingSessionInit(
+    val inviteTokenHash: ByteArray,
+    val creatorAccountGeneration: Long,
+    val creatorOneTimePreKeyId: Long,
+    val redeemerAccountGeneration: Long,
+    val messageType: Int,
+    val olmMessage: ByteArray,
+)
+
 internal data class PersistedSession(
     val localContactId: ByteArray,
     val peerIdentityId: ByteArray,
@@ -36,6 +45,7 @@ internal data class PersistedSession(
     val sessionId: String,
     val initiator: Boolean,
     val snapshot: WrappedSessionSnapshot,
+    val pendingInit: PendingSessionInit? = null,
 )
 
 internal data class SessionState(
@@ -54,10 +64,12 @@ internal object SessionStateCodec {
     const val IDENTITY_ID_BYTES = 32
     const val LOCAL_CONTACT_ID_BYTES = 16
     const val OLM_PUBLIC_KEY_BYTES = 32
+    const val INVITE_TOKEN_HASH_BYTES = 32
     const val MAX_ACCOUNT_SNAPSHOT_BYTES = 256 * 1024
     const val MAX_SESSION_SNAPSHOT_BYTES = 256 * 1024
     const val MAX_WRAPPED_PICKLE_KEY_BYTES = 256
     const val MAX_SESSION_ID_BYTES = 128
+    const val MAX_OLM_MESSAGE_BYTES = 96 * 1024
 
     private const val FORMAT_VERSION = 1
     private const val DIGEST_BYTES = 32
@@ -194,6 +206,22 @@ internal object SessionStateCodec {
             throw SessionStateException("Session id is invalid")
         }
         validateSnapshot(session.snapshot, MAX_SESSION_SNAPSHOT_BYTES, "session")
+        session.pendingInit?.let { pending ->
+            if (!session.initiator) {
+                throw SessionStateException("Only an initiator session may retain a pending M3 init frame")
+            }
+            requireSize(pending.inviteTokenHash, INVITE_TOKEN_HASH_BYTES, "pending invite token hash")
+            if (
+                pending.creatorAccountGeneration != session.peerAccountGeneration ||
+                pending.creatorOneTimePreKeyId <= 0 ||
+                pending.redeemerAccountGeneration != state.account.accountGeneration ||
+                pending.messageType != SESSION_OLM_MESSAGE_PRE_KEY ||
+                pending.olmMessage.isEmpty() ||
+                pending.olmMessage.size > MAX_OLM_MESSAGE_BYTES
+            ) {
+                throw SessionStateException("Pending M3 session init metadata is invalid")
+            }
+        }
     }
 
     private fun validateSnapshot(snapshot: WrappedSessionSnapshot, maximumCiphertextBytes: Int, name: String) {
@@ -270,21 +298,54 @@ internal object SessionStateCodec {
         writeByte(if (session.initiator) 1 else 0)
         writeSized(session.snapshot.ciphertext)
         writeSized(session.snapshot.wrappedPickleKey)
+        val pending = session.pendingInit
+        writeByte(if (pending != null) 1 else 0)
+        if (pending != null) {
+            write(pending.inviteTokenHash)
+            writeLong(pending.creatorAccountGeneration)
+            writeLong(pending.creatorOneTimePreKeyId)
+            writeLong(pending.redeemerAccountGeneration)
+            writeInt(pending.messageType)
+            writeSized(pending.olmMessage)
+        }
     }
 
-    private fun DataInputStream.readSession(): PersistedSession = PersistedSession(
-        localContactId = ByteArray(LOCAL_CONTACT_ID_BYTES).also(::readFully),
-        peerIdentityId = ByteArray(IDENTITY_ID_BYTES).also(::readFully),
-        peerAccountGeneration = readLong(),
-        peerOlmEd25519IdentityKey = ByteArray(OLM_PUBLIC_KEY_BYTES).also(::readFully),
-        peerOlmCurve25519IdentityKey = ByteArray(OLM_PUBLIC_KEY_BYTES).also(::readFully),
-        sessionId = readString(MAX_SESSION_ID_BYTES),
-        initiator = readCanonicalBoolean(),
-        snapshot = WrappedSessionSnapshot(
+    private fun DataInputStream.readSession(): PersistedSession {
+        val localContactId = ByteArray(LOCAL_CONTACT_ID_BYTES).also(::readFully)
+        val peerIdentityId = ByteArray(IDENTITY_ID_BYTES).also(::readFully)
+        val peerAccountGeneration = readLong()
+        val peerEd25519 = ByteArray(OLM_PUBLIC_KEY_BYTES).also(::readFully)
+        val peerCurve25519 = ByteArray(OLM_PUBLIC_KEY_BYTES).also(::readFully)
+        val sessionId = readString(MAX_SESSION_ID_BYTES)
+        val initiator = readCanonicalBoolean()
+        val snapshot = WrappedSessionSnapshot(
             ciphertext = readSized(MAX_SESSION_SNAPSHOT_BYTES),
             wrappedPickleKey = readSized(MAX_WRAPPED_PICKLE_KEY_BYTES),
-        ),
-    )
+        )
+        val pending = if (readCanonicalBoolean()) {
+            PendingSessionInit(
+                inviteTokenHash = ByteArray(INVITE_TOKEN_HASH_BYTES).also(::readFully),
+                creatorAccountGeneration = readLong(),
+                creatorOneTimePreKeyId = readLong(),
+                redeemerAccountGeneration = readLong(),
+                messageType = readInt(),
+                olmMessage = readSized(MAX_OLM_MESSAGE_BYTES),
+            )
+        } else {
+            null
+        }
+        return PersistedSession(
+            localContactId,
+            peerIdentityId,
+            peerAccountGeneration,
+            peerEd25519,
+            peerCurve25519,
+            sessionId,
+            initiator,
+            snapshot,
+            pending,
+        )
+    }
 
     private fun DataOutputStream.writeSized(value: ByteArray) {
         writeInt(value.size)
