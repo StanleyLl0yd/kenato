@@ -33,14 +33,15 @@ internal class LocalSessionRepository(
     /**
      * Reserves the next monotonic publication revision before exposing a signed payload candidate.
      * A crash after this commit can skip a revision on retry, but can never reuse a committed
-     * revision for different account material.
+     * revision for different account material. Returns null when native state has no unpublished
+     * one-time keys, so callers never need to classify repository state by exception text.
      */
     @Synchronized
-    fun prepareBootstrapPublication(ownerIdentityId: ByteArray): SessionBootstrapBundle {
+    fun prepareBootstrapPublicationOrNull(ownerIdentityId: ByteArray): SessionBootstrapBundle? {
         val state = requireState(ownerIdentityId)
         val native = inspectNativeAccount(state)
         if (native.unpublishedOneTimeKeys.isEmpty()) {
-            throw SessionStateException("No unpublished M3 one-time keys are available for publication")
+            return null
         }
         if (state.account.oneTimeKeys.size !in 1..SESSION_MAX_ONE_TIME_KEYS) {
             throw SessionStateException("Tracked M3 one-time-key count cannot be published")
