@@ -44,3 +44,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'M3 Android: lock and verify JNI session bridge'
           git push origin HEAD:m3/android-session-engine
+
+# retry after narrowing the reviewed JNI export exception
