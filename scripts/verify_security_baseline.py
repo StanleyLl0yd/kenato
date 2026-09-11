@@ -9,7 +9,9 @@ errors: list[str] = []
 
 manifest_path = Path("android/app/src/main/AndroidManifest.xml")
 build = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
+ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 release = Path(".github/workflows/release-android.yml").read_text(encoding="utf-8")
+native_build_script = Path("scripts/build_android_native.sh").read_text(encoding="utf-8")
 gitignore = Path(".gitignore").read_text(encoding="utf-8")
 versions = Path("gradle/libs.versions.toml").read_text(encoding="utf-8")
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text(encoding="utf-8")
@@ -25,6 +27,10 @@ jni_source_path = Path("native/session-jni/src/lib.rs")
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 MAX_POLICY_XML_BYTES = 64 * 1024
 FORBIDDEN_XML_DECLARATIONS = (b"<!DOCTYPE", b"<!ENTITY")
+EXPECTED_ANDROID_NDK = "28.2.13676358"
+EXPECTED_CARGO_NDK = "4.1.2"
+EXPECTED_ANDROID_API = "26"
+EXPECTED_ANDROID_ABIS = {"armeabi-v7a", "arm64-v8a", "x86_64"}
 EXPECTED_JNI_EXPORTS = {
     "Java_com_sl_kenato_session_NativeSessionBridge_createAccount",
     "Java_com_sl_kenato_session_NativeSessionBridge_inspectAccount",
@@ -159,6 +165,50 @@ for field in ("namespace", "applicationId"):
     match = re.search(rf'^\s*{field}\s*=\s*"([^"]+)"', build, re.MULTILINE)
     if not match or match.group(1) != "com.sl.kenato":
         errors.append(f"build.gradle.kts: {field} must remain com.sl.kenato")
+
+ndk_match = re.search(r'^\s*ndkVersion\s*=\s*"([^"]+)"', build, re.MULTILINE)
+if not ndk_match or ndk_match.group(1) != EXPECTED_ANDROID_NDK:
+    errors.append(f"build.gradle.kts: ndkVersion must remain {EXPECTED_ANDROID_NDK}")
+min_sdk_match = re.search(r"^\s*minSdk\s*=\s*([0-9]+)", build, re.MULTILINE)
+if not min_sdk_match or min_sdk_match.group(1) != EXPECTED_ANDROID_API:
+    errors.append(f"build.gradle.kts: minSdk must remain API {EXPECTED_ANDROID_API}")
+abi_match = re.search(r"abiFilters\s*\+=\s*setOf\(([^)]*)\)", build)
+if not abi_match:
+    errors.append("build.gradle.kts: explicit M3 ABI filters are required")
+else:
+    actual_abis = set(re.findall(r'"([^"]+)"', abi_match.group(1)))
+    if actual_abis != EXPECTED_ANDROID_ABIS:
+        errors.append("build.gradle.kts: M3 ABI filters differ from the reviewed three-ABI set")
+
+script_pins = {
+    f'readonly CARGO_NDK_VERSION="{EXPECTED_CARGO_NDK}"': "cargo-ndk version",
+    f'readonly ANDROID_NDK_VERSION="{EXPECTED_ANDROID_NDK}"': "Android NDK version",
+    f'readonly ANDROID_API_LEVEL="{EXPECTED_ANDROID_API}"': "Android API level",
+}
+for required, label in script_pins.items():
+    if required not in native_build_script:
+        errors.append(f"build_android_native.sh: reviewed {label} pin is missing")
+script_abis = set(re.findall(r"^\s*-t\s+([A-Za-z0-9_-]+)\s*\\?\s*$", native_build_script, re.MULTILINE))
+if script_abis != EXPECTED_ANDROID_ABIS:
+    errors.append("build_android_native.sh: cargo-ndk target set differs from the reviewed three ABIs")
+if f'--platform "$ANDROID_API_LEVEL"' not in native_build_script:
+    errors.append("build_android_native.sh: cargo-ndk must use the pinned Android API variable")
+if "build --release --locked" not in native_build_script:
+    errors.append("build_android_native.sh: native release build must remain locked")
+
+for workflow_name, workflow in (("ci.yml", ci), ("release-android.yml", release)):
+    required_native_controls = (
+        f'"ndk;{EXPECTED_ANDROID_NDK}"',
+        f"cargo +1.86.0 install cargo-ndk --version {EXPECTED_CARGO_NDK} --locked --force",
+        f'test "$(cargo ndk --version)" = "cargo-ndk {EXPECTED_CARGO_NDK}"',
+        f'ANDROID_NDK_HOME="$ANDROID_HOME/ndk/{EXPECTED_ANDROID_NDK}" bash scripts/build_android_native.sh',
+    )
+    for required in required_native_controls:
+        if required not in workflow:
+            errors.append(f"{workflow_name}: missing reviewed native build control: {required}")
+    for target in ("aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"):
+        if target not in workflow:
+            errors.append(f"{workflow_name}: missing reviewed Rust Android target {target}")
 
 for forbidden in ("pull_request_target:", "pull_request:", "workflow_dispatch:"):
     if forbidden in release:
