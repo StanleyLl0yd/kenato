@@ -89,7 +89,7 @@ The M2 invite redeemer is the deterministic initiator of the first M3 Olm sessio
 
 An M3 `SessionBootstrapBundle` contains only public material: the Kenato identity id, an account generation, a publication revision, 32-byte Olm Ed25519 and Curve25519 identity public keys, 1..50 32-byte Curve25519 one-time public keys, and a P-256 binding signature.
 
-Within one account generation, the Olm identity public keys do not change. Publication revisions increase monotonically; an exact same-revision replay is idempotent and conflicting reuse is rejected. An account replacement increments `account_generation` by exactly one and restarts `publication_revision` at 1. A creator account replacement invalidates reservations that consume an OTK from the replaced generation; a redeemer account replacement does not discard another identity's already reserved creator OTK.
+Within one account generation, the Olm identity public keys do not change. Publication revisions increase monotonically; an exact same-revision replay is idempotent and conflicting reuse is rejected. An account replacement increments `account_generation` by exactly one and restarts `publication_revision` at 1. A creator account replacement invalidates reservations that consume an OTK from the replaced generation; a redeemer account replacement preserves another identity's already reserved creator OTK but invalidates any previously submitted init from the replaced redeemer generation so a replacement frame can be submitted against that same reservation.
 
 ### M3 session-account binding
 
