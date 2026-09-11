@@ -17,10 +17,24 @@ go_mod = Path("server/go.mod").read_text(encoding="utf-8")
 native_manifest_path = Path("native/session-engine/Cargo.toml")
 native_lock_path = Path("native/session-engine/Cargo.lock")
 native_toolchain_path = Path("native/session-engine/rust-toolchain.toml")
+jni_manifest_path = Path("native/session-jni/Cargo.toml")
+jni_lock_path = Path("native/session-jni/Cargo.lock")
+jni_toolchain_path = Path("native/session-jni/rust-toolchain.toml")
+jni_source_path = Path("native/session-jni/src/lib.rs")
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 MAX_POLICY_XML_BYTES = 64 * 1024
 FORBIDDEN_XML_DECLARATIONS = (b"<!DOCTYPE", b"<!ENTITY")
+EXPECTED_JNI_EXPORTS = {
+    "Java_com_sl_kenato_session_NativeSessionBridge_createAccount",
+    "Java_com_sl_kenato_session_NativeSessionBridge_inspectAccount",
+    "Java_com_sl_kenato_session_NativeSessionBridge_markAccountKeysPublished",
+    "Java_com_sl_kenato_session_NativeSessionBridge_generateAccountOneTimeKeys",
+    "Java_com_sl_kenato_session_NativeSessionBridge_createOutboundSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_createInboundSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_encryptSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_decryptSession",
+}
 
 
 def parse_xml(path: Path) -> ET.Element | None:
@@ -219,6 +233,81 @@ else:
 
 if not native_lock_path.exists():
     errors.append("native/session-engine: Cargo.lock must be present and committed")
+
+if not jni_manifest_path.exists():
+    errors.append("native/session-jni: Cargo.toml is required for the Android M3 boundary")
+else:
+    try:
+        jni_manifest = tomllib.loads(jni_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-jni: unable to parse Cargo.toml: {error}")
+    else:
+        package = jni_manifest.get("package", {})
+        if package.get("rust-version") != "1.85":
+            errors.append("native/session-jni: rust-version must remain 1.85")
+        if package.get("edition") != "2021":
+            errors.append("native/session-jni: Rust edition must remain 2021 until the JNI export policy is re-reviewed")
+        if package.get("publish") is not False:
+            errors.append("native/session-jni: publishing to crates.io must remain disabled")
+        if jni_manifest.get("lib", {}).get("crate-type") != ["cdylib", "rlib"]:
+            errors.append("native/session-jni: crate types must remain cdylib and rlib")
+
+        dependencies = jni_manifest.get("dependencies", {})
+        jni_dependency = dependencies.get("jni")
+        if not isinstance(jni_dependency, dict):
+            errors.append("native/session-jni: jni dependency must use an explicit table")
+        else:
+            if jni_dependency.get("version") != "=0.21.1":
+                errors.append("native/session-jni: jni must remain exactly pinned to =0.21.1")
+            if jni_dependency.get("default-features") is not False:
+                errors.append("native/session-jni: jni default features must remain disabled")
+            if jni_dependency.get("features"):
+                errors.append("native/session-jni: jni optional features are not approved in M3")
+
+        engine_dependency = dependencies.get("kenato-session-engine")
+        if not isinstance(engine_dependency, dict) or engine_dependency.get("path") != "../session-engine":
+            errors.append("native/session-jni: session engine must remain a local path dependency")
+        if dependencies.get("zeroize") != "=1.8.2":
+            errors.append("native/session-jni: zeroize must remain exactly pinned to =1.8.2")
+
+        rust_lints = jni_manifest.get("lints", {}).get("rust", {})
+        if rust_lints.get("unsafe_code") != "allow":
+            errors.append("native/session-jni: reviewed JNI export exception must remain explicit")
+        clippy_lints = jni_manifest.get("lints", {}).get("clippy", {})
+        for lint_name in ("all", "pedantic", "unwrap_used", "expect_used", "panic"):
+            if clippy_lints.get(lint_name) != "deny":
+                errors.append(f"native/session-jni: clippy {lint_name} must remain denied")
+
+if not jni_toolchain_path.exists():
+    errors.append("native/session-jni: rust-toolchain.toml is required")
+else:
+    try:
+        toolchain = tomllib.loads(jni_toolchain_path.read_text(encoding="utf-8")).get("toolchain", {})
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-jni: unable to parse rust-toolchain.toml: {error}")
+    else:
+        if toolchain.get("channel") != "1.85.0":
+            errors.append("native/session-jni: toolchain channel must remain exactly 1.85.0")
+        components = toolchain.get("components", [])
+        if sorted(components) != ["clippy", "rustfmt"]:
+            errors.append("native/session-jni: rustfmt and clippy must remain pinned toolchain components")
+
+if not jni_lock_path.exists():
+    errors.append("native/session-jni: Cargo.lock must be present and committed")
+
+if not jni_source_path.exists():
+    errors.append("native/session-jni: src/lib.rs is required")
+else:
+    jni_source = jni_source_path.read_text(encoding="utf-8")
+    if re.search(r"\bunsafe\s+fn\b", jni_source) or re.search(r"\bunsafe\s*\{", jni_source):
+        errors.append("native/session-jni: unsafe functions or blocks are forbidden")
+    if "#[export_name" in jni_source or "#[link_section" in jni_source:
+        errors.append("native/session-jni: alternate manual export attributes are forbidden")
+    exports = set(re.findall(r'pub\s+extern\s+"system"\s+fn\s+(Java_[A-Za-z0-9_]+)', jni_source))
+    if exports != EXPECTED_JNI_EXPORTS:
+        errors.append("native/session-jni: JNI export set differs from the reviewed M3 boundary")
+    if jni_source.count("#[no_mangle]") != len(EXPECTED_JNI_EXPORTS):
+        errors.append("native/session-jni: each reviewed JNI export must have exactly one no_mangle attribute")
 
 required_ignores = {
     ".env",
