@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -7,6 +9,8 @@ val releaseKeystorePath = providers.environmentVariable("KENATO_KEYSTORE_PATH").
 val releaseStorePassword = providers.environmentVariable("KENATO_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("KENATO_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("KENATO_KEY_PASSWORD").orNull
+val m3NativeJniDir = layout.buildDirectory.dir("generated/m3JniLibs")
+val m3NativeJniPath = m3NativeJniDir.get().asFile.absolutePath
 
 val releaseSigningValues = listOf(
     releaseKeystorePath,
@@ -24,6 +28,7 @@ check(!hasAnyReleaseSigning || hasReleaseSigning) {
 android {
     namespace = "com.sl.kenato"
     compileSdk = 37
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.sl.kenato"
@@ -31,6 +36,10 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0-dev"
+
+        ndk {
+            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -72,11 +81,58 @@ android {
         checkReleaseBuilds = true
     }
 
+    sourceSets {
+        getByName("main") {
+            // The native build is an explicit CI/release prerequisite, so this is a static input.
+            // Resolve the Provider before passing it to AGP's legacy source-set API: AGP 9 expects
+            // a directory path here rather than a Provider or File instance.
+            jniLibs.directories.add(m3NativeJniPath)
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
+    // Keep the execution-time action configuration-cache-safe: Kotlin DSL task actions cannot
+    // capture top-level build-script variables, so snapshot the immutable path in task scope.
+    val nativeJniPath = m3NativeJniPath
+    inputs.dir(nativeJniPath)
+
+    doLast {
+        val expected = setOf(
+            "armeabi-v7a/libkenato_session_jni.so",
+            "arm64-v8a/libkenato_session_jni.so",
+            "x86_64/libkenato_session_jni.so",
+        )
+        val root = File(nativeJniPath)
+        val actual = if (root.isDirectory) {
+            root.walkTopDown()
+                .filter { it.isFile && it.extension == "so" }
+                .map { it.relativeTo(root).invariantSeparatorsPath }
+                .toSet()
+        } else {
+            emptySet()
+        }
+
+        check(actual == expected) {
+            "M3 JNI libraries are missing or unexpected. Run scripts/build_android_native.sh first. Expected=$expected actual=$actual"
+        }
+        expected.forEach { relative ->
+            val library = root.resolve(relative)
+            check(library.isFile && library.length() > 0L) {
+                "M3 JNI library is missing or empty: $relative"
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(verifyM3NativeLibraries)
 }
 
 dependencies {

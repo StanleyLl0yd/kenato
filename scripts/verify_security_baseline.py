@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import subprocess
+import tomllib
 import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from pathlib import Path
 
@@ -8,15 +9,38 @@ errors: list[str] = []
 
 manifest_path = Path("android/app/src/main/AndroidManifest.xml")
 build = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
+ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 release = Path(".github/workflows/release-android.yml").read_text(encoding="utf-8")
+native_build_script = Path("scripts/build_android_native.sh").read_text(encoding="utf-8")
 gitignore = Path(".gitignore").read_text(encoding="utf-8")
 versions = Path("gradle/libs.versions.toml").read_text(encoding="utf-8")
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text(encoding="utf-8")
 go_mod = Path("server/go.mod").read_text(encoding="utf-8")
+native_manifest_path = Path("native/session-engine/Cargo.toml")
+native_lock_path = Path("native/session-engine/Cargo.lock")
+native_toolchain_path = Path("native/session-engine/rust-toolchain.toml")
+jni_manifest_path = Path("native/session-jni/Cargo.toml")
+jni_lock_path = Path("native/session-jni/Cargo.lock")
+jni_toolchain_path = Path("native/session-jni/rust-toolchain.toml")
+jni_source_path = Path("native/session-jni/src/lib.rs")
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 MAX_POLICY_XML_BYTES = 64 * 1024
 FORBIDDEN_XML_DECLARATIONS = (b"<!DOCTYPE", b"<!ENTITY")
+EXPECTED_ANDROID_NDK = "28.2.13676358"
+EXPECTED_CARGO_NDK = "4.1.2"
+EXPECTED_ANDROID_API = "26"
+EXPECTED_ANDROID_ABIS = {"armeabi-v7a", "arm64-v8a", "x86_64"}
+EXPECTED_JNI_EXPORTS = {
+    "Java_com_sl_kenato_session_NativeSessionBridge_createAccount",
+    "Java_com_sl_kenato_session_NativeSessionBridge_inspectAccount",
+    "Java_com_sl_kenato_session_NativeSessionBridge_markAccountKeysPublished",
+    "Java_com_sl_kenato_session_NativeSessionBridge_generateAccountOneTimeKeys",
+    "Java_com_sl_kenato_session_NativeSessionBridge_createOutboundSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_createInboundSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_encryptSession",
+    "Java_com_sl_kenato_session_NativeSessionBridge_decryptSession",
+}
 
 
 def parse_xml(path: Path) -> ET.Element | None:
@@ -142,6 +166,50 @@ for field in ("namespace", "applicationId"):
     if not match or match.group(1) != "com.sl.kenato":
         errors.append(f"build.gradle.kts: {field} must remain com.sl.kenato")
 
+ndk_match = re.search(r'^\s*ndkVersion\s*=\s*"([^"]+)"', build, re.MULTILINE)
+if not ndk_match or ndk_match.group(1) != EXPECTED_ANDROID_NDK:
+    errors.append(f"build.gradle.kts: ndkVersion must remain {EXPECTED_ANDROID_NDK}")
+min_sdk_match = re.search(r"^\s*minSdk\s*=\s*([0-9]+)", build, re.MULTILINE)
+if not min_sdk_match or min_sdk_match.group(1) != EXPECTED_ANDROID_API:
+    errors.append(f"build.gradle.kts: minSdk must remain API {EXPECTED_ANDROID_API}")
+abi_match = re.search(r"abiFilters\s*\+=\s*setOf\(([^)]*)\)", build)
+if not abi_match:
+    errors.append("build.gradle.kts: explicit M3 ABI filters are required")
+else:
+    actual_abis = set(re.findall(r'"([^"]+)"', abi_match.group(1)))
+    if actual_abis != EXPECTED_ANDROID_ABIS:
+        errors.append("build.gradle.kts: M3 ABI filters differ from the reviewed three-ABI set")
+
+script_pins = {
+    f'readonly CARGO_NDK_VERSION="{EXPECTED_CARGO_NDK}"': "cargo-ndk version",
+    f'readonly ANDROID_NDK_VERSION="{EXPECTED_ANDROID_NDK}"': "Android NDK version",
+    f'readonly ANDROID_API_LEVEL="{EXPECTED_ANDROID_API}"': "Android API level",
+}
+for required, label in script_pins.items():
+    if required not in native_build_script:
+        errors.append(f"build_android_native.sh: reviewed {label} pin is missing")
+script_abis = set(re.findall(r"^\s*-t\s+([A-Za-z0-9_-]+)\s*\\?\s*$", native_build_script, re.MULTILINE))
+if script_abis != EXPECTED_ANDROID_ABIS:
+    errors.append("build_android_native.sh: cargo-ndk target set differs from the reviewed three ABIs")
+if f'--platform "$ANDROID_API_LEVEL"' not in native_build_script:
+    errors.append("build_android_native.sh: cargo-ndk must use the pinned Android API variable")
+if "build --release --locked" not in native_build_script:
+    errors.append("build_android_native.sh: native release build must remain locked")
+
+for workflow_name, workflow in (("ci.yml", ci), ("release-android.yml", release)):
+    required_native_controls = (
+        f'"ndk;{EXPECTED_ANDROID_NDK}"',
+        f"cargo +1.86.0 install cargo-ndk --version {EXPECTED_CARGO_NDK} --locked --force",
+        f'test "$(cargo ndk --version)" = "cargo-ndk {EXPECTED_CARGO_NDK}"',
+        f'ANDROID_NDK_HOME="$ANDROID_HOME/ndk/{EXPECTED_ANDROID_NDK}" bash scripts/build_android_native.sh',
+    )
+    for required in required_native_controls:
+        if required not in workflow:
+            errors.append(f"{workflow_name}: missing reviewed native build control: {required}")
+    for target in ("aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"):
+        if target not in workflow:
+            errors.append(f"{workflow_name}: missing reviewed Rust Android target {target}")
+
 for forbidden in ("pull_request_target:", "pull_request:", "workflow_dispatch:"):
     if forbidden in release:
         errors.append(f"release-android.yml: privileged release workflow must not use {forbidden}")
@@ -167,6 +235,130 @@ if "distributionSha256Sum=" not in wrapper:
 if re.search(r"(?m)^\s*require\s+(?:\(|\S)", go_mod) and not Path("server/go.sum").exists():
     errors.append("server: go.sum must be committed when module dependencies are present")
 
+if not native_manifest_path.exists():
+    errors.append("native/session-engine: Cargo.toml is required for M3")
+else:
+    try:
+        native_manifest = tomllib.loads(native_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-engine: unable to parse Cargo.toml: {error}")
+    else:
+        package = native_manifest.get("package", {})
+        if package.get("rust-version") != "1.85":
+            errors.append("native/session-engine: rust-version must remain 1.85")
+        if package.get("edition") != "2024":
+            errors.append("native/session-engine: Rust edition must remain 2024")
+        if package.get("publish") is not False:
+            errors.append("native/session-engine: publishing to crates.io must remain disabled")
+
+        dependencies = native_manifest.get("dependencies", {})
+        vodozemac = dependencies.get("vodozemac")
+        if not isinstance(vodozemac, dict):
+            errors.append("native/session-engine: vodozemac dependency must use an explicit table")
+        else:
+            if vodozemac.get("version") != "=0.10.0":
+                errors.append("native/session-engine: vodozemac must remain exactly pinned to =0.10.0")
+            if vodozemac.get("default-features") is not False:
+                errors.append("native/session-engine: vodozemac default features must remain disabled")
+            if vodozemac.get("features"):
+                errors.append("native/session-engine: vodozemac optional features are not approved in M3")
+
+        rust_lints = native_manifest.get("lints", {}).get("rust", {})
+        if rust_lints.get("unsafe_code") != "deny":
+            errors.append("native/session-engine: unsafe Rust must remain denied in the crypto core")
+
+if not native_toolchain_path.exists():
+    errors.append("native/session-engine: rust-toolchain.toml is required")
+else:
+    try:
+        toolchain = tomllib.loads(native_toolchain_path.read_text(encoding="utf-8")).get("toolchain", {})
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-engine: unable to parse rust-toolchain.toml: {error}")
+    else:
+        if toolchain.get("channel") != "1.85.0":
+            errors.append("native/session-engine: CI/toolchain channel must remain exactly 1.85.0")
+        components = toolchain.get("components", [])
+        if sorted(components) != ["clippy", "rustfmt"]:
+            errors.append("native/session-engine: rustfmt and clippy must remain pinned toolchain components")
+
+if not native_lock_path.exists():
+    errors.append("native/session-engine: Cargo.lock must be present and committed")
+
+if not jni_manifest_path.exists():
+    errors.append("native/session-jni: Cargo.toml is required for the Android M3 boundary")
+else:
+    try:
+        jni_manifest = tomllib.loads(jni_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-jni: unable to parse Cargo.toml: {error}")
+    else:
+        package = jni_manifest.get("package", {})
+        if package.get("rust-version") != "1.85":
+            errors.append("native/session-jni: rust-version must remain 1.85")
+        if package.get("edition") != "2021":
+            errors.append("native/session-jni: Rust edition must remain 2021 until the JNI export policy is re-reviewed")
+        if package.get("publish") is not False:
+            errors.append("native/session-jni: publishing to crates.io must remain disabled")
+        if jni_manifest.get("lib", {}).get("crate-type") != ["cdylib", "rlib"]:
+            errors.append("native/session-jni: crate types must remain cdylib and rlib")
+
+        dependencies = jni_manifest.get("dependencies", {})
+        jni_dependency = dependencies.get("jni")
+        if not isinstance(jni_dependency, dict):
+            errors.append("native/session-jni: jni dependency must use an explicit table")
+        else:
+            if jni_dependency.get("version") != "=0.21.1":
+                errors.append("native/session-jni: jni must remain exactly pinned to =0.21.1")
+            if jni_dependency.get("default-features") is not False:
+                errors.append("native/session-jni: jni default features must remain disabled")
+            if jni_dependency.get("features"):
+                errors.append("native/session-jni: jni optional features are not approved in M3")
+
+        engine_dependency = dependencies.get("kenato-session-engine")
+        if not isinstance(engine_dependency, dict) or engine_dependency.get("path") != "../session-engine":
+            errors.append("native/session-jni: session engine must remain a local path dependency")
+        if dependencies.get("zeroize") != "=1.8.2":
+            errors.append("native/session-jni: zeroize must remain exactly pinned to =1.8.2")
+
+        rust_lints = jni_manifest.get("lints", {}).get("rust", {})
+        if rust_lints.get("unsafe_code") != "allow":
+            errors.append("native/session-jni: reviewed JNI export exception must remain explicit")
+        clippy_lints = jni_manifest.get("lints", {}).get("clippy", {})
+        for lint_name in ("all", "pedantic", "unwrap_used", "expect_used", "panic"):
+            if clippy_lints.get(lint_name) != "deny":
+                errors.append(f"native/session-jni: clippy {lint_name} must remain denied")
+
+if not jni_toolchain_path.exists():
+    errors.append("native/session-jni: rust-toolchain.toml is required")
+else:
+    try:
+        toolchain = tomllib.loads(jni_toolchain_path.read_text(encoding="utf-8")).get("toolchain", {})
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"native/session-jni: unable to parse rust-toolchain.toml: {error}")
+    else:
+        if toolchain.get("channel") != "1.85.0":
+            errors.append("native/session-jni: toolchain channel must remain exactly 1.85.0")
+        components = toolchain.get("components", [])
+        if sorted(components) != ["clippy", "rustfmt"]:
+            errors.append("native/session-jni: rustfmt and clippy must remain pinned toolchain components")
+
+if not jni_lock_path.exists():
+    errors.append("native/session-jni: Cargo.lock must be present and committed")
+
+if not jni_source_path.exists():
+    errors.append("native/session-jni: src/lib.rs is required")
+else:
+    jni_source = jni_source_path.read_text(encoding="utf-8")
+    if re.search(r"\bunsafe\s+fn\b", jni_source) or re.search(r"\bunsafe\s*\{", jni_source):
+        errors.append("native/session-jni: unsafe functions or blocks are forbidden")
+    if "#[export_name" in jni_source or "#[link_section" in jni_source:
+        errors.append("native/session-jni: alternate manual export attributes are forbidden")
+    exports = set(re.findall(r'pub\s+extern\s+"system"\s+fn\s+(Java_[A-Za-z0-9_]+)', jni_source))
+    if exports != EXPECTED_JNI_EXPORTS:
+        errors.append("native/session-jni: JNI export set differs from the reviewed M3 boundary")
+    if jni_source.count("#[no_mangle]") != len(EXPECTED_JNI_EXPORTS):
+        errors.append("native/session-jni: each reviewed JNI export must have exactly one no_mangle attribute")
+
 required_ignores = {
     ".env",
     ".env.*",
@@ -190,6 +382,9 @@ gitignore_patterns = {
 missing_ignores = required_ignores - gitignore_patterns
 for pattern in sorted(missing_ignores):
     errors.append(f".gitignore: missing sensitive-file pattern {pattern}")
+
+if "target/" not in gitignore_patterns:
+    errors.append(".gitignore: Rust target/ output must be ignored")
 
 tracked = subprocess.run(
     ["git", "ls-files"],

@@ -84,11 +84,16 @@ jobs:
           required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")
 
           for attempt in $(seq 1 40); do
-            runs="$(gh api               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2026-03-10"               "/repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100")"
+            runs="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100")"
             pending=0
 
             for workflow in "${required_workflows[@]}"; do
-              record="$(jq -c --arg name "$workflow"                 '[.workflow_runs[] | select(.name == $name and .event == "push" and .head_branch == "main")] | sort_by(.created_at) | last // empty'                 <<< "$runs")"
+              record="$(jq -c --arg name "$workflow" \
+                '[.workflow_runs[] | select(.name == $name and .event == "push" and .head_branch == "main")] | sort_by(.created_at) | last // empty' \
+                <<< "$runs")"
 
               if [[ -z "$record" ]]; then
                 echo "$workflow: waiting for a main push run"
@@ -127,7 +132,7 @@ jobs:
     name: Test, build, sign, and attest
     needs: validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     environment: release
     permissions:
       contents: read
@@ -142,6 +147,13 @@ jobs:
 
       - name: Verify Gradle Wrapper JAR
         run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+
+      - name: Set up Rust 1.85.0
+        run: >
+          rustup toolchain install 1.85.0
+          --profile minimal
+          --component clippy
+          --component rustfmt
 
       - name: Set up JDK 17
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
@@ -159,12 +171,26 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
-      - name: Install Android SDK 37
+      - name: Install Android SDK 37 and pinned NDK
         run: >
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           --channel=3
           "platforms;android-37.0"
           "build-tools;37.0.0"
+          "ndk;28.2.13676358"
+
+      - name: Install pinned Android Rust build tooling
+        run: |
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup target add --toolchain 1.85.0 \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
+          cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force
+          test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
+
+      - name: Build pinned Android JNI libraries
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh
 
       - name: Restore and validate release keystore
         env:
@@ -183,7 +209,10 @@ jobs:
           umask 077
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kenato-release.jks"
           test -s "$RUNNER_TEMP/kenato-release.jks"
-          keytool -list             -keystore "$RUNNER_TEMP/kenato-release.jks"             -storepass "$ANDROID_KEYSTORE_PASSWORD"             -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          keytool -list \
+            -keystore "$RUNNER_TEMP/kenato-release.jks" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
           echo "KENATO_KEYSTORE_PATH=$RUNNER_TEMP/kenato-release.jks" >> "$GITHUB_ENV"
 
       - name: Test and lint release source

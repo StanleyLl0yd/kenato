@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M2 Invite + Contact Establishment complete. M3 E2EE Session is in progress: the authenticated protocol/server bootstrap boundary is implemented under review, while Android/native ratchet execution and secret persistence remain pending.
+Status: M0-M2 complete. M3 E2EE session protocol/server and Android/native implementation are present in PR #40 and are in final exact-head verification; M3 is not complete until #34 is merged and the repository-wide #35 audit/verification succeeds on exact `main`.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -10,7 +10,7 @@ Primary assets:
 
 - private identity keys;
 - private prekey material;
-- session and message keys;
+- Olm account/session and ratchet keys;
 - message plaintext;
 - call signaling plaintext;
 - voice plaintext;
@@ -24,7 +24,7 @@ Secondary privacy-sensitive data:
 - recipient routing identifiers;
 - IP addresses visible during normal network operation;
 - temporary invite/redemption/session-bootstrap relationship metadata;
-- mailbox state.
+- mailbox state in later messaging milestones.
 
 ## Trust boundaries
 
@@ -34,7 +34,7 @@ Trusted to protect application secrets while the operating system and applicatio
 
 Kenato cannot protect plaintext from a fully compromised device or OS.
 
-M1 generates the long-lived identity signing key inside Android Keystore. Its private key is non-exportable. Prekey private keys are generated in process memory and immediately persisted only after AES-256-GCM wrapping with a separate non-exportable Android Keystore key. Hardware backing is used when the device provides it but is not assumed by the security model.
+M1 generates the long-lived identity signing key inside Android Keystore. Its private key is non-exportable. Prekey private keys are generated in process memory and persisted only after AES-256-GCM wrapping with a separate non-exportable Android Keystore key. Hardware backing is used when the device provides it but is not assumed by the security model.
 
 Loss, corruption, or mismatch of the M1 persisted identity record and required Keystore entries fails closed. Kenato does not silently create a replacement identity in that condition; replacement requires an explicit destructive recovery action.
 
@@ -42,7 +42,11 @@ M2 adds local contact identity pins. A newly established peer binding is accepte
 
 Pending M2 invite bearer secrets and contact pins are app-private and excluded from Android cloud backup and device-to-device transfer under the repository's all-domain backup policy.
 
-M3 keeps the M1/M2 P-256 identity as the sole contact trust anchor. The selected vodozemac Olm account identity keys and public one-time keys are separate session-engine material and must be authenticated by a P-256 binding signature before use. The Android/native implementation must additionally pin the exact peer M3 account generation and engine identity keys and must fail closed on unexpected replacement. Native account/session secret persistence and crash-safe ratchet commits are part of the still-pending M3 Android/native slice and are not claimed as implemented by the protocol/server slice alone.
+M3 keeps the M1/M2 P-256 identity as the sole contact trust anchor. Vodozemac Olm account identity keys and public one-time keys are separate session-engine material and are accepted only after P-256 binding verification. Persisted sessions bind the exact peer M3 account generation and Ed25519/Curve25519 account identity keys. Returned creator generation and OTK id/public bytes must exactly match local creator account state before an inbound session is committed.
+
+M3 Olm account/session snapshots are app-private and backup/device-transfer excluded. Every encrypted native snapshot uses a fresh random 32-byte pickle key; the pickle key is wrapped with a non-exportable Android Keystore AES-GCM key using context-specific AAD. Missing/mismatched Keystore or persisted M3 state fails closed and requires explicit recovery rather than silent Olm-account regeneration.
+
+Ratchet-state durability is part of the cryptographic boundary: outbound ciphertext and inbound plaintext are not returned until the advanced session state is durably committed. Inbound-session creation commits consumed local OTK bookkeeping and the new session together in one atomic M3 state write before returning the authenticated control plaintext.
 
 ### Kenato server
 
@@ -68,7 +72,7 @@ Compromise of the server must not reveal message or voice plaintext or any devic
 
 M2/M3 expose no public identity or session-bootstrap search/lookup endpoint. Creator public material is disclosed through invite-authorized flows; redeemer material and the initial session frame are disclosed only to the authenticated creator of that invite.
 
-Successful creator claim deletes the invite relationship row and cascades deletion of temporary M3 reservation/init state in the same SQLite transaction that retrieves the bounded claim result. Unclaimed expired rows are removed by explicit retention cleanup at server startup and on an hourly schedule; the M3 temporary rows reference the invite/reservation rows with cascading foreign keys.
+Successful creator claim deletes the invite relationship row and cascades deletion of temporary M3 reservation/init state in the same SQLite transaction that retrieves the bounded claim result. Unclaimed expired rows are removed by explicit retention cleanup at server startup and on an hourly schedule; M3 temporary rows reference the invite/reservation rows with cascading foreign keys.
 
 ### TURN server
 
@@ -92,7 +96,7 @@ The M0 repository/release foundation establishes:
 - the protected `release` environment exists; production signing secrets and certificate trust material, when provisioned, are confined to it;
 - release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
 
-The M3 native slice introduces a Rust/NDK dependency boundary. Exact vodozemac/toolchain pinning, committed Rust dependency locking, supported ABI validation and native supply-chain checks are M3 exit requirements; they are not satisfied merely by the server bootstrap implementation.
+The M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. Both native crates have committed lockfiles. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift.
 
 ## Threats in scope
 
@@ -108,7 +112,9 @@ Mitigations:
 - immutable `v*` release tags;
 - full-SHA-pinned GitHub Actions and digest-pinned critical containers;
 - least-privilege workflow permissions and non-persistent checkout credentials;
-- Semgrep, Gitleaks, Dependency Review, govulncheck, Android lint, Qodana, and CodeQL according to stack support;
+- Semgrep, Gitleaks, Dependency Review, govulncheck, Android lint, Qodana, CodeQL and Rust checks according to stack support;
+- exact native dependency/toolchain/NDK/cargo-ndk pins and committed Cargo locks;
+- three-ABI native build/packaging verification before Android build/release;
 - release signing secrets isolated in the `release` environment;
 - independent expected certificate fingerprint verification;
 - release source must be a successfully verified `main` commit;
@@ -118,15 +124,17 @@ Mitigations:
 
 A network observer may capture or modify traffic.
 
-Mitigations implemented through the current M3 server-bootstrap slice:
+Mitigations implemented through M3:
 
 - TLS for client-server transport at the reviewed deployment boundary;
 - identity-key signatures over M2 publication/invite/redemption/claim canonical payloads;
 - P-256 identity signatures over M3 session-account bindings, reservation intent, initial-frame submission, and creator claim;
 - explicit protocol-version, generation, identity, invite-token and one-time-key bindings;
-- explicit replay/idempotency handling for bootstrap operations.
+- explicit replay/idempotency handling for bootstrap operations;
+- authenticated vodozemac Olm/Double Ratchet encryption/decryption at the M3 client session primitive;
+- local durable ratchet advancement before application-visible ciphertext/plaintext is returned.
 
-TLS protects invite bearer secrets in transit from passive/active network attackers, while client-verifiable signatures make token-to-identity, redemption-to-identity, session-account-to-identity and initial-frame bindings independently verifiable. Authenticated Double Ratchet payload protection is provided only after the Android/native vodozemac slice lands and therefore is not yet claimed by this intermediate server slice.
+TLS protects invite bearer secrets in transit from passive/active network attackers. Client-verifiable signatures make token-to-identity, redemption-to-identity, session-account-to-identity and initial-frame bindings independently verifiable. The M3 local crypto primitive provides authenticated ratcheted payload protection once a session is established. Ordinary encrypted-message routing/mailbox transport is not implemented until M4 and is not claimed by M3.
 
 ### Malicious or compromised server
 
@@ -134,7 +142,7 @@ An attacker obtains server storage, process access, or operator privileges.
 
 Mitigations:
 
-- no private identity, prekey, Olm account, one-time-key, or ratchet keys on the server;
+- no private identity, prekey, Olm account, one-time-key, session or ratchet keys on the server;
 - no plaintext messages or voice on the server;
 - server stores invite-token hashes rather than raw tokens at rest;
 - M2 invite descriptor is signed by the creator identity key;
@@ -143,6 +151,7 @@ Mitigations:
 - M3 public Olm account identity keys and OTK set are covered by the existing P-256 trust anchor;
 - M3 reservation and submit proofs bind the exact invite participants, creator generation/OTK allocation, redeemer generation and SHA-256 of the opaque initial frame;
 - creator claim returns enough authenticated fields for the correct client to independently re-verify the stored submit proof instead of trusting server assertions;
+- responder additionally checks the exact creator account generation and OTK id/public bytes against local state and checks the decrypted canonical control payload;
 - M2 and M3 publication revisions/generations are monotonic and signed;
 - no public identity/session enumeration endpoint;
 - successful claims delete temporary relationship/bootstrap records and expired invite state is removed by bounded retention cleanup;
@@ -150,7 +159,7 @@ Mitigations:
 - secrets isolated from logs;
 - contact/session identity verification performed by clients.
 
-A malicious server can deny service, suppress a redemption/bootstrap, exhaust or withhold public one-time keys, retain metadata outside Kenato's intended implementation policy, or replay stale-but-valid public material within accepted protocol rules. It must not be able to make a correct client silently pin a different Kenato identity or M3 engine identity, or alter/transplant the authenticated initial frame, without a signature/hash/pin verification failure, assuming SHA-256 and ECDSA P-256 remain secure and the peer private identity key is uncompromised.
+A malicious server can deny service, suppress a redemption/bootstrap, exhaust or withhold public one-time keys, retain metadata outside Kenato's intended implementation policy, or replay stale-but-valid public material within accepted protocol rules. It must not be able to make a correct client silently pin a different Kenato identity or M3 engine identity, substitute a different local creator OTK, or alter/transplant the authenticated initial frame without a signature/hash/pin/provenance/control verification failure, assuming SHA-256, ECDSA P-256 and the selected Olm primitives remain secure and peer private identity/session material is uncompromised.
 
 ### Invite/session-bootstrap theft, replay, and substitution
 
@@ -171,6 +180,7 @@ Mitigations:
 - fallback-key reuse is not supported;
 - submit proof binds both identities, token, both account generations, creator OTK id, message type and opaque-frame digest;
 - exact duplicate/idempotency behavior is explicit and conflicting replays fail closed;
+- the initiator persists the exact pre-key frame before submit and reuses it after failed submit/restart rather than generating a second session;
 - malformed/expired/redeemed/wrong-identity requests fail without disclosing unrelated identities;
 - a process-wide bounded pre-crypto concurrency/rate gate runs before expensive service verification;
 - per-identity active-invite quotas and global retained-state caps bound persistent abuse.
@@ -179,21 +189,17 @@ Anyone who obtains an unused invite URI before its intended recipient redeems it
 
 M2/M3 creator claim is intentionally destructive on the server: a successful claim removes the temporary relationship/bootstrap rows rather than retaining a replay cache. If the successful claim response is lost before the creator durably commits local contact/session state, the peers must establish a fresh invite rather than recovering the consumed claim from the server. This trades retry availability for lower relationship-metadata retention and does not permit silent identity substitution.
 
-The server prevents reuse of a consumed OTK id within an account generation, but it does not retain an unbounded historical set of every old OTK public-key byte string. Correct clients must generate genuinely fresh vodozemac OTKs and monotonically increasing bookkeeping ids when replenishing a generation. Reusing old private/public OTK material under a fresh id is a client compromise/bug and is prohibited by the M3 client implementation contract.
+After a successful destructive M3 claim response, the client suppresses cancellation through verification/local commit. The authenticated M2 pin is committed first and atomic M3 inbound state second. An M2 commit failure leaves M3 state/OTK untouched. An M3 commit failure can leave the valid M2 pin but does not persist an M3 session or consume the local OTK; recovery requires a fresh invite. M3-first ordering is prohibited because it could create a durable session without the M2 trust anchor.
 
-### Message tampering and replay
+The server prevents reuse of a consumed OTK id within an account generation, but it does not retain an unbounded historical set of every old OTK public-key byte string. Correct clients generate genuinely fresh vodozemac OTKs and monotonically increasing bookkeeping ids when replenishing a generation. Reusing old private/public OTK material under a fresh id is a client compromise/bug and is prohibited by the M3 client implementation contract. Local active-key alias detection compares exact key bytes.
+
+### Message tampering, replay, and reordering
 
 An attacker reorders, duplicates, modifies, or replays encrypted protocol messages.
 
-Current M3 server-bootstrap mitigation authenticates the single initial opaque pre-key frame with the redeemer's P-256 submit proof and binds it to the exact invite/session context. The actual Olm/Double Ratchet replay, reordering and skipped-key behavior becomes implemented only when the vodozemac native session slice lands.
+M3 authenticates the initial opaque pre-key frame with the redeemer's P-256 submit proof and binds it to the exact invite/session context. The responder also verifies the expected peer Curve25519 identity and the decrypted canonical control payload before accepting the inbound session.
 
-M3 exit requires:
-
-- authenticated Olm encryption/decryption;
-- crash-safe ratchet/session state evolution;
-- bounded skipped-message handling using the selected engine's fixed limits;
-- malformed/oversized/replayed/reordered integration tests;
-- no caller override that increases those engine limits.
+For established sessions, Kenato delegates authenticated Olm/Double Ratchet message processing, replay behavior, out-of-order skipped-key handling, and maximum message-gap behavior to exact-pinned vodozemac 0.10.0. Kenato does not expose a caller override that raises the engine's fixed skipped-key/message-gap limits. The native engine tests exercise replay/reordering and boundary behavior, while Kotlin persistence tests ensure a failed local commit does not release the newly produced ciphertext/plaintext.
 
 Ordinary encrypted-message transport, mailbox routing and delivery acknowledgement remain M4.
 
@@ -209,11 +215,13 @@ Mitigations:
 - creator invite and redeemer proof signatures bind contact establishment to those identity ids;
 - M3 Ed25519/Curve25519 account identity keys and OTK set are signed by the same P-256 identity;
 - account generation/revision transitions are monotonic and engine identity keys cannot change inside one generation;
-- identity binding is stored locally after verification and M3 must additionally pin exact peer account-generation/engine-key bytes;
-- existing pins cannot be silently replaced;
-- unexpected identity/account change must become an explicit user-visible recovery decision rather than automatic trust.
+- M3 sessions persist the exact peer account generation and engine identity-key bytes used for bootstrap;
+- creator response handling requires the exact returned local generation/OTK id/public bytes to match current local state;
+- existing M2 identity pins cannot be silently replaced;
+- persisted M3 state/Keystore mismatch fails closed instead of silently replacing engine identity material;
+- unexpected identity/account change requires explicit recovery rather than automatic trust.
 
-M1 rejects local identity-state/Keystore mismatches rather than silently rotating the local identity. M3 native account recovery must preserve the same fail-closed principle and invalidate affected sessions rather than silently replacing engine identity material.
+M1 rejects local identity-state/Keystore mismatches rather than silently rotating the local identity. M3 applies the same fail-closed principle to its Olm account and sessions.
 
 ### User enumeration and spam
 
@@ -234,25 +242,28 @@ The in-process rate gate is deliberately a coarse resource bound, not a full pub
 
 ### Resource exhaustion
 
-Malformed or excessive requests attempt to exhaust memory, CPU, storage, signature verification, SQLite locks, WebSocket slots, prekeys, mailbox capacity, or TURN allocations.
+Malformed or excessive requests attempt to exhaust memory, CPU, storage, signature verification, SQLite locks, native/JNI allocations, prekeys, later WebSocket/mailbox capacity, or TURN allocations.
 
-Mitigations implemented through the current M3 server-bootstrap slice:
+Mitigations through M3:
 
 - 64 KiB M2 contact request/response limits and 128 KiB M3 bootstrap request/response limits;
-- M3 opaque initial frame capped at 96 KiB;
+- 64 KiB M3 application plaintext bound;
+- 96 KiB M3 Olm-frame bound;
 - bounded parser fields and repeated-key counts;
-- M3 public Olm keys fixed at 32 bytes and session bundle OTK count limited to 1..50;
+- M3 public Olm keys fixed at 32 bytes;
+- one shared maximum of 50 tracked/published M3 OTKs and a normal target of 32;
+- at most 256 persisted Android M3 sessions;
+- bounded serialized account/session snapshots, wrapped-key envelopes, session ids and JNI byte arrays;
+- vodozemac's fixed skipped-key/message-gap limits remain unchanged;
 - strict public-key/signature/token sizes before cryptographic parsing;
 - process-wide pre-crypto concurrency and operation-window limits;
 - active invite quotas, global identity/invite/session-bootstrap caps, exact expiry checks and periodic expired-invite cleanup;
 - atomic single-OTK allocation and explicit exhaustion failure;
 - SQLite busy timeout, bounded transactions, indexes and serialized writes;
 - HTTP header/body and operation timeouts;
-- cancellation propagation through request contexts.
+- cancellation propagation before destructive/network boundaries and explicit cancellation suppression where a post-success durable commit is mandatory.
 
-M3 Android/native work must additionally bound persisted sessions (maximum 256), application plaintext (64 KiB), serialized engine snapshots and native/JNI allocations while preserving vodozemac's skipped-key/message-gap limits. Later milestones must additionally bound WebSocket connections/queues, mailbox quotas/retention and TURN allocations/credential lifetimes.
-
-The M1 persisted identity record has an explicit maximum serialized size and one-time prekey pool. M2 preserves those bounds for published prekey collections and Android contact state. M3 server session-bootstrap state is separately bounded and temporary reservation/init rows are tied to the bounded invite lifecycle.
+The M1 persisted identity record has an explicit maximum serialized size and one-time prekey pool. M2 preserves those bounds for published prekey collections and Android contact state. M3 server bootstrap state is separately bounded and temporary reservation/init rows are tied to the bounded invite lifecycle. Later milestones must additionally bound WebSocket connections/queues, mailbox quotas/retention and TURN allocations/credential lifetimes.
 
 ### Local data leakage
 
@@ -263,14 +274,15 @@ Mitigations:
 - long-lived identity and prekey-wrapping keys in Android Keystore;
 - prekey private material persisted only as AES-256-GCM authenticated ciphertext bound to its kind, id, and public key;
 - M2 contact pins and pending invite secrets remain app-private and are covered by the existing all-domain backup/device-transfer denial;
+- M3 account/session state is app-private and covered by the same backup/device-transfer denial;
+- every M3 native account/session snapshot uses a fresh random 32-byte pickle key, protected by a non-exportable Android Keystore AES-GCM wrapping key with context AAD;
 - cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
 - cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
 - backup policy is enforced by repository checks and Android build/lint validation;
-- no raw invite tokens, private keys, secret-bearing signatures, Olm ciphertext, complete public bundles, or plaintext user content are intentionally written to logs;
+- no raw invite tokens, private keys, pickle keys, secret-bearing signatures, Olm ciphertext, complete public bundles, or plaintext user content are intentionally written to logs;
+- secret-bearing state is not placed in UI state or `SavedStateHandle`;
 - minimum telemetry;
-- UI screenshot restrictions considered only where they improve privacy without harming normal UX.
-
-The M3 native slice must keep Olm account/session snapshots app-private and backup-excluded. ADR 0009 requires a fresh random 32-byte vodozemac pickle key for every encrypted snapshot, with that key protected by a non-exportable Android Keystore AES-GCM wrapping key; snapshot-key reuse is prohibited. These local-secret controls remain an M3 exit requirement until #34 lands and is verified.
+- UI screenshot restrictions are considered only where they improve privacy without harming normal UX.
 
 ## Threats not fully solved
 
@@ -285,7 +297,7 @@ Kenato does not claim to provide:
 - distributed/source-aware public-edge anti-DoS protection from the loopback service alone;
 - server-side replay recovery after a successful creator claim whose response is lost before local commit;
 - proof that a malicious/compromised client generated fresh OTK private material merely because it used a fresh public bookkeeping id;
-- completed ratchet-state secrecy/crash-safety until the M3 Android/native vodozemac slice is implemented and verified;
+- ordinary encrypted-message routing, offline delivery, acknowledgements, conversation history, or other M4 product messaging behavior;
 - guaranteed recovery of identity/history after device loss when no secure backup exists.
 
 These limitations must not be obscured in marketing.
@@ -319,7 +331,7 @@ Before the first stable public release:
 - protocol test vectors checked;
 - malformed/replayed/reordered input tests exist for protocol layers that implement those semantics;
 - invite/session lifecycle and abuse limits validated;
-- M3 native crypto persistence and replay/reordering bounds validated before M3 completion;
+- M3 native crypto persistence, substitution, replay/reordering and native-boundary behavior pass M3's final repository-wide audit/verification;
 - mailbox and TURN abuse limits validated in their milestones;
 - dependency and supply-chain review completed;
 - default-branch, release-tag, and CodeQL rulesets verified active;

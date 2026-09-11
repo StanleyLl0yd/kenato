@@ -34,6 +34,9 @@ bin/
 coverage.out
 *.test
 
+# Rust
+target/
+
 # Logs / temp
 *.log
 tmp/

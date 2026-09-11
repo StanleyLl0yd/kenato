@@ -16,7 +16,7 @@ jobs:
   android:
     name: Android
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -27,6 +27,54 @@ jobs:
 
       - name: Verify CI supply-chain policy
         run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Set up Rust 1.85.0
+        run: >
+          rustup toolchain install 1.85.0
+          --profile minimal
+          --component clippy
+          --component rustfmt
+
+      - name: Prepare native Rust diagnostics
+        run: |
+          cd native/session-engine
+          cargo +1.85.0 generate-lockfile
+          cargo +1.85.0 fmt --all
+          cd ../session-jni
+          cargo +1.85.0 generate-lockfile
+          cargo +1.85.0 fmt --all
+
+      - name: Upload generated native diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-session-diagnostics
+          path: |
+            native/session-engine/Cargo.lock
+            native/session-engine/src/lib.rs
+            native/session-jni/Cargo.lock
+            native/session-jni/src/lib.rs
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Verify native Rust session engine
+        working-directory: native/session-engine
+        run: |
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 check --locked
+          cargo +1.85.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.85.0 test --locked
+          cargo +1.85.0 build --locked --release
+          git diff --exit-code -- Cargo.lock src/lib.rs
+
+      - name: Verify native Android JNI bridge
+        working-directory: native/session-jni
+        run: |
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 check --locked
+          cargo +1.85.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.85.0 test --locked
+          cargo +1.85.0 build --locked --release
+          git diff --exit-code -- Cargo.lock src/lib.rs
 
       - name: Verify repository security baseline
         run: python3 scripts/verify_security_baseline.py
@@ -50,12 +98,26 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
-      - name: Install Android SDK 37
+      - name: Install Android SDK 37 and pinned NDK
         run: >
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           --channel=3
           "platforms;android-37.0"
           "build-tools;37.0.0"
+          "ndk;28.2.13676358"
+
+      - name: Install pinned Android Rust build tooling
+        run: |
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup target add --toolchain 1.85.0 \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
+          cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force
+          test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
+
+      - name: Build pinned Android JNI libraries
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh
 
       - name: Verify Android
         run: >
