@@ -4,6 +4,8 @@ import com.sl.kenato.contact.ContactCanonical
 import com.sl.kenato.contact.ContactCrypto
 import com.sl.kenato.contact.InviteUriCodec
 import com.sl.kenato.contact.M2InviteDescriptor
+import com.sl.kenato.contact.M2PublicIdentityBundle
+import com.sl.kenato.contact.M2SignedPreKey
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -111,6 +113,46 @@ class SessionCoordinatorTest {
         assertArrayEquals(fixture.frame.ciphertext, fixture.sessions.state.sessions.single().pendingInit!!.olmMessage)
     }
 
+    @Test
+    fun cancellationRaisedAfterDestructiveClaimStillCommitsVerifiedPinAndInboundSession() {
+        val fixture = InboundClaimFixture()
+        var cancelled = false
+        fixture.transport.afterClaim = { cancelled = true }
+
+        val established = fixture.newCoordinator().claimInbound(
+            inviteUri = fixture.inviteUri,
+            cancellation = SessionCancellation { cancelled },
+        )
+
+        assertTrue(cancelled)
+        assertEquals(SessionBootstrapRole.RESPONDER, established.role)
+        assertEquals(1, fixture.transport.claimCalls)
+        assertEquals(1, fixture.contacts.commitCalls)
+        assertEquals(1, fixture.sessions.inboundCalls)
+        assertEquals(1, fixture.sessions.state.sessions.size)
+        assertFalse(fixture.sessions.state.sessions.single().initiator)
+        assertArrayEquals(fixture.redeemer.identityId, fixture.sessions.state.sessions.single().peerIdentityId)
+        assertTrue(fixture.sessions.state.account.oneTimeKeys.none { it.id == fixture.creatorOneTimeKey.id })
+    }
+
+    @Test
+    fun substitutedCreatorOneTimeKeyFailsBeforePinOrInboundStateCommit() {
+        val fixture = InboundClaimFixture()
+        fixture.transport.claimResponse = fixture.claimResponse.copy(
+            creatorOneTimePreKey = fixture.creatorOneTimeKey.copy(publicKey = ByteArray(32) { 0x30 }),
+        )
+
+        assertThrows(SessionStateException::class.java) {
+            fixture.newCoordinator().claimInbound(fixture.inviteUri)
+        }
+
+        assertEquals(1, fixture.transport.claimCalls)
+        assertEquals(0, fixture.contacts.commitCalls)
+        assertEquals(0, fixture.sessions.inboundCalls)
+        assertTrue(fixture.sessions.state.sessions.isEmpty())
+        assertTrue(fixture.sessions.state.account.oneTimeKeys.any { it.id == fixture.creatorOneTimeKey.id })
+    }
+
     private class PendingOutboundFixture {
         val local = TestIdentity()
         val creator = TestIdentity()
@@ -175,6 +217,103 @@ class SessionCoordinatorTest {
         )
     }
 
+    private class InboundClaimFixture {
+        val local = TestIdentity()
+        val redeemer = TestIdentity()
+        val token = ByteArray(32) { 0x45 }
+        val localContactId = ByteArray(16) { 0x66 }
+        val creatorOneTimeKey = SessionOneTimePreKey(1, ByteArray(32) { 0x31 })
+        val invite = M2InviteDescriptor(
+            creatorIdentityId = local.identityId.copyOf(),
+            token = token.copyOf(),
+            signature = local.sign(ContactCanonical.invitePayload(local.identityId, token)),
+        )
+        val inviteUri = InviteUriCodec.encode(invite)
+        val redeemerIdentityBundle = signedM2Bundle(redeemer)
+        val redeemerSessionBundle = signedM3Bundle(redeemer)
+        private val olmMessage = "creator-claim-pre-key-frame".toByteArray()
+        val claimResponse: SessionClaimWireResponse = run {
+            val unsignedSubmit = SessionSubmitInit(
+                creatorIdentityId = local.identityId.copyOf(),
+                redeemerIdentityId = redeemer.identityId.copyOf(),
+                inviteToken = token.copyOf(),
+                creatorAccountGeneration = CREATOR_GENERATION,
+                creatorOneTimePreKeyId = creatorOneTimeKey.id,
+                redeemerAccountGeneration = redeemerSessionBundle.accountGeneration,
+                olmMessageType = SESSION_OLM_MESSAGE_PRE_KEY,
+                olmMessage = olmMessage.copyOf(),
+                submitSignature = ByteArray(0),
+            )
+            SessionClaimWireResponse(
+                redeemerIdentityBundle = redeemerIdentityBundle,
+                redemptionSignature = redeemer.sign(
+                    ContactCanonical.redemptionPayload(local.identityId, redeemer.identityId, token),
+                ),
+                redeemerSessionBundle = redeemerSessionBundle,
+                creatorAccountGeneration = CREATOR_GENERATION,
+                creatorOneTimePreKey = creatorOneTimeKey,
+                olmMessageType = SESSION_OLM_MESSAGE_PRE_KEY,
+                olmMessage = olmMessage.copyOf(),
+                submitSignature = redeemer.sign(SessionCanonical.submitPayload(unsignedSubmit)),
+            )
+        }
+        val sessions = FakeSessions(
+            creatorState(
+                ownerIdentityId = local.identityId,
+                creatorOneTimeKey = creatorOneTimeKey,
+            ),
+        )
+        val transport = FakeTransport().also { it.claimResponse = claimResponse }
+        val contacts = object : SessionContactBoundary {
+            var commitCalls = 0
+
+            override fun requirePinnedContact(
+                ownerIdentityId: ByteArray,
+                localContactId: ByteArray,
+                expectedPeerIdentityId: ByteArray,
+            ): SessionPinnedContact = error("not used")
+
+            override fun requirePendingInvite(
+                ownerIdentityId: ByteArray,
+                invite: M2InviteDescriptor,
+                nowEpochSeconds: Long,
+            ) {
+                assertArrayEquals(local.identityId, ownerIdentityId)
+                assertArrayEquals(token, invite.token)
+                assertEquals(1_000L, nowEpochSeconds)
+            }
+
+            override fun commitClaimedContact(
+                ownerIdentityId: ByteArray,
+                inviteToken: ByteArray,
+                peerIdentityId: ByteArray,
+                peerIdentityPublicKey: ByteArray,
+                pinnedAtEpochSeconds: Long,
+            ): SessionPinnedContact {
+                assertArrayEquals(local.identityId, ownerIdentityId)
+                assertArrayEquals(token, inviteToken)
+                assertArrayEquals(redeemer.identityId, peerIdentityId)
+                assertArrayEquals(redeemer.publicKey, peerIdentityPublicKey)
+                assertEquals(1_000L, pinnedAtEpochSeconds)
+                commitCalls += 1
+                return SessionPinnedContact(
+                    localId = localContactId.copyOf(),
+                    identityId = peerIdentityId.copyOf(),
+                    identityPublicKey = peerIdentityPublicKey.copyOf(),
+                )
+            }
+        }
+
+        fun newCoordinator(): SessionCoordinator = SessionCoordinator(
+            identity = local,
+            contacts = contacts,
+            sessions = sessions,
+            transport = transport,
+            threadGuard = SessionThreadGuard { },
+            clock = SessionClock { 1_000 },
+        )
+    }
+
     private class TestIdentity : SessionIdentityBoundary {
         private val keyPair: KeyPair = KeyPairGenerator.getInstance("EC").apply {
             initialize(ECGenParameterSpec("secp256r1"))
@@ -200,6 +339,7 @@ class SessionCoordinatorTest {
         var loadCalls = 0
         var pendingReads = 0
         var clearCalls = 0
+        var inboundCalls = 0
 
         override fun loadOrCreateAccount(ownerIdentityId: ByteArray): SessionAccountState {
             loadCalls += 1
@@ -212,8 +352,7 @@ class SessionCoordinatorTest {
             return state
         }
 
-        override fun prepareBootstrapPublicationOrNull(ownerIdentityId: ByteArray): SessionBootstrapBundle? =
-            error("not used")
+        override fun prepareBootstrapPublicationOrNull(ownerIdentityId: ByteArray): SessionBootstrapBundle? = null
 
         override fun completeBootstrapPublication(
             ownerIdentityId: ByteArray,
@@ -221,7 +360,10 @@ class SessionCoordinatorTest {
             acceptedPublicationRevision: Long,
         ) = error("not used")
 
-        override fun replenishOneTimeKeys(ownerIdentityId: ByteArray): SessionAccountState = error("not used")
+        override fun replenishOneTimeKeys(ownerIdentityId: ByteArray): SessionAccountState {
+            assertArrayEquals(state.ownerIdentityId, ownerIdentityId)
+            return state.account
+        }
 
         override fun createOutboundSession(
             ownerIdentityId: ByteArray,
@@ -283,15 +425,39 @@ class SessionCoordinatorTest {
             expectedInitialPlaintext: ByteArray,
             messageType: Int,
             olmMessage: ByteArray,
-        ): ByteArray = error("not used")
+        ): ByteArray {
+            assertArrayEquals(state.ownerIdentityId, ownerIdentityId)
+            val consumed = state.account.oneTimeKeys.single { it.id == consumedOneTimeKeyId }
+            inboundCalls += 1
+            val persisted = PersistedSession(
+                localContactId = localContactId.copyOf(),
+                peerIdentityId = peerIdentityId.copyOf(),
+                peerAccountGeneration = peerAccountGeneration,
+                peerOlmEd25519IdentityKey = peerOlmEd25519IdentityKey.copyOf(),
+                peerOlmCurve25519IdentityKey = peerOlmCurve25519IdentityKey.copyOf(),
+                sessionId = "inbound-session",
+                initiator = false,
+                snapshot = WrappedSessionSnapshot("inbound".toByteArray(), ByteArray(32) { 0x43 }),
+            )
+            state = state.copy(
+                account = state.account.copy(
+                    oneTimeKeys = state.account.oneTimeKeys.filterNot { it.id == consumed.id },
+                ),
+                sessions = state.sessions + persisted,
+            )
+            return expectedInitialPlaintext.copyOf()
+        }
     }
 
     private class FakeTransport : SessionTransport {
         var submitCalls = 0
         var reserveCalls = 0
+        var claimCalls = 0
         var failSubmit = false
         var lastSubmit: SessionSubmitInit? = null
+        var claimResponse: SessionClaimWireResponse? = null
         var afterSubmit: () -> Unit = { }
+        var afterClaim: () -> Unit = { }
 
         override fun publishBootstrap(bundle: SessionBootstrapBundle): SessionPublishWireResponse = error("not used")
 
@@ -316,7 +482,12 @@ class SessionCoordinatorTest {
             creatorIdentityId: ByteArray,
             inviteToken: ByteArray,
             claimSignature: ByteArray,
-        ): SessionClaimWireResponse = error("not used")
+        ): SessionClaimWireResponse {
+            claimCalls += 1
+            val response = claimResponse ?: error("claim response is not configured")
+            afterClaim()
+            return response
+        }
     }
 
     private object RejectingContacts : SessionContactBoundary {
@@ -342,6 +513,65 @@ class SessionCoordinatorTest {
     }
 
     companion object {
+        private const val CREATOR_GENERATION = 3L
+
+        private fun signedM2Bundle(identity: TestIdentity): M2PublicIdentityBundle {
+            val signedPreKeyIdentity = TestIdentity()
+            val signedPreKey = M2SignedPreKey(
+                id = 1,
+                publicKey = signedPreKeyIdentity.publicKey.copyOf(),
+                signature = identity.sign(
+                    ContactCanonical.signedPreKeyPayload(1, signedPreKeyIdentity.publicKey),
+                ),
+                createdAtEpochSeconds = 900,
+            )
+            val unsigned = M2PublicIdentityBundle(
+                identityId = identity.identityId.copyOf(),
+                identityPublicKey = identity.publicKey.copyOf(),
+                publicationRevision = 1,
+                signedPreKey = signedPreKey,
+                oneTimePreKeys = emptyList(),
+                publicationSignature = ByteArray(0),
+            )
+            return unsigned.copy(
+                publicationSignature = identity.sign(ContactCanonical.publicationPayload(unsigned)),
+            )
+        }
+
+        private fun signedM3Bundle(identity: TestIdentity): SessionBootstrapBundle {
+            val unsigned = SessionBootstrapBundle(
+                identityId = identity.identityId.copyOf(),
+                accountGeneration = 5,
+                publicationRevision = 2,
+                olmEd25519IdentityKey = ByteArray(32) { 0x71 },
+                olmCurve25519IdentityKey = ByteArray(32) { 0x72 },
+                oneTimePreKeys = listOf(SessionOneTimePreKey(1, ByteArray(32) { 0x73 })),
+                bindingSignature = ByteArray(0),
+            )
+            return unsigned.copy(
+                bindingSignature = identity.sign(SessionCanonical.bootstrapPayload(unsigned)),
+            )
+        }
+
+        private fun creatorState(
+            ownerIdentityId: ByteArray,
+            creatorOneTimeKey: SessionOneTimePreKey,
+        ): SessionState = SessionState(
+            ownerIdentityId = ownerIdentityId.copyOf(),
+            account = SessionAccountState(
+                accountGeneration = CREATOR_GENERATION,
+                publicationRevision = 4,
+                nextOneTimeKeyId = creatorOneTimeKey.id + 1,
+                olmEd25519IdentityKey = ByteArray(32) { 0x21 },
+                olmCurve25519IdentityKey = ByteArray(32) { 0x22 },
+                oneTimeKeys = listOf(
+                    TrackedSessionOneTimeKey(creatorOneTimeKey.id, creatorOneTimeKey.publicKey.copyOf()),
+                ),
+                snapshot = WrappedSessionSnapshot("account".toByteArray(), ByteArray(32) { 0x41 }),
+            ),
+            sessions = emptyList(),
+        )
+
         private fun pendingState(
             ownerIdentityId: ByteArray,
             peerIdentityId: ByteArray,
