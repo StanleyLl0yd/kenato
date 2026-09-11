@@ -64,11 +64,123 @@ class LocalSessionRepositoryTest {
                 peerAccountGeneration = 4,
                 peerOlmEd25519IdentityKey = bytes(0x40, 32),
                 peerOlmCurve25519IdentityKey = bytes(0x41, 32),
+                creatorOneTimePreKeyId = 9,
                 peerOneTimeKey = bytes(0x42, 32),
+                inviteToken = bytes(0x43, 32),
                 initialPlaintext = "control".toByteArray(),
             )
         }
         assertEquals(0, fixture.repository.currentState(owner)!!.sessions.size)
+    }
+
+    @Test
+    fun pendingOutboundInitSurvivesRestartAndReusesExactFrameUntilSubmitted() {
+        val fixture = Fixture()
+        val owner = bytes(0x11, 32)
+        val contact = bytes(0x20, 16)
+        val inviteToken = bytes(0x43, 32)
+        fixture.repository.loadOrCreateAccount(owner)
+
+        val initial = fixture.repository.createOutboundSession(
+            ownerIdentityId = owner,
+            localContactId = contact,
+            peerIdentityId = bytes(0x30, 32),
+            peerAccountGeneration = 4,
+            peerOlmEd25519IdentityKey = bytes(0x40, 32),
+            peerOlmCurve25519IdentityKey = bytes(0x41, 32),
+            creatorOneTimePreKeyId = 9,
+            peerOneTimeKey = bytes(0x42, 32),
+            inviteToken = inviteToken,
+            initialPlaintext = "control".toByteArray(),
+        )
+        assertEquals(1, fixture.engine.outboundCalls)
+
+        val restarted = fixture.newRepository()
+        val retry = restarted.pendingOutboundInit(
+            ownerIdentityId = owner,
+            localContactId = contact,
+            inviteToken = inviteToken,
+            creatorAccountGeneration = 4,
+            creatorOneTimePreKeyId = 9,
+        )!!
+        assertEquals(initial.messageType, retry.messageType)
+        assertArrayEquals(initial.ciphertext, retry.ciphertext)
+        assertEquals(1, fixture.engine.outboundCalls)
+        assertThrows(SessionStateException::class.java) {
+            restarted.encrypt(owner, contact, "blocked-before-submit".toByteArray())
+        }
+
+        restarted.markOutboundInitSubmitted(
+            ownerIdentityId = owner,
+            localContactId = contact,
+            inviteToken = inviteToken,
+            creatorAccountGeneration = 4,
+            creatorOneTimePreKeyId = 9,
+        )
+        assertEquals(
+            null,
+            fixture.newRepository().pendingOutboundInit(
+                ownerIdentityId = owner,
+                localContactId = contact,
+                inviteToken = inviteToken,
+                creatorAccountGeneration = 4,
+                creatorOneTimePreKeyId = 9,
+            ),
+        )
+        val encrypted = fixture.newRepository().encrypt(owner, contact, "hello".toByteArray())
+        assertArrayEquals("ciphertext".toByteArray(), encrypted.ciphertext)
+    }
+
+    @Test
+    fun failedPendingInitClearRemainsRetryableAfterRestart() {
+        val fixture = Fixture()
+        val owner = bytes(0x11, 32)
+        val contact = bytes(0x20, 16)
+        val inviteToken = bytes(0x43, 32)
+        fixture.repository.loadOrCreateAccount(owner)
+        fixture.repository.createOutboundSession(
+            ownerIdentityId = owner,
+            localContactId = contact,
+            peerIdentityId = bytes(0x30, 32),
+            peerAccountGeneration = 4,
+            peerOlmEd25519IdentityKey = bytes(0x40, 32),
+            peerOlmCurve25519IdentityKey = bytes(0x41, 32),
+            creatorOneTimePreKeyId = 9,
+            peerOneTimeKey = bytes(0x42, 32),
+            inviteToken = inviteToken,
+            initialPlaintext = "control".toByteArray(),
+        )
+
+        fixture.store.failWrites = true
+        assertThrows(SessionStateException::class.java) {
+            fixture.repository.markOutboundInitSubmitted(
+                ownerIdentityId = owner,
+                localContactId = contact,
+                inviteToken = inviteToken,
+                creatorAccountGeneration = 4,
+                creatorOneTimePreKeyId = 9,
+            )
+        }
+        assertArrayEquals(
+            "pre-key-frame".toByteArray(),
+            fixture.newRepository().pendingOutboundInit(
+                ownerIdentityId = owner,
+                localContactId = contact,
+                inviteToken = inviteToken,
+                creatorAccountGeneration = 4,
+                creatorOneTimePreKeyId = 9,
+            )!!.ciphertext,
+        )
+
+        fixture.store.failWrites = false
+        fixture.newRepository().markOutboundInitSubmitted(
+            ownerIdentityId = owner,
+            localContactId = contact,
+            inviteToken = inviteToken,
+            creatorAccountGeneration = 4,
+            creatorOneTimePreKeyId = 9,
+        )
+        assertEquals(null, fixture.newRepository().currentState(owner)!!.sessions.single().pendingInit)
     }
 
     @Test
@@ -135,6 +247,7 @@ class LocalSessionRepositoryTest {
         val owner = bytes(0x11, 32)
         fixture.repository.loadOrCreateAccount(owner)
         val contact = bytes(0x20, 16)
+        val inviteToken = bytes(0x43, 32)
         fixture.repository.createOutboundSession(
             owner,
             contact,
@@ -142,9 +255,12 @@ class LocalSessionRepositoryTest {
             4,
             bytes(0x40, 32),
             bytes(0x41, 32),
+            9,
             bytes(0x42, 32),
+            inviteToken,
             "control".toByteArray(),
         )
+        fixture.repository.markOutboundInitSubmitted(owner, contact, inviteToken, 4, 9)
 
         val encrypted = fixture.repository.encrypt(owner, contact, "hello".toByteArray())
         assertArrayEquals("ciphertext".toByteArray(), encrypted.ciphertext)
@@ -175,7 +291,9 @@ class LocalSessionRepositoryTest {
             4,
             bytes(0x40, 32),
             bytes(0x41, 32),
+            9,
             bytes(0x42, 32),
+            bytes(0x43, 32),
             "control".toByteArray(),
         )
         val outboundCalls = fixture.engine.outboundCalls
@@ -188,7 +306,9 @@ class LocalSessionRepositoryTest {
                 5,
                 bytes(0x50, 32),
                 bytes(0x51, 32),
+                10,
                 bytes(0x52, 32),
+                bytes(0x53, 32),
                 "control-2".toByteArray(),
             )
         }
