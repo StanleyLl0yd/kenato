@@ -254,6 +254,11 @@ pub fn generate_account_one_time_keys(
     }
 
     let mut account = load_account(ciphertext, pickle_key)?;
+    if account.one_time_keys().len().saturating_add(count) > MAX_ONE_TIME_KEYS_PER_PUBLICATION {
+        return Err(EngineError::InvalidInput(
+            "total unpublished one-time-key count exceeds the M3 publication bound",
+        ));
+    }
     let generated = account.generate_one_time_keys(count);
     if !generated.removed.is_empty() {
         return Err(EngineError::OneTimeKeyCapacityExceeded);
@@ -590,6 +595,28 @@ mod tests {
             MAX_ONE_TIME_KEYS_PER_PUBLICATION + 1,
         );
         assert!(matches!(result, Err(EngineError::InvalidInput(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn one_time_key_generation_rejects_total_unpublished_overflow() -> Result<(), EngineError> {
+        let account = create_account()?;
+        let remaining = MAX_ONE_TIME_KEYS_PER_PUBLICATION - INITIAL_ONE_TIME_KEYS;
+        let filled = generate_account_one_time_keys(
+            account.snapshot.ciphertext(),
+            account.snapshot.pickle_key(),
+            remaining,
+        )?;
+        assert_eq!(
+            filled.public.unpublished_one_time_keys.len(),
+            MAX_ONE_TIME_KEYS_PER_PUBLICATION
+        );
+        let overflow = generate_account_one_time_keys(
+            filled.snapshot.ciphertext(),
+            filled.snapshot.pickle_key(),
+            1,
+        );
+        assert!(matches!(overflow, Err(EngineError::InvalidInput(_))));
         Ok(())
     }
 
