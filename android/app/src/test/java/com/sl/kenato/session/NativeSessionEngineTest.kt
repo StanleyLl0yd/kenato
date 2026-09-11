@@ -98,6 +98,27 @@ class NativeSessionEngineTest {
     }
 
     @Test
+    fun distinctOneTimeKeysWithSameContentHashAreAccepted() {
+        val first = ByteArray(32).also { it[1] = 31 }
+        val second = ByteArray(32).also { it[0] = 1 }
+        assertEquals(first.contentHashCode(), second.contentHashCode())
+
+        val encoded = message {
+            u32(1)
+            bytes(0x11, 32)
+            bytes(0x12, 32)
+            u32(2)
+            write(first)
+            write(second)
+            u32(2)
+        }
+
+        val decoded = NativeSessionCodec.decodePublicAccount(encoded)
+        assertArrayEquals(first, decoded.unpublishedOneTimeKeys[0])
+        assertArrayEquals(second, decoded.unpublishedOneTimeKeys[1])
+    }
+
+    @Test
     fun decryptResponseAllowsEmptyAuthenticatedPlaintext() {
         val encoded = message {
             u32(1)
