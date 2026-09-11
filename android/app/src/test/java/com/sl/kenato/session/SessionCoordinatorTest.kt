@@ -283,6 +283,7 @@ class SessionCoordinatorTest {
                 redemptionSignature = redeemer.sign(
                     ContactCanonical.redemptionPayload(local.identityId, redeemer.identityId, token),
                 ),
+                redeemedAtEpochSeconds = 1_000,
                 redeemerSessionBundle = redeemerSessionBundle,
                 creatorAccountGeneration = CREATOR_GENERATION,
                 creatorOneTimePreKey = creatorOneTimeKey,
@@ -298,7 +299,9 @@ class SessionCoordinatorTest {
             ),
         )
         val transport = FakeTransport().also { it.claimResponse = claimResponse }
-        val contacts = object : SessionContactBoundary {
+        val contacts = FakeContacts()
+
+        private inner class FakeContacts : SessionContactBoundary {
             var commitCalls = 0
             var failCommit = false
             var committedPin: SessionPinnedContact? = null
