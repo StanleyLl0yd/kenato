@@ -95,15 +95,15 @@ android {
 }
 
 val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
-    val expected = setOf(
-        "armeabi-v7a/libkenato_session_jni.so",
-        "arm64-v8a/libkenato_session_jni.so",
-        "x86_64/libkenato_session_jni.so",
-    )
     inputs.dir(m3NativeJniDir)
 
     doLast {
-        val root = m3NativeJniDir.get().asFile
+        val expected = setOf(
+            "armeabi-v7a/libkenato_session_jni.so",
+            "arm64-v8a/libkenato_session_jni.so",
+            "x86_64/libkenato_session_jni.so",
+        )
+        val root = inputs.files.singleFile
         val actual = if (root.isDirectory) {
             root.walkTopDown()
                 .filter { it.isFile && it.extension == "so" }
