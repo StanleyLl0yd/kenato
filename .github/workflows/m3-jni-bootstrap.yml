@@ -24,6 +24,24 @@ jobs:
       - name: Set up Rust 1.85.0
         run: rustup toolchain install 1.85.0 --profile minimal --component clippy --component rustfmt
 
+      - name: Fix reviewed JNI clippy finding
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('native/session-jni/src/lib.rs')
+          source = path.read_text()
+          old = 'fn encode_public_account(public: AccountPublicState) -> Result<Vec<u8>, BridgeError> {\n    let mut output = begin_response();\n    write_public_account(&mut output, &public)?;\n'
+          new = 'fn encode_public_account(public: &AccountPublicState) -> Result<Vec<u8>, BridgeError> {\n    let mut output = begin_response();\n    write_public_account(&mut output, public)?;\n'
+          if source.count(old) != 1:
+              raise SystemExit('expected exactly one encode_public_account definition')
+          source = source.replace(old, new)
+          old_call = 'encode_public_account(inspect_account(&ciphertext, pickle_key.as_slice())?)'
+          new_call = 'encode_public_account(&inspect_account(&ciphertext, pickle_key.as_slice())?)'
+          if source.count(old_call) != 1:
+              raise SystemExit('expected exactly one inspect encode call')
+          path.write_text(source.replace(old_call, new_call))
+          PY
+
       - name: Generate lock and verify JNI bridge
         working-directory: native/session-jni
         run: |
@@ -44,5 +62,3 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'M3 Android: lock and verify JNI session bridge'
           git push origin HEAD:m3/android-session-engine
-
-# retry after narrowing the reviewed JNI export exception
