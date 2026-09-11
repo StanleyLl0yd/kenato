@@ -8,21 +8,21 @@
 
 use std::{
     fmt,
-    panic::{AssertUnwindSafe, catch_unwind},
+    panic::{catch_unwind, AssertUnwindSafe},
     ptr,
 };
 
 use jni::{
-    JNIEnv,
     objects::{JByteArray, JClass},
     sys::{jbyteArray, jint},
+    JNIEnv,
 };
 use kenato_session_engine::{
-    AccountMutation, AccountPublicState, DecryptResult, EncryptResult, EncryptedSnapshot,
-    EngineError, InboundSessionResult, MAX_ACCOUNT_SNAPSHOT_BYTES, MAX_OLM_MESSAGE_BYTES,
-    MAX_PLAINTEXT_BYTES, MAX_SESSION_SNAPSHOT_BYTES, OutboundSessionResult, PICKLE_KEY_BYTES,
     create_account, create_inbound_session, create_outbound_session, decrypt_session,
     encrypt_session, generate_account_one_time_keys, inspect_account, mark_account_keys_published,
+    AccountMutation, AccountPublicState, DecryptResult, EncryptResult, EncryptedSnapshot,
+    EngineError, InboundSessionResult, OutboundSessionResult, MAX_ACCOUNT_SNAPSHOT_BYTES,
+    MAX_OLM_MESSAGE_BYTES, MAX_PLAINTEXT_BYTES, MAX_SESSION_SNAPSHOT_BYTES, PICKLE_KEY_BYTES,
 };
 use zeroize::Zeroize;
 
@@ -135,9 +135,7 @@ fn read_exact(
 ) -> Result<Vec<u8>, BridgeError> {
     let bytes = read_bytes(env, value, expected, false)?;
     if bytes.len() != expected {
-        return Err(BridgeError::InvalidInput(
-            "byte-array length is not exact",
-        ));
+        return Err(BridgeError::InvalidInput("byte-array length is not exact"));
     }
     Ok(bytes)
 }
@@ -220,9 +218,9 @@ fn encode_account_mutation(result: AccountMutation) -> Result<Vec<u8>, BridgeErr
     Ok(output)
 }
 
-fn encode_public_account(public: AccountPublicState) -> Result<Vec<u8>, BridgeError> {
+fn encode_public_account(public: &AccountPublicState) -> Result<Vec<u8>, BridgeError> {
     let mut output = begin_response();
-    write_public_account(&mut output, &public)?;
+    write_public_account(&mut output, public)?;
     Ok(output)
 }
 
@@ -285,7 +283,7 @@ pub extern "system" fn Java_com_sl_kenato_session_NativeSessionBridge_inspectAcc
     run_bridge(env, |env| {
         let ciphertext = read_snapshot_text(env, &account_ciphertext, MAX_ACCOUNT_SNAPSHOT_BYTES)?;
         let pickle_key = read_secret_pickle_key(env, &account_pickle_key)?;
-        encode_public_account(inspect_account(&ciphertext, pickle_key.as_slice())?)
+        encode_public_account(&inspect_account(&ciphertext, pickle_key.as_slice())?)
     })
 }
 
