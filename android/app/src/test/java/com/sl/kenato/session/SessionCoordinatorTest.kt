@@ -153,6 +153,40 @@ class SessionCoordinatorTest {
         assertTrue(fixture.sessions.state.account.oneTimeKeys.any { it.id == fixture.creatorOneTimeKey.id })
     }
 
+    @Test
+    fun failedCreatorContactCommitAfterDestructiveClaimLeavesM3StateUntouched() {
+        val fixture = InboundClaimFixture()
+        fixture.contacts.failCommit = true
+
+        assertThrows(SessionStateException::class.java) {
+            fixture.newCoordinator().claimInbound(fixture.inviteUri)
+        }
+
+        assertEquals(1, fixture.transport.claimCalls)
+        assertEquals(1, fixture.contacts.commitCalls)
+        assertEquals(null, fixture.contacts.committedPin)
+        assertEquals(0, fixture.sessions.inboundCalls)
+        assertTrue(fixture.sessions.state.sessions.isEmpty())
+        assertTrue(fixture.sessions.state.account.oneTimeKeys.any { it.id == fixture.creatorOneTimeKey.id })
+    }
+
+    @Test
+    fun failedInboundCommitAfterDestructiveClaimKeepsPinButDoesNotConsumeM3State() {
+        val fixture = InboundClaimFixture()
+        fixture.sessions.failInbound = true
+
+        assertThrows(SessionStateException::class.java) {
+            fixture.newCoordinator().claimInbound(fixture.inviteUri)
+        }
+
+        assertEquals(1, fixture.transport.claimCalls)
+        assertEquals(1, fixture.contacts.commitCalls)
+        assertTrue(fixture.contacts.committedPin != null)
+        assertEquals(1, fixture.sessions.inboundCalls)
+        assertTrue(fixture.sessions.state.sessions.isEmpty())
+        assertTrue(fixture.sessions.state.account.oneTimeKeys.any { it.id == fixture.creatorOneTimeKey.id })
+    }
+
     private class PendingOutboundFixture {
         val local = TestIdentity()
         val creator = TestIdentity()
@@ -266,6 +300,8 @@ class SessionCoordinatorTest {
         val transport = FakeTransport().also { it.claimResponse = claimResponse }
         val contacts = object : SessionContactBoundary {
             var commitCalls = 0
+            var failCommit = false
+            var committedPin: SessionPinnedContact? = null
 
             override fun requirePinnedContact(
                 ownerIdentityId: ByteArray,
@@ -296,11 +332,12 @@ class SessionCoordinatorTest {
                 assertArrayEquals(redeemer.publicKey, peerIdentityPublicKey)
                 assertEquals(1_000L, pinnedAtEpochSeconds)
                 commitCalls += 1
+                if (failCommit) throw SessionStateException("simulated M2 contact commit failure")
                 return SessionPinnedContact(
                     localId = localContactId.copyOf(),
                     identityId = peerIdentityId.copyOf(),
                     identityPublicKey = peerIdentityPublicKey.copyOf(),
-                )
+                ).also { committedPin = it }
             }
         }
 
@@ -340,6 +377,7 @@ class SessionCoordinatorTest {
         var pendingReads = 0
         var clearCalls = 0
         var inboundCalls = 0
+        var failInbound = false
 
         override fun loadOrCreateAccount(ownerIdentityId: ByteArray): SessionAccountState {
             loadCalls += 1
@@ -429,6 +467,7 @@ class SessionCoordinatorTest {
             assertArrayEquals(state.ownerIdentityId, ownerIdentityId)
             val consumed = state.account.oneTimeKeys.single { it.id == consumedOneTimeKeyId }
             inboundCalls += 1
+            if (failInbound) throw SessionStateException("simulated M3 inbound persistence failure")
             val persisted = PersistedSession(
                 localContactId = localContactId.copyOf(),
                 peerIdentityId = peerIdentityId.copyOf(),
