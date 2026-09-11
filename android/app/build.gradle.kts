@@ -7,6 +7,7 @@ val releaseKeystorePath = providers.environmentVariable("KENATO_KEYSTORE_PATH").
 val releaseStorePassword = providers.environmentVariable("KENATO_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("KENATO_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("KENATO_KEY_PASSWORD").orNull
+val m3NativeJniDir = layout.buildDirectory.dir("generated/m3JniLibs")
 
 val releaseSigningValues = listOf(
     releaseKeystorePath,
@@ -24,6 +25,7 @@ check(!hasAnyReleaseSigning || hasReleaseSigning) {
 android {
     namespace = "com.sl.kenato"
     compileSdk = 37
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.sl.kenato"
@@ -31,6 +33,10 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0-dev"
+
+        ndk {
+            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -72,11 +78,52 @@ android {
         checkReleaseBuilds = true
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(m3NativeJniDir)
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+val verifyM3NativeLibraries by tasks.registering {
+    val expected = setOf(
+        "armeabi-v7a/libkenato_session_jni.so",
+        "arm64-v8a/libkenato_session_jni.so",
+        "x86_64/libkenato_session_jni.so",
+    )
+    inputs.dir(m3NativeJniDir)
+
+    doLast {
+        val root = m3NativeJniDir.get().asFile
+        val actual = if (root.isDirectory) {
+            root.walkTopDown()
+                .filter { it.isFile && it.extension == "so" }
+                .map { it.relativeTo(root).invariantSeparatorsPath }
+                .toSet()
+        } else {
+            emptySet()
+        }
+
+        check(actual == expected) {
+            "M3 JNI libraries are missing or unexpected. Run scripts/build_android_native.sh first. Expected=$expected actual=$actual"
+        }
+        expected.forEach { relative ->
+            val library = root.resolve(relative)
+            check(library.isFile && library.length() > 0L) {
+                "M3 JNI library is missing or empty: $relative"
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(verifyM3NativeLibraries)
 }
 
 dependencies {
