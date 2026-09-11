@@ -81,9 +81,9 @@ android {
     sourceSets {
         getByName("main") {
             // The native build is an explicit CI/release prerequisite, so this is a static input.
-            // Resolve the Provider before passing it to AGP's legacy source-set API: AGP 9 rejects
-            // Provider instances here and requires the directory itself.
-            jniLibs.directories.add(m3NativeJniDir.get().asFile)
+            // Resolve the Provider before passing it to AGP's legacy source-set API: AGP 9 expects
+            // a directory path here rather than a Provider or File instance.
+            jniLibs.directories.add(m3NativeJniDir.get().asFile.absolutePath)
         }
     }
 
@@ -94,7 +94,7 @@ android {
     }
 }
 
-val verifyM3NativeLibraries by tasks.registering {
+val verifyM3NativeLibraries = tasks.register("verifyM3NativeLibraries") {
     val expected = setOf(
         "armeabi-v7a/libkenato_session_jni.so",
         "arm64-v8a/libkenato_session_jni.so",
