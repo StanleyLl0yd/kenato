@@ -354,40 +354,45 @@ internal class SessionCoordinator(
             redeemerAccountGeneration = claimed.redeemerSessionBundle.accountGeneration,
         )
 
-        // No cancellation checkpoint beyond the destructive server claim. First persist the M2
-        // trust anchor, then accept M3 keys only under that exact authenticated P-256 identity.
-        val pin = contacts.commitClaimedContact(
-            ownerIdentityId = local.identityId,
-            inviteToken = invite.token,
-            peerIdentityId = redeemer.identityId,
-            peerIdentityPublicKey = redeemer.identityPublicKey,
-            pinnedAtEpochSeconds = nowEpochSeconds(),
-        )
-        val plaintext = sessions.createInboundSession(
-            ownerIdentityId = local.identityId,
-            localContactId = pin.localId,
-            peerIdentityId = pin.identityId,
-            peerAccountGeneration = claimed.redeemerSessionBundle.accountGeneration,
-            peerOlmEd25519IdentityKey = claimed.redeemerSessionBundle.olmEd25519IdentityKey,
-            peerOlmCurve25519IdentityKey = claimed.redeemerSessionBundle.olmCurve25519IdentityKey,
-            consumedOneTimeKeyId = claimed.creatorOneTimePreKey.id,
-            expectedInitialPlaintext = expectedControl,
-            messageType = claimed.olmMessageType,
-            olmMessage = claimed.olmMessage,
-        )
+        var committedPlaintext: ByteArray? = null
         try {
+            // These stores cannot be committed transactionally. Commit the authenticated M2 pin
+            // first: if that write fails, M3 remains untouched. If the following M3 atomic write
+            // fails, the valid pin remains but the local OTK/session snapshot stays unchanged; the
+            // destructive server claim cannot be replayed and recovery requires a fresh invite.
+            // Reversing this order could leave an M3 session without its durable M2 trust anchor.
+            val pin = contacts.commitClaimedContact(
+                ownerIdentityId = local.identityId,
+                inviteToken = invite.token,
+                peerIdentityId = redeemer.identityId,
+                peerIdentityPublicKey = redeemer.identityPublicKey,
+                pinnedAtEpochSeconds = nowEpochSeconds(),
+            )
+            val plaintext = sessions.createInboundSession(
+                ownerIdentityId = local.identityId,
+                localContactId = pin.localId,
+                peerIdentityId = pin.identityId,
+                peerAccountGeneration = claimed.redeemerSessionBundle.accountGeneration,
+                peerOlmEd25519IdentityKey = claimed.redeemerSessionBundle.olmEd25519IdentityKey,
+                peerOlmCurve25519IdentityKey = claimed.redeemerSessionBundle.olmCurve25519IdentityKey,
+                consumedOneTimeKeyId = claimed.creatorOneTimePreKey.id,
+                expectedInitialPlaintext = expectedControl,
+                messageType = claimed.olmMessageType,
+                olmMessage = claimed.olmMessage,
+            )
+            committedPlaintext = plaintext
             if (!plaintext.contentEquals(expectedControl)) {
                 throw SessionStateException("Committed M3 inbound control plaintext changed unexpectedly")
             }
+
+            val committed = requireLocalState(local.identityId)
+            val session = requireSession(committed, pin.localId)
+            requireSessionMatchesPin(session, pin, initiator = false)
+            return established(committed, session, SessionBootstrapRole.RESPONDER)
         } finally {
-            plaintext.zeroize()
+            committedPlaintext?.zeroize()
             expectedControl.zeroize()
         }
-
-        val committed = requireLocalState(local.identityId)
-        val session = requireSession(committed, pin.localId)
-        requireSessionMatchesPin(session, pin, initiator = false)
-        return established(committed, session, SessionBootstrapRole.RESPONDER)
     }
 
     private fun resumeOutbound(
@@ -696,11 +701,8 @@ private class LocalSessionBoundary(
 
     override fun currentState(ownerIdentityId: ByteArray): SessionState? = repository.currentState(ownerIdentityId)
 
-    override fun prepareBootstrapPublicationOrNull(ownerIdentityId: ByteArray): SessionBootstrapBundle? = try {
-        repository.prepareBootstrapPublication(ownerIdentityId)
-    } catch (error: SessionStateException) {
-        if (error.message == NO_UNPUBLISHED_KEYS) null else throw error
-    }
+    override fun prepareBootstrapPublicationOrNull(ownerIdentityId: ByteArray): SessionBootstrapBundle? =
+        repository.prepareBootstrapPublicationOrNull(ownerIdentityId)
 
     override fun completeBootstrapPublication(
         ownerIdentityId: ByteArray,
@@ -790,10 +792,6 @@ private class LocalSessionBoundary(
         messageType,
         olmMessage,
     )
-
-    private companion object {
-        const val NO_UNPUBLISHED_KEYS = "No unpublished M3 one-time keys are available for publication"
-    }
 }
 
 private object AndroidSessionThreadGuard : SessionThreadGuard {
