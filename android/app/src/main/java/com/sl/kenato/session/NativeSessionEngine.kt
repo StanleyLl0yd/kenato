@@ -419,7 +419,12 @@ internal object NativeSessionCodec {
             val oneTimeKeys = List(count) {
                 ByteArray(OLM_PUBLIC_KEY_BYTES).also(input::readFully)
             }
-            if (oneTimeKeys.distinctBy { it.contentHashCode() }.size != oneTimeKeys.size) {
+            if (oneTimeKeys.indices.any { left ->
+                    (left + 1 until oneTimeKeys.size).any { right ->
+                        oneTimeKeys[left].contentEquals(oneTimeKeys[right])
+                    }
+                }
+            ) {
                 throw NativeSessionException("Native account contains duplicate one-time keys")
             }
             if (oneTimeKeys.any { it.contentEquals(ed25519) || it.contentEquals(curve25519) }) {
