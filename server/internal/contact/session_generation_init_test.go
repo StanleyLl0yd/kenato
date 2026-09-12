@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"path/filepath"
 	"testing"
 	"time"
@@ -99,6 +100,82 @@ func TestRedeemerAccountRolloverReusesReservationAndReplacesInit(t *testing.T) {
 	if !bytes.Equal(result.OlmMessage, secondSubmit.OlmMessage) {
 		t.Fatal("claim returned stale redeemer initialization frame")
 	}
+}
+
+func TestStoreRejectsStaleRedeemerGenerationAfterRollover(t *testing.T) {
+	ctx := context.Background()
+	store := openTestSQLiteStore(t, ctx, filepath.Join(t.TempDir(), "kenato-session-stale-init.db"))
+	defer store.Close()
+
+	now := time.Unix(2_100_400_100, 0).UTC()
+	contacts := newServiceWithClock(store, func() time.Time { return now })
+	creator, creatorKey := newSignedBundle(t, 0)
+	redeemer, redeemerKey := newSignedBundle(t, 0)
+	mustPublish(t, ctx, contacts, creator)
+	mustPublish(t, ctx, contacts, redeemer)
+
+	sessions := newSessionServiceWithClock(store, store, func() int64 { return now.Unix() })
+	creatorSession := newSignedSessionBundle(t, creator.IdentityID, creatorKey, 1, 1, 1)
+	redeemerSessionV1 := newSignedSessionBundle(t, redeemer.IdentityID, redeemerKey, 1, 1, 1)
+	mustPublishSession(t, ctx, sessions, creatorSession)
+	mustPublishSession(t, ctx, sessions, redeemerSessionV1)
+
+	token := establishRedeemedInvite(
+		t,
+		ctx,
+		contacts,
+		creator,
+		creatorKey,
+		redeemer,
+		redeemerKey,
+		deterministicToken(0x76),
+	)
+	reserved := reserveSessionForInvite(t, ctx, sessions, creator, redeemer, redeemerKey, token)
+	staleRequest := signedSessionInitRequest(
+		t,
+		creator.IdentityID,
+		redeemer.IdentityID,
+		token,
+		reserved,
+		redeemerSessionV1.AccountGeneration,
+		[]byte("stale-generation-init"),
+		redeemerKey,
+	)
+	payload, err := SessionSubmitPayload(staleRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenHash, err := InviteTokenHash(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedRedeemerBundle, err := EncodeSessionBootstrapBundle(redeemerSessionV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRecord := SessionInitRecord{
+		TokenHash:                 tokenHash,
+		CreatorIdentityID:         bytes.Clone(creator.IdentityID),
+		RedeemerIdentityID:        bytes.Clone(redeemer.IdentityID),
+		CreatorAccountGeneration:  staleRequest.CreatorAccountGeneration,
+		CreatorOneTimePreKeyID:    staleRequest.CreatorOneTimePreKeyID,
+		RedeemerAccountGeneration: staleRequest.RedeemerAccountGeneration,
+		OlmMessageType:            staleRequest.OlmMessageType,
+		OlmMessage:                bytes.Clone(staleRequest.OlmMessage),
+		SubmitSignature:           bytes.Clone(staleRequest.SubmitSignature),
+		SubmitPayloadHash:         sha256.Sum256(payload),
+		RedeemerSessionBundle:     encodedRedeemerBundle,
+		SubmittedAt:               now.Unix(),
+	}
+
+	redeemerSessionV2 := newSignedSessionBundle(t, redeemer.IdentityID, redeemerKey, 2, 1, 1)
+	mustPublishSession(t, ctx, sessions, redeemerSessionV2)
+	assertSessionTemporaryRows(t, store, 1, 0)
+
+	if err := store.SubmitSessionInit(ctx, staleRecord); err == nil {
+		t.Fatal("stale redeemer generation was accepted after rollover")
+	}
+	assertSessionTemporaryRows(t, store, 1, 0)
 }
 
 func signedSessionInitRequest(
