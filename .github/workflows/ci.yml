@@ -56,6 +56,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Install pinned cargo-audit
+        run: |
+          cargo +1.85.0 install cargo-audit --version 0.22.2 --locked --force
+          cargo audit --version
+
+      - name: Audit native Rust dependencies
+        run: |
+          cargo audit --file native/session-engine/Cargo.lock
+          cargo audit --file native/session-jni/Cargo.lock
+
       - name: Verify native Rust session engine
         working-directory: native/session-engine
         run: |
@@ -77,7 +87,9 @@ jobs:
           git diff --exit-code -- Cargo.lock src/lib.rs
 
       - name: Verify repository security baseline
-        run: python3 scripts/verify_security_baseline.py
+        run: |
+          python3 scripts/verify_security_baseline.py
+          python3 scripts/verify_repository_verification.py
 
       - name: Verify Gradle Wrapper JAR
         run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
@@ -201,16 +213,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go for protolint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
       - name: Install protoc
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends protobuf-compiler
 
-      - name: Validate proto
-        run: >
-          protoc
-          --proto_path=protocol
-          --descriptor_set_out=/tmp/kenato.pb
-          protocol/kenato/v1/envelope.proto
-          protocol/kenato/v1/contact.proto
-          protocol/kenato/v1/session.proto
+      - name: Install pinned protolint
+        run: go install github.com/yoheimuta/protolint/cmd/protolint@v0.56.4
+
+      - name: Validate protocol
+        run: make test-protocol
