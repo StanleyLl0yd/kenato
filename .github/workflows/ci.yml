@@ -229,3 +229,75 @@ jobs:
 
       - name: Validate protocol
         run: make test-protocol
+
+  repository:
+    name: Repository make test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify CI supply-chain policy
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Install Go verification tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@709015412431dd2b5b28a53c06c70bc02d49074c
+          go install github.com/yoheimuta/protolint/cmd/protolint@v0.56.4
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+
+      - name: Set up Rust verification toolchain
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component clippy --component rustfmt
+          cargo +1.85.0 install cargo-audit --version 0.22.2 --locked --force
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          verify-signature: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          validate-wrappers: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install Android SDK and native build tooling
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=3 \
+            "platforms;android-37.0" \
+            "build-tools;37.0.0" \
+            "ndk;28.2.13676358"
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup target add --toolchain 1.85.0 \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
+          cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force
+          test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
+
+      - name: Run repository-wide make test
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: make test
