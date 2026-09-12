@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.AtomicFile
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileNotFoundException
 
 internal interface SessionStateStore {
     fun read(): ByteArray?
@@ -17,22 +18,28 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, STATE_FILE_NAME))
 
     override fun read(): ByteArray? {
-        val baseFile = file.baseFile
-        if (!baseFile.exists()) {
+        val input = try {
+            file.openRead()
+        } catch (_: FileNotFoundException) {
             return null
-        }
-        val length = baseFile.length()
-        if (length !in 1..SessionStateCodec.MAX_STATE_BYTES.toLong()) {
-            throw SessionStateException("Persisted session state size is invalid")
+        } catch (error: Exception) {
+            throw SessionStateException("Unable to read persisted session state", error)
         }
 
         return try {
-            file.openRead().use { input ->
+            input.use {
+                // AtomicFile.openRead() restores a pending backup before opening the
+                // base file, so size validation must happen only after that recovery.
+                val length = file.baseFile.length()
+                if (length !in 1..SessionStateCodec.MAX_STATE_BYTES.toLong()) {
+                    throw SessionStateException("Persisted session state size is invalid")
+                }
+
                 val output = ByteArrayOutputStream(length.toInt())
                 val buffer = ByteArray(READ_BUFFER_BYTES)
                 var total = 0
                 while (true) {
-                    val read = input.read(buffer)
+                    val read = it.read(buffer)
                     if (read < 0) {
                         break
                     }
@@ -42,8 +49,8 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
                     }
                     output.write(buffer, 0, read)
                 }
-                output.toByteArray().also {
-                    if (it.isEmpty()) {
+                output.toByteArray().also { state ->
+                    if (state.isEmpty()) {
                         throw SessionStateException("Persisted session state is empty")
                     }
                 }
