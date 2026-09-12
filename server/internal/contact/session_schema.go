@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS session_inits (
     FOREIGN KEY (token_hash) REFERENCES session_reservations(token_hash) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TRIGGER IF NOT EXISTS session_inits_redeemer_generation_guard
+BEFORE INSERT ON session_inits
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM session_reservations AS reservation
+    JOIN session_bootstraps AS bootstrap
+      ON bootstrap.identity_id = reservation.redeemer_identity_id
+    WHERE reservation.token_hash = NEW.token_hash
+      AND bootstrap.account_generation = NEW.redeemer_account_generation
+)
+BEGIN
+    SELECT RAISE(ABORT, 'session init redeemer generation conflict');
+END;
+
 CREATE INDEX IF NOT EXISTS session_prekeys_available_idx
     ON session_one_time_prekeys(identity_id, account_generation, key_id);
 CREATE INDEX IF NOT EXISTS session_reservations_creator_idx
