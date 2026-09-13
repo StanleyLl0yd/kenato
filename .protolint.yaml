@@ -1,4 +1,19 @@
 lint:
+  ignores:
+    - id: FILE_HAS_COMMENT
+      files:
+        - protocol/kenato/v1/envelope.proto
+        - protocol/kenato/v1/contact.proto
+        - protocol/kenato/v1/session.proto
+    - id: MESSAGES_HAVE_COMMENT
+      files:
+        - protocol/kenato/v1/contact.proto
+        - protocol/kenato/v1/session.proto
+    - id: FIELDS_HAVE_COMMENT
+      files:
+        - protocol/kenato/v1/envelope.proto
+        - protocol/kenato/v1/contact.proto
+        - protocol/kenato/v1/session.proto
   rules:
     all_default: true
   rules_option:
@@ -7,3 +22,8 @@ lint:
       tab_chars: 2
     indent:
       style: 2
+    field_names_exclude_prepositions:
+      excludes:
+        - created_at_unix_seconds
+        - expires_at_unix_seconds
+        - redeemed_at_unix_seconds
