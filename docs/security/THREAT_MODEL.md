@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0-M2 complete. M3 E2EE session protocol/server and Android/native implementation are present in PR #40 and are in final exact-head verification; M3 is not complete until #34 is merged and the repository-wide #35 audit/verification succeeds on exact `main`.
+Status: M0-M2 complete. M3 E2EE session protocol/server and Android/native implementation (#34/#40) are merged; the final repository-wide #35 audit/remediation and exact-main verification are in progress. M4 has not started.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -46,7 +46,7 @@ M3 keeps the M1/M2 P-256 identity as the sole contact trust anchor. Vodozemac Ol
 
 M3 Olm account/session snapshots are app-private and backup/device-transfer excluded. Every encrypted native snapshot uses a fresh random 32-byte pickle key; the pickle key is wrapped with a non-exportable Android Keystore AES-GCM key using context-specific AAD. Missing/mismatched Keystore or persisted M3 state fails closed and requires explicit recovery rather than silent Olm-account regeneration.
 
-Ratchet-state durability is part of the cryptographic boundary: outbound ciphertext and inbound plaintext are not returned until the advanced session state is durably committed. Inbound-session creation commits consumed local OTK bookkeeping and the new session together in one atomic M3 state write before returning the authenticated control plaintext.
+Ratchet-state durability is part of the cryptographic boundary: outbound ciphertext and inbound plaintext are not returned until the advanced session state is durably committed. Inbound-session creation commits consumed local OTK bookkeeping and the new session together in one atomic M3 state write before returning the authenticated control plaintext. Android AtomicFile reads perform backup recovery before validating recovered base-file size, preserving crash-recovery semantics without weakening state-size bounds.
 
 ### Kenato server
 
@@ -72,7 +72,7 @@ Compromise of the server must not reveal message or voice plaintext or any devic
 
 M2/M3 expose no public identity or session-bootstrap search/lookup endpoint. Creator public material is disclosed through invite-authorized flows; redeemer material and the initial session frame are disclosed only to the authenticated creator of that invite.
 
-Successful creator claim deletes the invite relationship row and cascades deletion of temporary M3 reservation/init state in the same SQLite transaction that retrieves the bounded claim result. Unclaimed expired rows are removed by explicit retention cleanup at server startup and on an hourly schedule; M3 temporary rows reference the invite/reservation rows with cascading foreign keys.
+Successful creator claim deletes the invite relationship row and cascades deletion of temporary M3 reservation/init state in the same SQLite transaction that retrieves the bounded claim result. Unclaimed expired rows are removed by explicit retention cleanup at server startup and on an hourly schedule; M3 temporary rows reference the invite/reservation rows with cascading foreign keys. Session-init insertion is also transaction-guarded against a concurrent redeemer account rollover so a stale `redeemer_account_generation` cannot commit after the earlier service-layer validation.
 
 ### TURN server
 
@@ -96,7 +96,7 @@ The M0 repository/release foundation establishes:
 - the protected `release` environment exists; production signing secrets and certificate trust material, when provisioned, are confined to it;
 - release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
 
-The M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. Both native crates have committed lockfiles. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift.
+The M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. The engine's direct `rand` dependency is pinned to reviewed fixed `=0.8.6`. Both native crates have committed lockfiles, Cargo Dependabot coverage, and pinned cargo-audit scanning. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift. The M3 verification baseline also adds protolint, repository-wide `make test`, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions.
 
 ## Threats in scope
 
@@ -112,8 +112,9 @@ Mitigations:
 - immutable `v*` release tags;
 - full-SHA-pinned GitHub Actions and digest-pinned critical containers;
 - least-privilege workflow permissions and non-persistent checkout credentials;
-- Semgrep, Gitleaks, Dependency Review, govulncheck, Android lint, Qodana, CodeQL and Rust checks according to stack support;
+- Semgrep, Gitleaks, Dependency Review, govulncheck, cargo-audit, protolint, Android lint, Qodana, repository-wide `make test`, and CodeQL for Go/Java-Kotlin/Rust/Actions;
 - exact native dependency/toolchain/NDK/cargo-ndk pins and committed Cargo locks;
+- Cargo Dependabot coverage for both native crates;
 - three-ABI native build/packaging verification before Android build/release;
 - release signing secrets isolated in the `release` environment;
 - independent expected certificate fingerprint verification;
@@ -150,6 +151,7 @@ Mitigations:
 - clients derive identity ids from exact public-key bytes and validate publication/signed-prekey signatures before pinning;
 - M3 public Olm account identity keys and OTK set are covered by the existing P-256 trust anchor;
 - M3 reservation and submit proofs bind the exact invite participants, creator generation/OTK allocation, redeemer generation and SHA-256 of the opaque initial frame;
+- session-init persistence atomically revalidates the redeemer's current account generation inside SQLite, closing the validation/rollover TOCTOU;
 - creator claim returns enough authenticated fields for the correct client to independently re-verify the stored submit proof instead of trusting server assertions;
 - responder additionally checks the exact creator account generation and OTK id/public bytes against local state and checks the decrypted canonical control payload;
 - M2 and M3 publication revisions/generations are monotonic and signed;
@@ -159,7 +161,7 @@ Mitigations:
 - secrets isolated from logs;
 - contact/session identity verification performed by clients.
 
-A malicious server can deny service, suppress a redemption/bootstrap, exhaust or withhold public one-time keys, retain metadata outside Kenato's intended implementation policy, or replay stale-but-valid public material within accepted protocol rules. It must not be able to make a correct client silently pin a different Kenato identity or M3 engine identity, substitute a different local creator OTK, or alter/transplant the authenticated initial frame without a signature/hash/pin/provenance/control verification failure, assuming SHA-256, ECDSA P-256 and the selected Olm primitives remain secure and peer private identity/session material is uncompromised.
+A malicious server can deny service, suppress a redemption/bootstrap, exhaust or withhold public one-time keys, retain metadata outside Kenato's intended implementation policy, or replay stale-but-valid public material within accepted protocol rules. It must not be able to make a correct client silently pin a different Kenato identity or M3 engine identity, substitute a different local creator OTK, commit a stale redeemer generation after rollover, or alter/transplant the authenticated initial frame without a signature/hash/pin/provenance/transaction/control verification failure, assuming SHA-256, ECDSA P-256 and the selected Olm primitives remain secure and peer private identity/session material is uncompromised.
 
 ### Invite/session-bootstrap theft, replay, and substitution
 
