@@ -298,6 +298,4 @@ jobs:
           test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
 
       - name: Run repository-wide make test
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: make test
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" make test
