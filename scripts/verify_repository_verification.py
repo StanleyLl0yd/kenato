@@ -72,6 +72,8 @@ required_ci_fragments = (
     "cargo audit --file native/session-jni/Cargo.lock",
     "github.com/yoheimuta/protolint/cmd/protolint@v0.56.4",
     "make test-protocol",
+    "name: Repository make test",
+    'run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" make test',
 )
 for fragment in required_ci_fragments:
     if fragment not in ci:
@@ -90,6 +92,25 @@ for fragment in (
 ):
     if fragment not in codeql:
         errors.append(f"codeql.yml: Java/Kotlin extraction is missing {fragment!r}")
+
+state_store = read("android/app/src/main/java/com/sl/kenato/session/SessionStateStore.kt")
+if state_store:
+    open_read = state_store.find("file.openRead()")
+    size_check = state_store.find("file.baseFile.length()")
+    if open_read < 0:
+        errors.append("SessionStateStore.kt: AtomicFile reads must use openRead() so pending backups are recovered")
+    if "FileNotFoundException" not in state_store:
+        errors.append("SessionStateStore.kt: missing-state handling must distinguish FileNotFoundException")
+    if open_read >= 0 and (size_check < 0 or size_check < open_read):
+        errors.append("SessionStateStore.kt: base-file size validation must happen after AtomicFile.openRead() recovery")
+
+session_schema = read("server/internal/contact/session_schema.go")
+if "session_inits_redeemer_generation_guard" not in session_schema:
+    errors.append("session_schema.go: atomic redeemer-generation guard trigger is required")
+
+session_generation_tests = read("server/internal/contact/session_generation_init_test.go")
+if "TestStoreRejectsStaleRedeemerGenerationAfterRollover" not in session_generation_tests:
+    errors.append("session_generation_init_test.go: stale redeemer-generation store regression test is required")
 
 if errors:
     for error in errors:
