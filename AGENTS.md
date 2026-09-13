@@ -38,13 +38,9 @@ Brand:
 
 Current repository phase:
 
-`M2 — Invite + Contact Establishment`: complete.
+`M3 — E2EE Session`: implementation #34/#40 is merged; final repository-wide #35 audit/remediation and exact-main verification are in progress.
 
-Next planned milestone:
-
-`M3 — E2EE Session`
-
-Do not start M3 or any later-milestone implementation unless explicitly requested. Do not implement later-milestone features merely because the architecture could support them.
+M0–M2 are complete. M4 has not started. Do not start M4 or any later-milestone implementation until M3/#31 is closed. Do not implement later-milestone features merely because the architecture could support them.
 
 Kenato 1.0 is intentionally narrow:
 
@@ -342,6 +338,7 @@ For GitHub Actions and CI:
 - ordinary pull-request workflows must use `pull_request`, not `pull_request_target`;
 - do not inherit reusable-workflow secrets or expose production signing/deployment secrets to untrusted PR code;
 - repository CI supply-chain policy checks are mandatory and must stay green;
+- repository-wide `make test`, protolint, Go/Rust vulnerability scanning, and CodeQL coverage for Go, Java/Kotlin, Rust, and Actions are part of the current M3 verification baseline;
 - merge gates must include the relevant build/tests, SAST, secret scan, dependency review/vulnerability scan, and CodeQL checks that are supported by the current stack.
 
 Release integrity rules:
@@ -453,7 +450,7 @@ Depending on repository state and changed area, verification can include:
 - server build;
 - deployment/config validation.
 
-Before a release or full audit, perform repository-wide verification.
+Before a release or full audit, perform repository-wide verification. The current M3 repository-wide contract is `make test` plus the required CI/security/CodeQL gates documented in `docs/development/TOOLCHAIN.md` and `docs/security/GITHUB_SETTINGS.md`.
 
 Never claim a test, build, security scan, race check, or other verification step passed unless it was actually run and completed successfully.
 
