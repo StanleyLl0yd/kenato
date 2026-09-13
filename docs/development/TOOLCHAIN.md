@@ -4,7 +4,7 @@ Current M3 baseline:
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.7.1
-- Kotlin / Compose compiler plugin: 2.4.20 (AGP 9 built-in Kotlin; no `org.jetbrains.kotlin.android` plugin)
+- Kotlin / Compose compiler plugin: 2.4.10 (AGP 9 built-in Kotlin; pinned to the newest release accepted by the currently published CodeQL 2.27.0 manual Kotlin extractor)
 - JDK: 17
 - compileSdk: 37
 - targetSdk: 37
@@ -20,13 +20,15 @@ Current M3 baseline:
 - native Rust toolchain: 1.85.0
 - Android NDK: 28.2.13676358
 - cargo-ndk: 4.1.2 (installed with Rust 1.86.0, building the Rust 1.85.0 native crates)
-- Rust advisory scanner: cargo-audit 0.22.2 for both committed native Cargo lockfiles
+- Rust advisory scanner: cargo-audit 0.22.2, installed with Rust 1.88.0 because that cargo-audit release declares Rust 1.88 as its minimum toolchain; it audits both committed native Cargo lockfiles without changing the crates' Rust 1.85 baseline
 - SAST: Semgrep CE 1.172.0 (required PR/main gate)
 - CodeQL: Go (`manual`), Java/Kotlin (`manual` with a real Android debug build), Rust (`none`), and GitHub Actions (`none`)
 - Kotlin/JVM defense-in-depth: Qodana JVM Community 2026.2.1 (scheduled/manual)
 - repository-wide local/CI verification entry point: `make test`
 
 The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds. The committed `server/go.mod` and `server/go.sum` are the authoritative Go dependency graph; CI runs `go mod tidy` and requires those files to remain unchanged. The two committed native `Cargo.lock` files are authoritative for their Rust dependency graphs and are audited with the pinned cargo-audit release.
+
+The Kotlin 2.4.10 pin is a verification-compatibility constraint, not a product downgrade. The published CodeQL 2.27.0 Java/Kotlin extractor rejects Kotlin 2.4.20 during manual extraction, while buildless `java-kotlin` analysis does not analyze Kotlin source. A Kotlin upgrade must therefore be reviewed together with the pinned CodeQL bundle/action so the required Java/Kotlin gate continues to analyze the actual Kotlin source rather than silently reducing coverage.
 
 The SQLite dependency is intentionally pure Go so `kenato-server` remains cross-buildable for the ARM64 OCI target with `CGO_ENABLED=0`. CI verifies both linux/amd64 and linux/arm64 server builds.
 
