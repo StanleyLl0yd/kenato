@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package kenato.v1;
 
-option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
-
 import "kenato/v1/contact.proto";
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
 
 // SessionOneTimePreKey is a server-allocatable Olm Curve25519 public key.
 // id is a Kenato monotonic bookkeeping id within one session-account generation.
