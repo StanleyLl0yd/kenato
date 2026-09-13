@@ -170,6 +170,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0, M1, and M2 are complete. M3 implementation is in final PR verification; M3 is not complete until #34 is merged and the repository-wide #35 audit/verification succeeds on exact `main`. M4 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0, M1, and M2 are complete. M3 implementation (#34/#40) is merged; the final literal repository-wide #35 audit/remediation and exact-main verification are in progress. M4 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.

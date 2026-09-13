@@ -1,8 +1,8 @@
 # ADR 0010 — M3 session-bootstrap protocol and server state
 
-Status: Accepted and implemented through the M3 client/server bootstrap boundary pending final verification  
+Status: Accepted and implemented through merged M3 #34/#40; final repository-wide #35 verification in progress  
 Date: 2026-09-10  
-Implementation review updated: 2026-09-11
+Implementation review updated: 2026-09-13
 
 ## Context
 
@@ -54,7 +54,7 @@ The redeemer creates the outbound Olm session locally and submits exactly one op
 
 The encrypted plaintext inside that initial Olm frame is a Kenato protocol-control record, not user content. Its canonical bytes bind both Kenato identity ids, SHA-256 of the invite token, the creator account generation and reserved OTK id, and the redeemer account generation. This inner authenticated binding is checked by the creator after Olm decryption and before the inbound session is accepted, so the opaque pre-key frame cannot be transplanted into a different invite/contact/account context independently of the outer submit proof. The deterministic framing is specified in `protocol/README.md` and `docs/security/M3_TEST_VECTORS.md`; the server never parses this plaintext.
 
-The server verifies the redeemer's P-256 proof, verifies that the request matches the existing reservation, snapshots the redeemer's currently authenticated session bundle, and retains the bounded opaque frame only as temporary invite-bootstrap state. It does not inspect or decrypt Olm content.
+The server verifies the redeemer's P-256 proof, verifies that the request matches the existing reservation, snapshots the redeemer's currently authenticated session bundle, and retains the bounded opaque frame only as temporary invite-bootstrap state. It does not inspect or decrypt Olm content. The persistence transaction independently re-checks that the inserted init's `redeemer_account_generation` still equals the redeemer's current published generation. This database guard closes the service-validation/store-commit race with a concurrent redeemer account rollover and causes a stale-generation insert to fail atomically.
 
 An exact replay of the same canonical submit payload is idempotent. A different frame or metadata for the same invite conflicts. Only Olm pre-key message type is accepted for this bootstrap operation.
 
@@ -99,9 +99,9 @@ After the destructive claim returns, the Android responder does not honor cancel
 
 M3 upgrades the additive SQLite schema from M2 `user_version = 1` to `user_version = 2`. Existing M2 identities/invites remain in their original tables; M3 adds current public session-account bundles, available OTKs, temporary invite reservations, and temporary init frames/proofs. Unknown newer schema versions fail closed.
 
-Session bootstrap publication replacement, OTK reservation, init submission, and claim/deletion are transactional. Reservation deletes the chosen OTK from the available pool in the same transaction that creates the reservation. Successful claim deletes the invite; foreign-key cascades delete the reservation/init records in that transaction. Expired invites cannot reserve, submit, or claim; startup/hourly retention cleanup deletes expired invite rows and cascades temporary M3 rows.
+Session bootstrap publication replacement, OTK reservation, init submission, and claim/deletion are transactional. Reservation deletes the chosen OTK from the available pool in the same transaction that creates the reservation. Init insertion is protected by `session_inits_redeemer_generation_guard`, which rejects a stale redeemer generation inside the SQLite write transaction even if a rollover raced the earlier service-layer validation. Successful claim deletes the invite; foreign-key cascades delete the reservation/init records in that transaction. Expired invites cannot reserve, submit, or claim; startup/hourly retention cleanup deletes expired invite rows and cascades temporary M3 rows.
 
-The Android session repository separately provides app-private atomic M3 account/session persistence. Outbound encryption and inbound decryption commit the advanced ratchet snapshot before ciphertext/plaintext is returned. Inbound-session creation commits account OTK consumption and the new session in one M3 state write before plaintext escapes. Every native account/session snapshot uses a fresh random pickle key protected by Android Keystore wrapping; persisted-state/Keystore mismatch fails closed and requires explicit recovery rather than silent account regeneration.
+The Android session repository separately provides app-private atomic M3 account/session persistence. `AtomicFile.openRead()` is allowed to perform its backup recovery before the recovered base-file size is validated, so a pending valid backup is not incorrectly rejected as missing/corrupt. Outbound encryption and inbound decryption commit the advanced ratchet snapshot before ciphertext/plaintext is returned. Inbound-session creation commits account OTK consumption and the new session in one M3 state write before plaintext escapes. Every native account/session snapshot uses a fresh random pickle key protected by Android Keystore wrapping; persisted-state/Keystore mismatch fails closed and requires explicit recovery rather than silent account regeneration.
 
 The server does not attempt to recreate missing or corrupt session-bootstrap material. Clients treat missing, mismatched, changed, or unverifiable M3 identity/account material as a failed bootstrap rather than silently starting a different session identity.
 
@@ -113,6 +113,6 @@ The M3 schema extends the existing `kenato.v1` package in a separate file and do
 
 This design exposes to the server only public Olm account material, a bounded one-time-key allocation decision, temporary invite relationship metadata already present in M2, and an opaque authenticated ciphertext frame. It does not expose any Kenato or Olm private key or plaintext.
 
-A malicious server can deny service, withhold public keys/frames, exhaust allocations, or replay stale valid public session material within accepted version/generation rules. It cannot make a correct client silently accept a substituted M3 engine identity, wrong local creator generation/OTK, altered submit context, or transplanted initial frame without causing P-256 binding/proof, local provenance, expected-peer Olm identity, or inner control-record verification to fail, assuming the pinned Kenato identity key and Olm primitives remain uncompromised.
+A malicious server can deny service, withhold public keys/frames, exhaust allocations, or replay stale valid public session material within accepted version/generation rules. It cannot make a correct client silently accept a substituted M3 engine identity, wrong local creator generation/OTK, altered submit context, stale redeemer generation committed after rollover, or transplanted initial frame without causing P-256 binding/proof, transaction guard, local provenance, expected-peer Olm identity, or inner control-record verification to fail, assuming the pinned Kenato identity key and Olm primitives remain uncompromised.
 
-The protocol/server and Android/native portions of the M3 bootstrap are implemented together under ADRs 0009 and 0010. M3 remains incomplete until PR #40 passes exact-head gates and is squash-merged, then #35 performs the required full repository-wide audit/refactor and exact-main verification. M4 routing/mailbox/product messaging remains out of scope.
+The protocol/server and Android/native portions of the M3 bootstrap are implemented together under ADRs 0009 and 0010 and were merged through #34/#40. M3 remains incomplete until #35 completes the required full repository-wide audit/remediation, reaches exact-head green, is squash-merged, and final exact-main verification succeeds. M4 routing/mailbox/product messaging remains out of scope.

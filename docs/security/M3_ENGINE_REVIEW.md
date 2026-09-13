@@ -1,9 +1,9 @@
 # M3 Session Engine Review
 
-Status: implementation review for M3 Android/native session boundary  
+Status: implementation review for the merged M3 Android/native session boundary; final repository-wide #35 verification in progress  
 Date: 2026-09-11
 
-This review records both the dependency/security decision behind ADR 0009 and the Android/native implementation now present in M3 PR #40. M3 is not considered complete until #34 is merged and the separate repository-wide #35 verification is finished on exact `main`.
+This review records both the dependency/security decision behind ADR 0009 and the Android/native implementation merged through #34/#40. M3 is not considered complete until the separate repository-wide #35 audit/remediation is squash-merged and exact `main` verification is green.
 
 ## Requirements
 
@@ -45,7 +45,7 @@ Kenato does not expose an API that changes those constants or low-level message-
 
 ## Implemented dependency and native boundary
 
-PR #40 exact-pins the native dependency and build boundary:
+The merged M3 implementation exact-pins the native dependency and build boundary:
 
 - `vodozemac = =0.10.0`, with the reviewed feature surface;
 - Rust `1.85.0` for both native crates;
@@ -113,6 +113,6 @@ Rejected. Implementing the protocol ourselves would create exactly the unaudited
 
 ## Verification state
 
-PR #40 contains Rust engine/JNI tests plus Android protocol, persistence, corruption/key-loss, restart, atomicity, pending-init recovery, cancellation, substitution, and lifecycle regression coverage. CI also exercises pinned native builds for all three Android ABIs before Android lint/test/build packaging.
+The merged #34/#40 implementation contains Rust engine/JNI tests plus Android protocol, persistence, corruption/key-loss, restart, atomicity, pending-init recovery, cancellation, substitution, and lifecycle regression coverage. Its exact-head required gates passed before merge, including the pinned three-ABI native build and Android verification.
 
-The implementation is still subject to exact-head PR gates and then #35's literal repository-wide audit/refactor and exact-main verification. Any finding from those gates or the final audit must be fixed before M3 is marked complete. M4 remains out of scope.
+M3 #35 is now performing the literal final repository-wide audit/remediation. Its verification baseline adds pinned cargo-audit scans for both native lockfiles, protolint, the repository-wide `make test` gate, CodeQL Java/Kotlin and Rust coverage, and regression-policy checks for audit findings. #35 must reach exact-head green, be squash-merged, and pass final exact-main verification before M3 is marked complete. M4 remains out of scope.

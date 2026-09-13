@@ -6,7 +6,7 @@ rust-version = "1.85"
 publish = false
 
 [dependencies]
-rand = "=0.8.5"
+rand = "=0.8.6"
 vodozemac = { version = "=0.10.0", default-features = false }
 zeroize = "=1.8.2"
 

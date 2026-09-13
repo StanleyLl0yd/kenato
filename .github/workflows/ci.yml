@@ -56,6 +56,17 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Install pinned cargo-audit
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 install cargo-audit --version 0.22.2 --locked --force
+          cargo audit --version
+
+      - name: Audit native Rust dependencies
+        run: |
+          cargo audit --file native/session-engine/Cargo.lock
+          cargo audit --file native/session-jni/Cargo.lock
+
       - name: Verify native Rust session engine
         working-directory: native/session-engine
         run: |
@@ -77,7 +88,9 @@ jobs:
           git diff --exit-code -- Cargo.lock src/lib.rs
 
       - name: Verify repository security baseline
-        run: python3 scripts/verify_security_baseline.py
+        run: |
+          python3 scripts/verify_security_baseline.py
+          python3 scripts/verify_repository_verification.py
 
       - name: Verify Gradle Wrapper JAR
         run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
@@ -201,16 +214,90 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go for protolint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
       - name: Install protoc
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends protobuf-compiler
 
-      - name: Validate proto
-        run: >
-          protoc
-          --proto_path=protocol
-          --descriptor_set_out=/tmp/kenato.pb
-          protocol/kenato/v1/envelope.proto
-          protocol/kenato/v1/contact.proto
-          protocol/kenato/v1/session.proto
+      - name: Install pinned protolint
+        run: go install github.com/yoheimuta/protolint/cmd/protolint@v0.56.4
+
+      - name: Validate protocol
+        run: make test-protocol
+
+  repository:
+    name: Repository make test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify CI supply-chain policy
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Install Go verification tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@709015412431dd2b5b28a53c06c70bc02d49074c
+          go install github.com/yoheimuta/protolint/cmd/protolint@v0.56.4
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+
+      - name: Set up Rust verification toolchains
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component clippy --component rustfmt
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 install cargo-audit --version 0.22.2 --locked --force
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          verify-signature: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          validate-wrappers: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install Android SDK and native build tooling
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=3 \
+            "platforms;android-37.0" \
+            "build-tools;37.0.0" \
+            "ndk;28.2.13676358"
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup target add --toolchain 1.85.0 \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
+          cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force
+          test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
+
+      - name: Run repository-wide make test
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" make test

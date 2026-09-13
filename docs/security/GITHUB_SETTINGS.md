@@ -1,6 +1,6 @@
 # GitHub Security Settings
 
-These repository-owner settings are part of the M0 security baseline and must be verified from the live repository before M0 closes.
+These repository-owner settings are part of the security baseline and must be re-verified from the live repository whenever required checks or scanning coverage changes.
 
 ## Dependency and secret security
 
@@ -13,7 +13,7 @@ Enable all available repository protections for this public repository:
 - push protection;
 - Private Vulnerability Reporting.
 
-Dependency Review, Dependabot version updates, Gitleaks, Semgrep, govulncheck, and CodeQL remain defense-in-depth even when GitHub-native protections are enabled.
+Dependency Review, Dependabot version updates, Gitleaks, Semgrep, govulncheck, cargo-audit, protolint, repository-wide `make test`, and CodeQL remain defense-in-depth even when GitHub-native protections are enabled.
 
 ## Default branch ruleset
 
@@ -34,15 +34,18 @@ Required rules:
 - bypass actors: none;
 - strict required status checks: enabled.
 
-After the hardening PR has produced these exact successful check contexts, require:
+The M3 verification baseline requires these successful check contexts before merge:
 
 - `Android`;
 - `Go`;
 - `Protocol syntax`;
+- `Repository make test`;
 - `Semgrep`;
 - `Gitleaks`;
 - `Dependency Review`;
 - `Analyze (go)`;
+- `Analyze (java-kotlin)`;
+- `Analyze (rust)`;
 - `Analyze (actions)`.
 
 Do not add Qodana as a required merge gate: it is intentionally scheduled/manual defense-in-depth so an external tooling failure cannot deadlock a single-maintainer repository.
@@ -76,7 +79,7 @@ Add Code Scanning enforcement:
 - alert/error threshold: `errors`;
 - bypass actors: none.
 
-Kenato currently runs CodeQL for Go and GitHub Actions. Kotlin 2.4.20 remains outside the deployed CodeQL Kotlin support ceiling documented in `docs/development/TOOLCHAIN.md`; Semgrep is therefore the required complementary SAST gate and Qodana provides scheduled JVM/Kotlin analysis.
+Kenato's M3 baseline runs CodeQL for Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin uses manual extraction with the pinned Android SDK/NDK/Rust/cargo-ndk prerequisites and a real debug Android build; Rust and Actions use no-build extraction. Semgrep remains the required complementary SAST gate and Qodana provides scheduled JVM/Kotlin defense-in-depth.
 
 ## Repository merge settings
 
@@ -125,7 +128,7 @@ If a second trusted reviewer exists, an environment approval can be useful. Do n
   - `Protect release tags` — ID `22649083`;
   - `Require CodeQL` — ID `22649087`.
 - `Protect main` has no bypass actors and requires strict status checks, signed commits, linear history, squash-only pull requests, conversation resolution, and blocks deletion/non-fast-forward updates.
-- Required checks are:
+- M0 required checks were:
   - `Android`;
   - `Go`;
   - `Protocol syntax`;
@@ -143,6 +146,10 @@ If a second trusted reviewer exists, an environment approval can be useful. Do n
 - Actions default token permissions are read-only and workflows may not approve pull requests.
 - The protected `release` environment exists.
 - Production signing secrets and certificate trust material are intentionally not yet provisioned; they are required before the first production-signed release.
+
+### M3 #35 ruleset update
+
+The M3 audit adds the `Repository make test`, `Analyze (java-kotlin)`, and `Analyze (rust)` contexts. The live `Protect main` ruleset must require those contexts before #35 is merged, in addition to preserving all existing required checks. The CodeQL ruleset remains active while the workflow itself expands to all four supported language targets.
 
 ### Ongoing verification
 
