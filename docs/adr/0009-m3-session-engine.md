@@ -1,8 +1,8 @@
 # ADR 0009 — M3 E2EE session engine
 
-Status: Accepted and implemented in M3 #34 pending final verification  
+Status: Accepted and implemented through merged M3 #34/#40; final repository-wide #35 verification in progress  
 Date: 2026-09-10  
-Implementation review updated: 2026-09-11
+Implementation review updated: 2026-09-13
 
 ## Context
 
@@ -27,7 +27,7 @@ The selected release:
 - has a published independent Least Authority security audit with no significant findings according to upstream release documentation;
 - internally bounds out-of-order handling: vodozemac 0.10.0 retains at most 40 skipped message keys and rejects message gaps larger than 2000.
 
-Kenato integrates the Rust library behind a deliberately small Android JNI boundary. The bridge marshals bounded inputs/outputs and encrypted engine snapshots but does not reimplement, fork, weaken, or expose low-level ratchet cryptography. The implementation pins Rust `1.85.0`, Android NDK `28.2.13676358`, `cargo-ndk 4.1.2`, API 26 native targets, and the `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABI set. CI/release paths build and verify that native boundary before Gradle packaging.
+Kenato integrates the Rust library behind a deliberately small Android JNI boundary. The bridge marshals bounded inputs/outputs and encrypted engine snapshots but does not reimplement, fork, weaken, or expose low-level ratchet cryptography. The implementation pins Rust `1.85.0`, Android NDK `28.2.13676358`, `cargo-ndk 4.1.2`, API 26 native targets, and the `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABI set. The engine's direct `rand` dependency is exact-pinned to the reviewed fixed `=0.8.6`; CI/repository verification audits both native Cargo lockfiles with pinned cargo-audit 0.22.2. CI/release paths build and verify the native boundary before Gradle packaging.
 
 ## Kenato identity binding
 
@@ -105,6 +105,8 @@ The outbound bootstrap pre-key frame is itself persisted before network submissi
 
 The creator claim is destructive on the server. Once the claim returns successfully, cancellation remains suppressed while response provenance is verified and local commit is attempted. The authenticated M2 contact pin is committed before the atomic M3 inbound state because the stores cannot be transacted together. If M2 pin commit fails, M3 state and the local OTK remain untouched. If the following M3 write fails, the valid M2 pin may remain but no session is persisted and the OTK remains unconsumed; recovery requires a fresh invite. The reverse order is rejected because it could durably create an M3 session without its M2 trust anchor.
 
+Android session persistence uses `AtomicFile.openRead()` recovery before validating the recovered base-file size. This preserves AtomicFile's backup-recovery contract while retaining bounded streaming and fail-closed corrupt/empty-state handling.
+
 Corrupt, missing, mismatched, downgraded, or partially committed persisted state fails closed rather than silently creating a new account/session.
 
 ## Alternatives considered
@@ -161,6 +163,6 @@ Trade-offs:
 
 ## Security review
 
-The native/JNI boundary, Android persistence lifecycle, Keystore wrapping, restart/corruption/key-loss behavior, bootstrap retry/commit boundaries, and representative replay/reordering/substitution cases are implemented and covered by M3 tests. `docs/security/THREAT_MODEL.md` and `docs/security/M3_ENGINE_REVIEW.md` describe the resulting boundary.
+The native/JNI boundary, Android persistence lifecycle, Keystore wrapping, restart/corruption/key-loss behavior, bootstrap retry/commit boundaries, and representative replay/reordering/substitution cases were implemented and exact-head verified before #34/#40 merged. `docs/security/THREAT_MODEL.md` and `docs/security/M3_ENGINE_REVIEW.md` describe the resulting boundary.
 
-M3 is still not complete until PR #40 passes all exact-head gates and is squash-merged, followed by #35's literal full repository-wide audit/refactor, remediation of all findings, and final exact-main verification. M4 remains out of scope until that completes.
+M3 #35 is the final literal full repository-wide audit/refactor. It must remediate all confirmed findings, reach exact-head green under the expanded repository/security verification baseline, be squash-merged, and pass exact-main verification before M3/#31 closes. M4 remains out of scope until that completes.
