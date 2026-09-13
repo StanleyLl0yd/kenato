@@ -27,7 +27,9 @@ if manifest_text:
         errors.append(f"native/session-engine/Cargo.toml: invalid TOML: {error}")
     else:
         if manifest.get("dependencies", {}).get("rand") != "=0.8.6":
-            errors.append("native/session-engine: rand must remain exactly pinned to =0.8.6 or a reviewed fixed successor")
+            errors.append(
+                "native/session-engine: rand must remain exactly pinned to =0.8.6 or a reviewed fixed successor"
+            )
 
 for lock_path in ("native/session-engine/Cargo.lock", "native/session-jni/Cargo.lock"):
     lock = read(lock_path)
@@ -37,6 +39,20 @@ for lock_path in ("native/session-engine/Cargo.lock", "native/session-jni/Cargo.
         errors.append(f"{lock_path}: vulnerable rand 0.8.5 must not be locked")
     if 'name = "rand"\nversion = "0.8.6"' not in lock:
         errors.append(f"{lock_path}: reviewed rand 0.8.6 lock entry is required")
+
+versions_text = read("gradle/libs.versions.toml")
+if versions_text:
+    try:
+        versions = tomllib.loads(versions_text)
+    except tomllib.TOMLDecodeError as error:
+        errors.append(f"gradle/libs.versions.toml: invalid TOML: {error}")
+    else:
+        compose_plugin = versions.get("plugins", {}).get("kotlin-compose")
+        if not isinstance(compose_plugin, dict) or compose_plugin.get("version") != "2.4.10":
+            errors.append(
+                "gradle/libs.versions.toml: Kotlin Compose must remain at reviewed CodeQL-compatible 2.4.10 "
+                "until the pinned CodeQL bundle is reviewed for a newer Kotlin release"
+            )
 
 dependabot = read(".github/dependabot.yml")
 for directory in ("/native/session-engine", "/native/session-jni"):
@@ -64,10 +80,23 @@ for fragment in required_make_fragments:
 protolint = read(".protolint.yaml")
 if "all_default: true" not in protolint:
     errors.append(".protolint.yaml: all default protobuf style rules must remain enabled")
+if re.search(r"(?m)^\s*remove:\s*$", protolint):
+    errors.append(".protolint.yaml: default protobuf lint rules must not be globally removed")
+for legacy_rule in ("FILE_HAS_COMMENT", "MESSAGES_HAVE_COMMENT", "FIELDS_HAVE_COMMENT"):
+    if f"- id: {legacy_rule}" not in protolint:
+        errors.append(f".protolint.yaml: legacy exemption for {legacy_rule} must remain explicit")
+for timestamp_field in (
+    "created_at_unix_seconds",
+    "expires_at_unix_seconds",
+    "redeemed_at_unix_seconds",
+):
+    if timestamp_field not in protolint:
+        errors.append(f".protolint.yaml: stable wire field {timestamp_field} must remain an explicit preposition exception")
 
 ci = read(".github/workflows/ci.yml")
 required_ci_fragments = (
-    "cargo-audit --version 0.22.2 --locked --force",
+    "rustup toolchain install 1.88.0 --profile minimal",
+    "cargo +1.88.0 install cargo-audit --version 0.22.2 --locked --force",
     "cargo audit --file native/session-engine/Cargo.lock",
     "cargo audit --file native/session-jni/Cargo.lock",
     "github.com/yoheimuta/protolint/cmd/protolint@v0.56.4",
