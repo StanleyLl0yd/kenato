@@ -1,6 +1,6 @@
 # Development Toolchain
 
-Current post-M2 baseline:
+Current M3 baseline:
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.7.1
@@ -13,12 +13,20 @@ Current post-M2 baseline:
 - ZXing Core: 3.5.4 (M2 QR encoding only; no scanner SDK)
 - Go: 1.27.1 in CI
 - Protocol Buffers Go runtime: `google.golang.org/protobuf` 1.36.12
+- protobuf lint: protolint 0.56.4
 - SQLite Go driver: pure-Go `modernc.org/sqlite` 1.58.0
 - Go vulnerability scanner: govulncheck `709015412431dd2b5b28a53c06c70bc02d49074c` (2026-09-08 upstream revision; pinned because released v1.1.4 predates Go 1.27 AST support)
+- M3 session engine: vodozemac 0.10.0 behind Kenato-owned Rust/JNI crates
+- native Rust toolchain: 1.85.0
+- Android NDK: 28.2.13676358
+- cargo-ndk: 4.1.2 (installed with Rust 1.86.0, building the Rust 1.85.0 native crates)
+- Rust advisory scanner: cargo-audit 0.22.2 for both committed native Cargo lockfiles
 - SAST: Semgrep CE 1.172.0 (required PR/main gate)
+- CodeQL: Go (`manual`), Java/Kotlin (`manual` with a real Android debug build), Rust (`none`), and GitHub Actions (`none`)
 - Kotlin/JVM defense-in-depth: Qodana JVM Community 2026.2.1 (scheduled/manual)
+- repository-wide local/CI verification entry point: `make test`
 
-The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds. The committed `server/go.mod` and `server/go.sum` are the authoritative Go dependency graph; CI runs `go mod tidy` and requires those files to remain unchanged.
+The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds. The committed `server/go.mod` and `server/go.sum` are the authoritative Go dependency graph; CI runs `go mod tidy` and requires those files to remain unchanged. The two committed native `Cargo.lock` files are authoritative for their Rust dependency graphs and are audited with the pinned cargo-audit release.
 
 The SQLite dependency is intentionally pure Go so `kenato-server` remains cross-buildable for the ARM64 OCI target with `CGO_ENABLED=0`. CI verifies both linux/amd64 and linux/arm64 server builds.
 
@@ -26,14 +34,10 @@ The ZXing dependency is limited to deterministic QR matrix generation for canoni
 
 Release signing material must never be committed. The tag-triggered signed-release pipeline is committed and gated; production signing secrets and certificate trust material must be provisioned only in the protected `release` environment before the first production-signed release.
 
-## CodeQL compatibility
+## Verification baseline
 
-Re-checked 2026-09-10: current CodeQL documentation supports Kotlin through the 2.4.1x line, while Kenato intentionally uses Kotlin 2.4.20.
+M3 #35 expands repository verification rather than weakening the existing gates. `make test` is the repository-wide contract and covers protobuf/protolint validation, Go module/format/test/race/vet/govulncheck/build checks, both Rust crates' format/check/clippy/test/build/advisory scans, security-policy verification, Gradle Wrapper verification, pinned native JNI build, and Android lint/unit/build/bundle verification.
 
-Kenato does not downgrade the application toolchain solely to satisfy a scanner version ceiling. Until CodeQL adds Kotlin 2.4.20 support:
+CI also runs focused Android, Go, and protocol jobs. CodeQL analyzes Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin extraction installs the pinned Android SDK/NDK and native Rust tooling, builds the three reviewed JNI ABIs, and runs a real `:android:app:assembleDebug` under manual CodeQL build mode.
 
-- CodeQL analyzes Go and GitHub Actions;
-- Semgrep remains the required complementary SAST gate for Kotlin source;
-- Qodana provides scheduled/manual Kotlin/JVM defense-in-depth analysis;
-- Android CI performs Kotlin compilation, lint, unit tests, debug build, unsigned release APK build, and unsigned release AAB build;
-- Kotlin CodeQL analysis is re-enabled when the deployed CodeQL extractor supports the project Kotlin version.
+Semgrep remains a required complementary SAST gate and Qodana remains scheduled/manual JVM/Kotlin defense-in-depth; neither substitutes for the Java/Kotlin CodeQL job.
