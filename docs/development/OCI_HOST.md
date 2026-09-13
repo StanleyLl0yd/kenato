@@ -42,6 +42,6 @@ Source-IP restriction for SSH and final production perimeter rules are deliberat
 
 ## Milestone boundary
 
-M1 (`Local Identity`) is complete and remains entirely device-local. M2 (`Invite + Contact Establishment`) has not started; server-side identity publication, prekey upload, and invite/contact establishment belong to that milestone.
+M0–M2 are complete. M3 E2EE Session implementation (#34/#40) is merged and #35 is performing the final repository-wide audit/remediation and exact-main verification. M4 has not started and must not begin before M3 closes. The OCI host does not expand the current product or protocol milestone scope.
 
-Do not expose the foundation server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
+Do not expose the server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
