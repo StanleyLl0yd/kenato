@@ -103,7 +103,7 @@ jobs:
         if: matrix.language == 'java-kotlin'
         run: |
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh
-          ./gradlew --no-daemon --stacktrace :android:app:assembleDebug
+          ./gradlew --no-daemon --stacktrace --no-build-cache --rerun-tasks :android:app:assembleDebug
 
       - name: Analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
