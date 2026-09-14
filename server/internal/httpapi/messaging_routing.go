@@ -300,7 +300,7 @@ func (p *directPending) markAcked() {
 
 func (p *directPending) isAcked() bool {
 	p.mu.Lock()
-	de p.mu.Unlock()
+	defer p.mu.Unlock()
 	return p.acked
 }
 
