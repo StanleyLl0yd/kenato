@@ -125,7 +125,7 @@ security_review = read("docs/security/M4_TRANSPORT_REVIEW.md")
 for fragment in (
     "128 authenticated",
     "32 unauthenticated",
-    "4 frames",
+    "4 queued outbound frames",
     "256 pending",
     "100 KiB",
     "5 seconds",
