@@ -148,11 +148,7 @@ fn read_secret_pickle_key(
     env: &JNIEnv<'_>,
     value: &JByteArray<'_>,
 ) -> Result<SecretBytes, BridgeError> {
-    Ok(SecretBytes::new(read_exact(
-        env,
-        value,
-        PICKLE_KEY_BYTES,
-    )?))
+    Ok(SecretBytes::new(read_exact(env, value, PICKLE_KEY_BYTES)?))
 }
 
 fn read_snapshot_text(
@@ -420,12 +416,7 @@ pub extern "system" fn Java_com_sl_kenato_session_NativeSessionBridge_encryptSes
     run_bridge(env, |env| {
         let ciphertext = read_snapshot_text(env, &session_ciphertext, MAX_SESSION_SNAPSHOT_BYTES)?;
         let pickle_key = read_secret_pickle_key(env, &session_pickle_key)?;
-        let plaintext = SecretBytes::new(read_bytes(
-            env,
-            &plaintext,
-            MAX_PLAINTEXT_BYTES,
-            true,
-        )?);
+        let plaintext = SecretBytes::new(read_bytes(env, &plaintext, MAX_PLAINTEXT_BYTES, true)?);
         encode_encrypt(encrypt_session(
             &ciphertext,
             pickle_key.as_slice(),
