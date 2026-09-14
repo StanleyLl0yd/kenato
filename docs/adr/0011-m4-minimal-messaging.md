@@ -2,7 +2,7 @@
 
 - Status: Accepted for M4
 - Date: 2026-09-14
-- Scope: M4 protocol/authentication/delivery semantics only
+- Scope: M4 protocol/authentication/delivery semantics and bounded mailbox custody
 
 ## Context
 
@@ -98,15 +98,25 @@ A recipient sends ACK only after:
 
 M3's existing rule that plaintext is not application-visible before durable ratchet advancement remains unchanged. Because a crash after ratchet commit but before history persistence could otherwise make the retransmitted ciphertext an undecryptable replay, #53 must introduce a bounded durable delivery handoff/journal coordinated with the ratchet commit (or an equivalent crash-safe construction) before enabling ACK. Application code must never ACK merely because a plaintext value existed transiently in memory.
 
-### Mailbox limits
+### Mailbox persistence and limits
 
-The durable M4 mailbox implementation in #51 will enforce:
+The #51 mailbox is a separate SQLite database from the M2/M3 contact/bootstrap database. This keeps message-retention/ACK deletion independent from destructive invite/session-bootstrap lifecycle operations while preserving the same local file hardening: regular file, mode `0600`, WAL, synchronous `FULL`, STRICT schema and fail-closed schema versioning.
 
-- maximum 500 retained messages per recipient;
+Recipient existence is checked through an internal identity-directory interface backed by the contact store; no public identity lookup is introduced. The mailbox database itself contains no public identity bundles or contact state.
+
+The durable mailbox enforces:
+
+- maximum 500 retained messages and 16 MiB of encoded envelopes per recipient;
+- maximum 1,000 retained messages and 32 MiB per sender across recipients;
+- maximum 100,000 retained messages and 256 MiB globally;
 - maximum 72-hour retention;
 - maximum 96 KiB encoded envelope and 64 KiB ciphertext;
-- transactional quota/idempotency checks with SQLite constraints as a backstop;
-- bounded cleanup work and indexes for recipient/expiry access.
+- delivery pages of at most 50 retained messages;
+- physical expiry cleanup batches of at most 1,000 rows;
+- transactional quota/idempotency checks plus a SQLite `BEFORE INSERT` capacity trigger as a storage-level backstop;
+- indexes for recipient delivery, sender accounting and expiry cleanup.
+
+The physical global quotas count rows awaiting expiry cleanup, so delayed maintenance cannot allow unbounded disk growth. Expired rows are excluded from delivery immediately at the exact expiry boundary even before physical deletion.
 
 Only opaque encrypted envelopes and minimum routing/timing metadata are retained. User plaintext, contact names, session keys and message semantic type are never mailbox columns or logs.
 
@@ -120,5 +130,6 @@ Protocol errors are deliberately coarse (`MALFORMED`, `AUTHENTICATION_FAILED`, `
 - The server learns sender, recipient, timing, ciphertext size and bounded mailbox state. It does not learn message plaintext or semantic type.
 - Direct delivery minimizes durable metadata while mailbox fallback provides bounded offline delivery.
 - At-least-once transport requires authenticated application-level deduplication and careful local crash ordering.
+- The separate mailbox database adds one additional local durable file set but isolates message-retention failure and migration policy from M2/M3 relationship/bootstrap state.
 - The protocol is intentionally single-device/single-active-connection for M4; multi-device semantics require a future reviewed design.
 - M5 calling/WebRTC behavior is unaffected and remains out of scope.
