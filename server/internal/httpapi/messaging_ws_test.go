@@ -200,10 +200,15 @@ func TestMessagingWSSFailedReplacementDoesNotEvictAuthenticatedPeer(t *testing.T
 		t.Fatal("failed authentication replaced the existing authenticated peer")
 	}
 
-	pingCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	if err := first.Ping(pingCtx); err != nil {
-		t.Fatalf("existing authenticated peer was disconnected: %v", err)
+	recipientID := testIdentity(0x77)
+	envelope := testEnvelope(identityID, recipientID, 0x67)
+	writeClientFrame(t, first, messaging.ClientFrame{ProtocolVersion: messaging.ProtocolVersion, Send: &envelope})
+	accepted := readServerFrame(t, first)
+	if accepted.SendAccepted == nil || !bytes.Equal(accepted.SendAccepted.MessageID, envelope.MessageID) {
+		t.Fatalf("existing authenticated peer stopped routing after failed replacement: %#v", accepted)
+	}
+	if got := mailbox.storedCount(); got != 1 {
+		t.Fatalf("existing authenticated peer did not remain active; mailbox rows = %d, want 1", got)
 	}
 }
 
