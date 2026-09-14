@@ -61,6 +61,8 @@ for fragment in (
     "0o600",
     "MaxMailboxCleanupBatch",
     "ORDER BY mailbox_id",
+    "SELECT sender_identity_id, message_id, accepted_at, expires_at, ciphertext_size, encoded_envelope",
+    "expiresAt-acceptedAt > MaxMessageTTLSeconds",
     "decoded, err := DecodeEnvelope(encoded)",
     "canonical, err := EncodeEnvelope(decoded)",
     "!bytes.Equal(canonical, encoded)",
@@ -87,7 +89,9 @@ for fragment in (
     "KENATO_MAILBOX_DB_PATH",
     "OpenSQLiteMailboxStore",
     "retentionCleanupInterval   = time.Hour",
-    "mailboxStore.PruneExpired",
+    "inviteCleanupCtx, inviteCleanupCancel := context.WithTimeout",
+    "mailboxCleanupCtx, mailboxCleanupCancel := context.WithTimeout",
+    "mailboxStore.PruneExpired(mailboxCleanupCtx",
 ):
     require("server/cmd/kenato-server/main.go", main, fragment)
 
