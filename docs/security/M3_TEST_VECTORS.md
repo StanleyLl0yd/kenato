@@ -1,6 +1,6 @@
 # M3 deterministic canonical framing vectors
 
-Status: M3 in progress. These vectors cover only Kenato-owned canonical payload framing. They do not attempt to make randomized ECDSA signatures or Olm ciphertext deterministic.
+Status: M3 complete. These vectors cover only Kenato-owned canonical payload framing. They do not attempt to make randomized ECDSA signatures or Olm ciphertext deterministic.
 
 All integer fields are unsigned big-endian. Identity ids and Olm public keys below are raw bytes.
 
