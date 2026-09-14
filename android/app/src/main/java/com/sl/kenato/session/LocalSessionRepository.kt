@@ -3,6 +3,14 @@ package com.sl.kenato.session
 import android.content.Context
 import java.security.MessageDigest
 
+internal data class SessionMessageCryptoContext(
+    val ownerIdentityId: ByteArray,
+    val localContactId: ByteArray,
+    val peerIdentityId: ByteArray,
+    val localAccountGeneration: Long,
+    val peerAccountGeneration: Long,
+)
+
 /**
  * Owns the M3 local Olm account/session lifecycle. All methods are synchronous and must be
  * invoked off the UI thread. Native state transitions are not externally visible until the
@@ -383,9 +391,7 @@ internal class LocalSessionRepository(
         val state = requireState(ownerIdentityId)
         val index = requireSessionIndex(state, localContactId)
         val persisted = state.sessions[index]
-        if (persisted.pendingInit != null) {
-            throw SessionStateException("M3 application encryption is unavailable until session init submission completes")
-        }
+        requireReadyApplicationSession(persisted)
         val native = unwrapSession(state, persisted)
         val result = try {
             engine.encryptSession(native, plaintext)
@@ -418,9 +424,7 @@ internal class LocalSessionRepository(
         val state = requireState(ownerIdentityId)
         val index = requireSessionIndex(state, localContactId)
         val persisted = state.sessions[index]
-        if (persisted.pendingInit != null) {
-            throw SessionStateException("M3 application decryption is unavailable until session init submission completes")
-        }
+        requireReadyApplicationSession(persisted)
         val native = unwrapSession(state, persisted)
         val result = try {
             engine.decryptSession(native, messageType, olmMessage)
@@ -441,6 +445,174 @@ internal class LocalSessionRepository(
         }
         persist(state.copy(sessions = sessions))
         return result.plaintext.copyOf().also { result.plaintext.zeroize() }
+    }
+
+    /**
+     * M4 outbound crypto boundary. The builder receives the exact M3 ciphertext only after native
+     * encryption succeeded. Its returned handoff must contain the same encoded plaintext that was
+     * encrypted. The advanced ratchet snapshot and handoff are written by one AtomicFile commit,
+     * so network retry never needs to re-encrypt a logical send.
+     */
+    @Synchronized
+    fun encryptAndStageMessageHandoff(
+        ownerIdentityId: ByteArray,
+        localContactId: ByteArray,
+        encodedPlaintext: ByteArray,
+        buildHandoff: (SessionMessageCryptoContext, NativeSessionMessage) -> SessionMessageHandoff,
+    ): SessionMessageHandoff {
+        val state = requireState(ownerIdentityId)
+        requireHandoffCapacity(state)
+        val index = requireSessionIndex(state, localContactId)
+        val persisted = state.sessions[index]
+        requireReadyApplicationSession(persisted)
+        val context = messageContext(state, persisted)
+        val native = unwrapSession(state, persisted)
+        val result = try {
+            engine.encryptSession(native, encodedPlaintext)
+        } finally {
+            native.pickleKey.zeroize()
+        }
+
+        val handoff = try {
+            buildHandoff(context.copyForCaller(), result.message.copyForCaller()).copyForCaller()
+        } catch (error: Throwable) {
+            result.snapshot.pickleKey.zeroize()
+            throw error
+        }
+        try {
+            requireHandoffContext(
+                handoff = handoff,
+                context = context,
+                direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                expectedPlaintext = encodedPlaintext,
+            )
+        } catch (error: Throwable) {
+            result.snapshot.pickleKey.zeroize()
+            throw error
+        }
+
+        val wrapped = wrapSessionSnapshot(
+            ownerIdentityId = state.ownerIdentityId,
+            localAccountGeneration = state.account.accountGeneration,
+            localContactId = persisted.localContactId,
+            peerIdentityId = persisted.peerIdentityId,
+            peerAccountGeneration = persisted.peerAccountGeneration,
+            sessionId = persisted.sessionId,
+            snapshot = result.snapshot,
+        )
+        val sessions = state.sessions.toMutableList().also {
+            it[index] = persisted.copy(snapshot = wrapped)
+        }
+        persist(
+            state.copy(
+                sessions = sessions,
+                messageHandoffs = state.messageHandoffs + handoff.copyForState(),
+            ),
+        )
+        return handoff.copyForCaller()
+    }
+
+    /**
+     * M4 inbound crypto boundary. SessionCiphertext provenance is checked before native decrypt.
+     * The builder validates the decrypted M4 inner/outer context and returns the recoverable
+     * plaintext/envelope handoff. No ratchet advancement is persisted if validation/build fails.
+     */
+    @Synchronized
+    fun decryptAndStageMessageHandoff(
+        ownerIdentityId: ByteArray,
+        localContactId: ByteArray,
+        ciphertext: SessionCiphertext,
+        buildHandoff: (SessionMessageCryptoContext, ByteArray) -> SessionMessageHandoff,
+    ): SessionMessageHandoff {
+        SessionCiphertextWire.validate(ciphertext)
+        val state = requireState(ownerIdentityId)
+        requireHandoffCapacity(state)
+        val index = requireSessionIndex(state, localContactId)
+        val persisted = state.sessions[index]
+        requireReadyApplicationSession(persisted)
+        requireInboundCiphertextContext(state, persisted, ciphertext)
+        val context = messageContext(state, persisted)
+        val native = unwrapSession(state, persisted)
+        val result = try {
+            engine.decryptSession(native, ciphertext.olmMessageType, ciphertext.olmMessage)
+        } finally {
+            native.pickleKey.zeroize()
+        }
+
+        val plaintextForBuilder = result.plaintext.copyOf()
+        val handoff = try {
+            buildHandoff(context.copyForCaller(), plaintextForBuilder).copyForCaller()
+        } catch (error: Throwable) {
+            result.snapshot.pickleKey.zeroize()
+            throw error
+        } finally {
+            plaintextForBuilder.zeroize()
+        }
+        try {
+            requireHandoffContext(
+                handoff = handoff,
+                context = context,
+                direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
+                expectedPlaintext = result.plaintext,
+            )
+        } catch (error: Throwable) {
+            result.snapshot.pickleKey.zeroize()
+            result.plaintext.zeroize()
+            throw error
+        }
+
+        val wrapped = try {
+            wrapSessionSnapshot(
+                ownerIdentityId = state.ownerIdentityId,
+                localAccountGeneration = state.account.accountGeneration,
+                localContactId = persisted.localContactId,
+                peerIdentityId = persisted.peerIdentityId,
+                peerAccountGeneration = persisted.peerAccountGeneration,
+                sessionId = persisted.sessionId,
+                snapshot = result.snapshot,
+            )
+        } finally {
+            result.plaintext.zeroize()
+        }
+        val sessions = state.sessions.toMutableList().also {
+            it[index] = persisted.copy(snapshot = wrapped)
+        }
+        persist(
+            state.copy(
+                sessions = sessions,
+                messageHandoffs = state.messageHandoffs + handoff.copyForState(),
+            ),
+        )
+        return handoff.copyForCaller()
+    }
+
+    @Synchronized
+    fun pendingMessageHandoffs(ownerIdentityId: ByteArray): List<SessionMessageHandoff> =
+        requireState(ownerIdentityId).messageHandoffs.map(SessionMessageHandoff::copyForCaller)
+
+    @Synchronized
+    fun completeMessageHandoff(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        direction: Int,
+    ): Boolean {
+        requireIdentityId(peerIdentityId, "M4 handoff peer identity id")
+        if (messageId.size != SessionStateCodec.MESSAGE_ID_BYTES || messageId.all { it == 0.toByte() }) {
+            throw SessionStateException("M4 handoff message id is invalid")
+        }
+        if (direction !in SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND..SessionStateCodec.HANDOFF_DIRECTION_INBOUND) {
+            throw SessionStateException("M4 handoff direction is invalid")
+        }
+        val state = requireState(ownerIdentityId)
+        val remaining = state.messageHandoffs.filterNot {
+            it.direction == direction &&
+                it.peerIdentityId.contentEquals(peerIdentityId) &&
+                it.messageId.contentEquals(messageId)
+        }
+        if (remaining.size == state.messageHandoffs.size) return false
+        persist(state.copy(messageHandoffs = remaining))
+        return true
     }
 
     @Synchronized
@@ -617,6 +789,58 @@ internal class LocalSessionRepository(
         }
     }
 
+    private fun requireReadyApplicationSession(session: PersistedSession) {
+        if (session.pendingInit != null) {
+            throw SessionStateException("M3 application crypto is unavailable until session init submission completes")
+        }
+    }
+
+    private fun requireHandoffCapacity(state: SessionState) {
+        if (state.messageHandoffs.size >= SessionStateCodec.MAX_MESSAGE_HANDOFFS) {
+            throw SessionStateException("M4 handoff journal is full")
+        }
+    }
+
+    private fun messageContext(state: SessionState, session: PersistedSession): SessionMessageCryptoContext =
+        SessionMessageCryptoContext(
+            ownerIdentityId = state.ownerIdentityId.copyOf(),
+            localContactId = session.localContactId.copyOf(),
+            peerIdentityId = session.peerIdentityId.copyOf(),
+            localAccountGeneration = state.account.accountGeneration,
+            peerAccountGeneration = session.peerAccountGeneration,
+        )
+
+    private fun requireInboundCiphertextContext(
+        state: SessionState,
+        session: PersistedSession,
+        ciphertext: SessionCiphertext,
+    ) {
+        if (
+            !ciphertext.senderIdentityId.contentEquals(session.peerIdentityId) ||
+            !ciphertext.recipientIdentityId.contentEquals(state.ownerIdentityId) ||
+            ciphertext.senderAccountGeneration != session.peerAccountGeneration ||
+            ciphertext.recipientAccountGeneration != state.account.accountGeneration
+        ) {
+            throw SessionStateException("M4 SessionCiphertext does not match the pinned M3 session context")
+        }
+    }
+
+    private fun requireHandoffContext(
+        handoff: SessionMessageHandoff,
+        context: SessionMessageCryptoContext,
+        direction: Int,
+        expectedPlaintext: ByteArray,
+    ) {
+        if (
+            handoff.direction != direction ||
+            !handoff.localContactId.contentEquals(context.localContactId) ||
+            !handoff.peerIdentityId.contentEquals(context.peerIdentityId) ||
+            !handoff.encodedPlaintext.contentEquals(expectedPlaintext)
+        ) {
+            throw SessionStateException("M4 handoff does not match the committed crypto context")
+        }
+    }
+
     private fun requirePendingInitContext(
         pending: PendingSessionInit,
         inviteToken: ByteArray,
@@ -727,6 +951,23 @@ internal class LocalSessionRepository(
                 ),
             )
         },
+        messageHandoffs = messageHandoffs.map(SessionMessageHandoff::copyForCaller),
+    )
+
+    private fun SessionMessageCryptoContext.copyForCaller(): SessionMessageCryptoContext = copy(
+        ownerIdentityId = ownerIdentityId.copyOf(),
+        localContactId = localContactId.copyOf(),
+        peerIdentityId = peerIdentityId.copyOf(),
+    )
+
+    private fun SessionMessageHandoff.copyForState(): SessionMessageHandoff = copyForCaller()
+
+    private fun SessionMessageHandoff.copyForCaller(): SessionMessageHandoff = copy(
+        localContactId = localContactId.copyOf(),
+        peerIdentityId = peerIdentityId.copyOf(),
+        messageId = messageId.copyOf(),
+        encodedPlaintext = encodedPlaintext.copyOf(),
+        encodedEnvelope = encodedEnvelope.copyOf(),
     )
 
     private fun NativeSessionMessage.copyForCaller(): NativeSessionMessage = copy(ciphertext = ciphertext.copyOf())
