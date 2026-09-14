@@ -64,7 +64,7 @@ Completion record: #32–#35 are complete, the final M3 PR was squash-merged to 
 
 ## M4 — Minimal Messaging
 
-Status: **Not started**.
+Status: **Active** (2026-09-14; tracker #49).
 
 - WSS routing;
 - online direct delivery;
@@ -72,6 +72,8 @@ Status: **Not started**.
 - acknowledgements and retry semantics;
 - local conversation history;
 - server deletion after acknowledged delivery.
+
+Implementation slices: #50 protocol/auth/delivery contract; #51 bounded mailbox persistence; #52 authenticated WSS/direct routing; #53 Android transport/history; #54 final end-to-end/security verification. M5 remains out of scope until M4 is complete.
 
 ## M5 — Voice Core
 

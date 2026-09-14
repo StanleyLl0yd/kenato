@@ -1,0 +1,138 @@
+// M4 minimal messaging wire contract.
+syntax = "proto3";
+
+package kenato.v1;
+
+import "kenato/v1/envelope.proto";
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
+
+// MessagingPlaintext is encrypted by the established M3 session before it is
+// placed in Envelope.ciphertext. The server never parses this message.
+message MessagingPlaintext {
+  // Protocol version for this encrypted application record.
+  uint32 protocol_version = 1;
+  // Authenticated sender Kenato identity id.
+  bytes sender_identity_id = 2;
+  // Authenticated recipient Kenato identity id.
+  bytes recipient_identity_id = 3;
+  // Sender-generated 16-byte non-zero random message id.
+  bytes message_id = 4;
+  // Sender wall-clock Unix seconds used for the authenticated TTL bound.
+  int64 sent_unix_seconds = 5;
+  // Authenticated delivery expiry in Unix seconds.
+  int64 expires_at_unix_seconds = 6;
+  // UTF-8 M4 text content. This field exists only inside M3 ciphertext.
+  string text = 7;
+}
+
+// MessagingAuthChallenge is the first server frame on a new WSS connection.
+// The challenge is random, single-use connection state and expires quickly.
+message MessagingAuthChallenge {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  // Server-generated 32-byte non-zero random connection challenge.
+  bytes challenge = 2;
+  // Challenge expiry in Unix seconds.
+  int64 expires_at_unix_seconds = 3;
+}
+
+// MessagingAuthResponse proves ownership of an existing Kenato P-256 identity.
+// The signature covers the canonical KENATO-MESSAGING-AUTH-V1 payload documented
+// in protocol/README.md and ADR 0011.
+message MessagingAuthResponse {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  // Claimed 32-byte Kenato identity id.
+  bytes identity_id = 2;
+  // Exact challenge supplied on this WSS connection.
+  bytes challenge = 3;
+  // Exact challenge expiry supplied by the server.
+  int64 expires_at_unix_seconds = 4;
+  // ECDSA P-256/SHA-256 signature over the canonical auth payload.
+  bytes signature = 5;
+}
+
+// MessagingAuthenticated confirms that connection authentication succeeded.
+message MessagingAuthenticated {
+}
+
+// MessagingDeliveryAck acknowledges one sender/message-id pair. The recipient
+// identity comes from authenticated connection state, not from this frame.
+message MessagingDeliveryAck {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  // Authenticated sender identity from the delivered envelope.
+  bytes sender_identity_id = 2;
+  // Message id being acknowledged.
+  bytes message_id = 3;
+}
+
+// MessagingSendAccepted intentionally omits online/offline delivery mode. It
+// means either direct delivery was acknowledged or durable mailbox custody was
+// accepted.
+message MessagingSendAccepted {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  // Recipient identity from the accepted send request.
+  bytes recipient_identity_id = 2;
+  // Message id from the accepted send request.
+  bytes message_id = 3;
+}
+
+// MessagingErrorCode is deliberately coarse to avoid presence/enumeration leaks.
+enum MessagingErrorCode {
+  // No valid error code was supplied.
+  MESSAGING_ERROR_CODE_UNSPECIFIED = 0;
+  // The frame or one of its bounded fields was malformed.
+  MESSAGING_ERROR_CODE_MALFORMED = 1;
+  // Connection identity authentication failed.
+  MESSAGING_ERROR_CODE_AUTHENTICATION_FAILED = 2;
+  // A send was rejected without revealing recipient state.
+  MESSAGING_ERROR_CODE_SEND_REJECTED = 3;
+  // A bounded transient resource condition requires retry later.
+  MESSAGING_ERROR_CODE_RETRY_LATER = 4;
+}
+
+// MessagingError is a generic server error. It must not reveal whether a target
+// identity exists or is currently online.
+message MessagingError {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  // Coarse non-enumerating error class.
+  MessagingErrorCode code = 2;
+  // Optional message id when the error can safely be correlated to a send.
+  bytes message_id = 3;
+}
+
+// MessagingClientFrame is the bounded client-to-server WSS frame union.
+message MessagingClientFrame {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  oneof payload {
+    // Identity proof; valid only while the connection is unauthenticated.
+    MessagingAuthResponse auth_response = 2;
+    // Opaque E2EE message send; valid only after authentication.
+    Envelope send = 3;
+    // Durable delivery acknowledgement; valid only after authentication.
+    MessagingDeliveryAck ack = 4;
+  }
+}
+
+// MessagingServerFrame is the bounded server-to-client WSS frame union.
+message MessagingServerFrame {
+  // Messaging protocol version.
+  uint32 protocol_version = 1;
+  oneof payload {
+    // Initial connection authentication challenge.
+    MessagingAuthChallenge auth_challenge = 2;
+    // Successful identity-authentication confirmation.
+    MessagingAuthenticated authenticated = 3;
+    // Opaque E2EE envelope delivered to the authenticated recipient.
+    Envelope delivery = 4;
+    // Send accepted without exposing the selected delivery mode.
+    MessagingSendAccepted send_accepted = 5;
+    // Coarse protocol/auth/send error.
+    MessagingError error = 6;
+  }
+}
