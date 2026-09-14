@@ -21,7 +21,7 @@ kenato-server (Go)
   |- identity public material / prekeys
   |- invite lifecycle
   |- M3 public session bootstrap / temporary init state
-  |- transient WebSocket routing          [M4]
+  |- authenticated WSS routing            [M4]
   |- bounded offline mailbox              [M4]
   |- temporary TURN credentials           [later]
   |
@@ -33,7 +33,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-Through completed M3, identity/contact establishment and the asynchronous E2EE session/bootstrap boundary are implemented. Ordinary encrypted-message routing/mailbox behavior, TURN credentials, and calling remain later milestones.
+M0–M3 are complete. M4 is active. The first M4 slice defines the authenticated messaging wire contract and shared protocol bounds; durable mailbox persistence, live WSS routing, Android local history, and final M4 verification are separate child slices. TURN credentials and calling remain later milestones.
 
 ## Client
 
@@ -42,11 +42,12 @@ Android stack in the current architecture:
 - Kotlin / Jetpack Compose;
 - Android Keystore;
 - vodozemac 0.10.0 Olm behind a Kenato-owned Rust/JNI boundary;
-- app-private atomic session persistence;
+- app-private atomic identity/contact/session persistence;
 - Coroutines / Flow where asynchronous application integration requires them;
-- later WebRTC / Opus / WSS transport layers.
+- M4 messaging transport/history layers as the milestone is implemented;
+- later WebRTC / Opus media layers.
 
-Client architecture keeps UI separate from identity, contact, crypto/session, transport, and media state. UI must not own private crypto state or directly manipulate later WebRTC `PeerConnection` objects.
+Client architecture keeps UI separate from identity, contact, crypto/session, messaging transport/history, and media state. UI must not own private crypto state or directly manipulate later WebRTC `PeerConnection` objects.
 
 ```text
 UI
@@ -58,9 +59,9 @@ Domain
 Infrastructure
    |- Identity / contacts
    |- Crypto/session
-   |- Signaling              [later]
-   |- WebRtcTransport        [later]
-   |- AudioSession           [later]
+   |- Messaging transport/history    [M4]
+   |- WebRtcTransport                 [later]
+   |- AudioSession                    [later]
    |- Persistence
 ```
 
@@ -70,9 +71,13 @@ M3 retains that P-256 identity as the sole contact trust anchor and adds a persi
 
 Account/session snapshots use fresh per-mutation pickle keys whose wrapping keys are protected by Android Keystore. State advances are durably committed before ciphertext/plaintext escapes, and account OTK consumption plus inbound-session creation are one atomic M3 state update. Session state is app-private and backup/device-transfer excluded. The JNI boundary minimizes native plaintext lifetime by zeroizing temporary Java→Rust plaintext copies and decrypted/inbound plaintext buffers after response transfer.
 
+M4 does not weaken or replace that boundary. User text is serialized into a bounded M4 plaintext record and then encrypted by the established M3 session. The recipient validates the decrypted inner sender/recipient/message-id/expiry against the outer routing envelope before accepting the message.
+
+A later M4 Android slice must add a crash-safe durable delivery handoff between successful M3 decrypt/ratchet commit and network ACK. ACKing immediately after decrypt is forbidden because a process crash before local history persistence could otherwise lose the plaintext while a redelivered ciphertext is correctly rejected by the already-advanced ratchet as a replay.
+
 ## Server
 
-Current server through M3:
+Current server foundation:
 
 - Go single-service binary: `kenato-server`;
 - SQLite/WAL persistence;
@@ -87,15 +92,21 @@ Current server through M3:
 - loopback listener by default;
 - intended deployment behind a reviewed TLS-terminating reverse proxy.
 
-The server never receives private P-256, prekey, Olm account/session, or ratchet keys and does not decrypt the initial Olm frame. Later milestones add WebSocket routing, bounded mailbox behavior, and TURN credential issuance. No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
+The active M4 protocol requires WSS connections to authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication.
+
+The server never receives private P-256, prekey, Olm account/session, or ratchet keys and never decrypts ordinary message content. M4 server-visible state is limited to bounded routing identifiers, random message ids, expiry/timing, opaque ciphertext, authenticated connection state, and later bounded mailbox/delivery bookkeeping.
+
+No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
 
 ## Protocol
 
 The wire protocol is versioned independently of implementation language and serialized with Protocol Buffers.
 
-M2 and M3 canonical signature/control payloads are defined independently of protobuf serialization so unknown-field handling and implementation language cannot alter authenticated bytes. M3 bootstrap signatures bind the existing Kenato identity to the exact Olm account generation, account identity keys, publication revision, and OTK set. Reservation, submit, claim, and decrypted init-control checks bind the exact invite participants and session provenance.
+M2/M3/M4 canonical signature/control payloads are defined independently of protobuf serialization so unknown-field handling and implementation language cannot alter authenticated bytes. M3 bootstrap signatures bind the existing Kenato identity to exact Olm account/session provenance. M4 WSS authentication reuses the same P-256 trust root with domain-separated canonical framing.
 
-Transport-level metadata contains only fields required for routing and protocol evolution. Ordinary message type and user content remain inside authenticated ciphertext whenever the server does not require them.
+Transport-level metadata contains only fields required for routing and protocol evolution. Ordinary message text and semantic application content remain inside authenticated ciphertext whenever the server does not require them.
+
+M4 intentionally duplicates sender identity, recipient identity, message id, and expiry inside the encrypted application plaintext. The receiver must compare those authenticated inner values with the outer routing envelope after decrypt. A malicious relay can still drop, delay, reorder, duplicate, or retain traffic, but cannot silently relabel a correctly validated message without causing a mismatch or M3 authentication failure.
 
 ## Identity and contact discovery
 
@@ -108,10 +119,11 @@ Transport-level metadata contains only fields required for routing and protocol 
 - Contact identity keys are pinned locally and must not silently change.
 - M3 engine identity material is authenticated under that pin and unexpected account/key replacement fails closed.
 - M3 uses bounded Curve25519 one-time keys with no fallback-key downgrade.
+- M4 transport authentication proves possession of the same long-lived P-256 identity; routing ids are not credentials.
 
 ## E2EE session boundary
 
-M3 uses exact-pinned vodozemac 0.10.0 Olm/Double Ratchet through a minimal Rust/JNI bridge. It provides only the crypto/session primitive needed by later application layers:
+M3 uses exact-pinned vodozemac 0.10.0 Olm/Double Ratchet through a minimal Rust/JNI bridge. It provides the crypto/session primitive used by M4:
 
 - create/restore the local Olm account;
 - publish/replenish bounded authenticated public OTK state;
@@ -119,22 +131,27 @@ M3 uses exact-pinned vodozemac 0.10.0 Olm/Double Ratchet through a minimal Rust/
 - encrypt/decrypt bounded opaque application payloads;
 - persist/restart ratchet state without returning data before the advanced state is committed.
 
-The local protocol hard maximum is 50 tracked OTKs, 256 persisted contact sessions, 64 KiB application plaintext, and 96 KiB Olm frames. Vodozemac's own fixed skipped-message-key/message-gap bounds are not widened by Kenato.
-
-M3 does **not** provide conversation history, online/offline delivery, acknowledgements, WSS routing, or mailbox semantics. Those are M4.
+The M3 local hard maximum is 50 tracked OTKs, 256 persisted contact sessions, 64 KiB application plaintext, and 96 KiB Olm frames. Vodozemac's own fixed skipped-message-key/message-gap bounds are not widened by Kenato.
 
 ## Messaging
 
-The server acts as a bounded store-and-forward relay only in the planned M4 messaging architecture.
+The M4 protocol uses one authenticated WSS identity context per connection. The server sends a 32-byte random challenge valid for at most 30 seconds; the client signs the canonical `KENATO-MESSAGING-AUTH-V1` payload with its existing P-256 identity key. Only after successful verification may the connection send envelopes or ACK deliveries. A newly authenticated connection may replace an older connection for the same identity only after the new authentication succeeds.
 
-When a recipient is online, encrypted payloads should be forwarded directly without durable mailbox storage. When offline, opaque payloads may be stored with strict limits and expiry. Initial design target:
+Message protocol limits are:
 
-- TTL: 72 hours;
-- maximum encrypted envelope: 96 KiB;
-- maximum queued messages per recipient: 500;
-- delete immediately after acknowledged delivery.
+- message id: exactly 16 random non-zero bytes;
+- UTF-8 text: at most 16 KiB before M3 encryption;
+- M4 ciphertext: at most 64 KiB;
+- encoded envelope: at most 96 KiB;
+- encoded WSS frame: at most 100 KiB;
+- message TTL: at most 72 hours;
+- mailbox design bound: at most 500 retained messages per recipient.
 
-These values are later-milestone design targets, not current M3 implementation claims.
+When a recipient is online, the server should attempt direct opaque delivery without durable mailbox storage. If direct delivery cannot complete with an authenticated ACK under the bounded direct-attempt policy, the immutable envelope may enter bounded durable mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding a presence oracle.
+
+Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry and quota enforcement must be transaction-safe and fail closed.
+
+The exact mailbox row/byte/global quotas, direct-delivery timeout policy, WSS queue bounds, and server persistence implementation are completed in later M4 child issues; implementations may be stricter than the protocol maxima but may not silently exceed them.
 
 ## Calling
 
@@ -148,7 +165,7 @@ Planned media stack:
 - P2P when possible;
 - coturn relay when direct connectivity fails.
 
-TURN is a packet relay, not a media server. It must not require plaintext voice content.
+TURN is a packet relay, not a media server. It must not require plaintext voice content. M5 calling work is out of scope for M4.
 
 ## Security invariants
 
@@ -160,9 +177,12 @@ See the threat model for detail. Architecture changes must preserve:
 4. remote contact identity cannot silently change;
 5. engine account/session replacement cannot silently bypass the pinned Kenato identity;
 6. ratchet state cannot be exposed to callers before required durable state advancement;
-7. untrusted inputs and retained state are bounded;
-8. no public user enumeration;
-9. no plaintext user content or secrets in logs.
+7. M4 ACK cannot precede the required crash-safe local delivery handoff;
+8. WSS routing identity requires cryptographic authentication, not an identity id alone;
+9. authenticated inner M4 routing context must match the outer envelope;
+10. untrusted inputs, queues, timers and retained state are bounded;
+11. no public user enumeration or intentional online-presence oracle;
+12. no plaintext user content or secrets in logs.
 
 ## Deployment
 
@@ -170,6 +190,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete. M4 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0–M3 are complete and M4 is active under tracker #49. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
 
 Self-hosted federation is explicitly out of scope for 1.0.

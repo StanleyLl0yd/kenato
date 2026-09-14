@@ -4,17 +4,16 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 is complete and adds authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 is now active and begins with the authenticated minimal-messaging wire contract; durable mailbox, live WSS routing, Android history integration, and final M4 verification remain separate child slices.
 
-The current schemas live under:
+The current schemas live under `protocol/kenato/v1/`:
 
-`protocol/kenato/v1/`
-
-- `envelope.proto` — minimum server-routable encrypted envelope for later messaging;
+- `envelope.proto` — server-routable opaque encrypted envelope;
 - `contact.proto` — M2 public identity publication and invite/contact establishment;
-- `session.proto` — M3 public session-account material, one-time-key reservation, initial Olm pre-key frame exchange, and the local/native ciphertext envelope.
+- `session.proto` — M3 public session-account material, one-time-key reservation, initial Olm pre-key frame exchange, and the local/native ciphertext boundary;
+- `messaging.proto` — M4 authenticated WSS control frames, delivery ACKs, generic send acceptance/errors, and the plaintext structure that is encrypted by the established M3 session.
 
-M3 deliberately does **not** add WebSocket routing, an offline mailbox, acknowledgements, conversation history, or product messaging. Those remain M4, which has not started.
+M4 does not change the E2EE trust root. The existing long-lived Kenato P-256 identity authenticates connection ownership, while ordinary user text remains inside M3 authenticated ciphertext. The server may see only bounded routing metadata and opaque ciphertext.
 
 ## M2 invite URI
 
@@ -30,7 +29,7 @@ No display name, phone number, email address, server address, or other user-sear
 
 ## Canonical signature payloads
 
-All integer fields below are unsigned big-endian. Length fields used by M2 are 32-bit. Timestamps are represented as non-negative 64-bit Unix seconds after validation. Identity ids and invite tokens are exactly 32 raw bytes.
+All integer fields below are unsigned big-endian unless explicitly described otherwise. Length fields used by M2 are 32-bit. Timestamps are validated non-negative signed 64-bit Unix seconds when represented in protobuf/SQLite. Identity ids and invite tokens are exactly 32 raw bytes.
 
 ### M2 identity publication
 
@@ -169,9 +168,85 @@ The response contains the authenticated M2 redeemer identity/proof, the redeemer
 
 A successful M3 claim deletes the invite and temporary reservation/init state in the same transaction. A claim replay returns not-found. Expired invites remain unusable at the exact expiry boundary and normal retention cleanup deletes their cascaded M3 temporary state.
 
+## M4 minimal messaging
+
+M4 uses one authenticated WSS connection per local Kenato identity. The server must not infer authentication from an identity id supplied in a URL, query parameter, envelope, or first client frame. Instead each new connection begins unauthenticated with a random challenge.
+
+### M4 WSS identity authentication
+
+The server sends exactly 32 random challenge bytes plus a short expiry. Challenge state is scoped to that connection, single-use, and valid for at most 30 seconds. The client proves possession of its existing Kenato P-256 identity key by signing SHA-256 of this exact canonical payload:
+
+```text
+KENATO-MESSAGING-AUTH-V1\0
+|| identity_id[32]
+|| challenge[32]
+|| expires_at_unix_seconds:u64
+```
+
+The client returns `MessagingAuthResponse` carrying the same identity id, challenge and expiry plus the bounded DER ECDSA signature. The server resolves the already-published Kenato identity key for that exact identity id, validates the challenge/expiry and signature, consumes the challenge, and only then associates the socket with that identity.
+
+A malformed, stale, reused, wrong-identity, unknown-identity, or invalidly signed authentication attempt fails closed. Public failure behavior must not distinguish whether an identity exists. A newly authenticated connection may replace the previously authenticated connection for the same identity; connection replacement must occur only after the new authentication succeeds.
+
+### M4 encrypted message structure
+
+An application message uses a fresh cryptographically random 16-byte non-zero `message_id`. Before calling the M3 session encrypt primitive, the sender serializes `MessagingPlaintext`, which contains:
+
+- protocol version;
+- sender identity id;
+- recipient identity id;
+- 16-byte message id;
+- sender timestamp;
+- expiry timestamp;
+- UTF-8 text, at most 16 KiB.
+
+That serialized record is the M3 application plaintext. The resulting opaque authenticated Olm ciphertext is placed into `Envelope.ciphertext`. The routing envelope carries only fields the relay requires: protocol version, sender identity id, recipient identity id, message id, expiry, and ciphertext.
+
+The receiver must decrypt first and then compare **all** duplicated routing context from the authenticated inner plaintext against the outer envelope: sender identity id, recipient identity id, message id, and expiry. Any mismatch fails closed and must not be acknowledged. This prevents a relay that cannot forge M3 ciphertext from silently relabeling an envelope, changing deduplication identity, transplanting it to another recipient, or extending its lifetime.
+
+The sender timestamp is intentionally inner-only. It is conversation data and is not required for routing.
+
+### M4 send acceptance and privacy
+
+A client may submit an `Envelope` only after its WSS connection is authenticated. The outer `sender_identity_id` must equal the authenticated connection identity before any delivery/storage work is attempted.
+
+`MessagingSendAccepted` deliberately does not reveal whether the recipient was online or whether the server used direct or durable custody. Acceptance means that the server either received an authenticated recipient ACK for the direct-delivery attempt or accepted the exact bounded envelope into durable mailbox custody. Generic public errors must not become recipient-existence or presence oracles.
+
+The server never parses `MessagingPlaintext` and never needs the semantic user text or M3 session keys.
+
+### M4 delivery, retry and acknowledgement
+
+Delivery is at-least-once until the authenticated recipient acknowledges the exact `(sender_identity_id, message_id)` pair. Duplicate delivery is therefore expected. The client deduplicates by the authenticated inner routing context, not by unauthenticated UI text or arrival order.
+
+ACK is valid only on the authenticated recipient connection and deletes only that recipient's matching retained row. An ACK from another identity, for a different sender/message pair, or for a missing/expired retained row must not delete unrelated state.
+
+Direct online delivery should avoid durable storage when possible. If direct delivery is unavailable or fails to receive a valid ACK within the bounded direct-attempt policy, the server may move the same immutable envelope into bounded durable mailbox custody. It must not rewrite `message_id`, expiry, sender, recipient, or ciphertext while moving between custody modes.
+
+Reconnect/retry may therefore redeliver an envelope. Ordering is best-effort transport order only; correctness must not depend on global sequencing beyond M3's authenticated ratchet behavior and M4's explicit message identity.
+
+### M4 crash-safe client acknowledgement boundary
+
+M3 already durably commits advanced ratchet state before returning inbound plaintext. M4 adds another durability requirement: the Android client must not ACK merely because decrypt succeeded. If the process crashed after the ratchet commit but before conversation state recorded the plaintext/message id, a redelivered ciphertext may correctly be rejected by the ratchet as a replay and the user message could be lost.
+
+Therefore #53 must provide a crash-safe durable delivery handoff/journal tied to the completed M3 decrypt result. The exact authenticated message identity and plaintext must be durably recoverable before ACK. Conversation-history insertion is idempotent, and only a completed durable handoff/history commit permits the network ACK.
+
+### M4 expiry and bounds
+
+The first M4 contract fixes these hard maximums:
+
+- message id: exactly 16 bytes and not all zero;
+- UTF-8 text: at most 16 KiB;
+- M3 ciphertext carried by M4: at most 64 KiB;
+- encoded envelope: at most 96 KiB;
+- encoded WSS frame: at most 100 KiB;
+- message lifetime: positive and at most 72 hours from accepted send time;
+- authentication challenge: exactly 32 bytes, at most 30 seconds lifetime;
+- durable mailbox design bound: at most 500 retained messages per recipient.
+
+Exact mailbox byte/global quotas and direct-delivery timers are implemented and regression-tested in later M4 children; they may be stricter than the protocol maxima but may not silently exceed them.
+
 ## Server-visible state
 
-Through M3 the server may retain only the minimum state required by the implemented identity, invite, and asynchronous session-bootstrap contracts:
+Through M3 the server may retain the minimum state required by the implemented identity, invite, and asynchronous session-bootstrap contracts:
 
 - public Kenato identity/prekey material and monotonic M2 publication revision;
 - SHA-256 invite-token hashes and temporary invite relationship state from M2;
@@ -179,31 +254,44 @@ Through M3 the server may retain only the minimum state required by the implemen
 - current session-account generation/publication revision and bounded key-allocation state;
 - while a redeemed invite is awaiting creator claim, the reserved creator public one-time key and a bounded opaque Olm pre-key frame plus authenticated proof metadata.
 
-The server never receives a Kenato private identity key, an Olm private/session key, the session-init control record in plaintext, or plaintext user content. There is no public identity or session-key lookup/search endpoint; M3 bootstrap disclosure is reachable only through the authenticated live invite relationship.
+M4 additionally defines server-visible routing metadata for ordinary messages: sender identity id, recipient identity id, random message id, expiry, ciphertext length/content, connection timing, and bounded mailbox/delivery state. The server still never receives ordinary message plaintext or any private identity/session key. `MessagingPlaintext` exists only at the endpoints inside M3 authenticated encryption.
+
+There remains no public user-search endpoint. M4 routing authorization is based on an authenticated existing identity rather than making identity ids public credentials.
 
 ## Resource limits
 
-Current M3 protocol bounds include:
+Current protocol bounds include:
 
 - outer M3 session-bootstrap request/response: at most 128 KiB;
-- encoded public session bundle: at most 64 KiB;
-- opaque Olm initialization frame: at most 96 KiB;
+- encoded public M3 session bundle: at most 64 KiB;
+- opaque M3 initialization frame: at most 96 KiB;
 - Olm public keys: exactly 32 bytes;
 - published M3 one-time public keys: 1..50 per bundle;
-- account generations, publication revisions, and one-time-key ids must fit the positive signed 64-bit SQLite domain.
+- account generations, publication revisions, and one-time-key ids must fit the positive signed 64-bit SQLite domain;
+- M4 message id: exactly 16 bytes;
+- M4 application text: at most 16 KiB UTF-8;
+- M4 ciphertext: at most 64 KiB;
+- M4 envelope: at most 96 KiB;
+- M4 WSS frame: at most 100 KiB;
+- M4 message TTL: at most 72 hours;
+- M4 auth challenge lifetime: at most 30 seconds;
+- M4 durable mailbox design bound: 500 retained messages per recipient.
 
-Implementations additionally bound concurrency, operation deadlines, retained rows, local session state, and skipped-message-key behavior.
+Implementations additionally bound concurrency, operation deadlines, retained rows/bytes, local session/history state, retry timers, connection queues, and skipped-message-key behavior.
 
 ## Rules
 
 - Unknown protocol versions must fail safely.
 - Old wire data must never be silently reinterpreted with new semantics.
-- Protocol changes must consider compatibility, malformed input, replay, duplication, reordering, and persistence/restart behavior.
+- Protocol changes must consider compatibility, malformed input, replay, duplication, reordering, expiry and persistence/restart behavior.
 - Deterministic test vectors are required when Kenato-owned canonical cryptographic framing is introduced.
 - Private identity/prekey/session keys and plaintext user content never belong in server-visible protocol messages.
-- Identity/session public keys, signatures, repeated counts, request bodies, invite attempts, retained state, and expensive work are explicitly bounded by implementations.
+- Identity/session public keys, signatures, repeated counts, request bodies, WSS frames, envelopes, queues, retained state, retry timers and expensive work are explicitly bounded by implementations.
 - Contact identity is pinned locally after verification and must not change silently.
 - M3 session engine keys are subordinate to and authenticated by the pinned Kenato P-256 identity; they are never an independent trust root.
-- M3 stops before WebSocket routing, offline mailbox storage, acknowledgements/retries, local conversation history, or calling behavior.
+- M4 WSS authentication proves possession of that same P-256 identity; an identity id by itself is never a credential.
+- Outer M4 routing context must match the authenticated inner plaintext after M3 decrypt before local delivery or ACK.
+- ACK is sent only after the client has a crash-safe durable delivery handoff/history commit.
+- M4 stops before calling/WebRTC behavior; M5 must not be pulled into messaging transport work.
 
-Deterministic M2 framing vectors live in `docs/security/M2_TEST_VECTORS.md`. M3 framing vectors live in `docs/security/M3_TEST_VECTORS.md`.
+Deterministic M2 framing vectors live in `docs/security/M2_TEST_VECTORS.md`. M3 framing vectors live in `docs/security/M3_TEST_VECTORS.md`. M4 authentication framing vectors live in `docs/security/M4_TEST_VECTORS.md`.
