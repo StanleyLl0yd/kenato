@@ -73,7 +73,7 @@ Status: **Active** (2026-09-14; tracker #49).
 - local conversation history;
 - server deletion after acknowledged delivery.
 
-Implementation slices: #50 protocol/auth/delivery contract; #51 bounded mailbox persistence; #52 authenticated WSS/direct routing; #53 Android transport/history; #54 final end-to-end/security verification. M5 remains out of scope until M4 is complete.
+Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **active**; #53 Android transport/history — pending; #54 final end-to-end/security verification — pending. M5 remains out of scope until M4 is complete.
 
 ## M5 — Voice Core
 
