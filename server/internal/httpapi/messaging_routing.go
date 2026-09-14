@@ -199,8 +199,23 @@ func (s *MessagingWebSocketServer) finishPending(pending *directPending, result 
 
 func (s *MessagingWebSocketServer) storeMailbox(envelope messaging.Envelope) error {
 	ctx, cancel := context.WithTimeout(context.Background(), messagingMailboxOperationTimeout)
-	defer cancel()
-	return s.mailbox.Store(ctx, envelope.SenderIdentityID, envelope)
+	err := s.mailbox.Store(ctx, envelope.SenderIdentityID, envelope)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	// The recipient may have authenticated or replaced its connection while the
+	// durable fallback was being committed. Wake whichever peer currently owns
+	// that identity so a row committed after its initial drain is not stranded
+	// until an unrelated write or reconnect.
+	s.mu.Lock()
+	recipientPeer := s.peers[string(envelope.RecipientIdentityID)]
+	s.mu.Unlock()
+	if recipientPeer != nil {
+		recipientPeer.signalDrain()
+	}
+	return nil
 }
 
 func (s *MessagingWebSocketServer) runMailboxDrain(peer *messagingPeer) {
@@ -285,7 +300,7 @@ func (p *directPending) markAcked() {
 
 func (p *directPending) isAcked() bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	de p.mu.Unlock()
 	return p.acked
 }
 
