@@ -115,20 +115,24 @@ running:
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
-	defer cancel()
-
 	// Stop upgraded WSS work first so its bounded send/drain workers finish
 	// before the mailbox/contact stores are closed by the deferred cleanup.
-	if err := messagingWS.Shutdown(ctx); err != nil {
+	// Give the WebSocket and HTTP shutdown phases independent bounded budgets so
+	// a slow WSS close cannot consume the HTTP server's entire graceful deadline.
+	messagingShutdownCtx, messagingShutdownCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	if err := messagingWS.Shutdown(messagingShutdownCtx); err != nil {
 		logger.Printf("messaging shutdown failed")
 	}
-	if err := server.Shutdown(ctx); err != nil {
+	messagingShutdownCancel()
+
+	httpShutdownCtx, httpShutdownCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	if err := server.Shutdown(httpShutdownCtx); err != nil {
 		logger.Printf("graceful shutdown failed")
 		if closeErr := server.Close(); closeErr != nil {
 			logger.Printf("forced shutdown failed")
 		}
 	}
+	httpShutdownCancel()
 }
 
 func listenAddress() string {
