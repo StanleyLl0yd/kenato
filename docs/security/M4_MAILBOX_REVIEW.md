@@ -29,7 +29,7 @@ A mailbox write is accepted by the service only when:
 - the recipient exists according to the internal contact identity directory; and
 - the mailbox itself produces the canonical protobuf envelope bytes that it persists.
 
-The storage interface rechecks that a `MailboxRecord` contains exactly the canonical encoding of its structured envelope. Callers therefore cannot supply one routing envelope for validation and unrelated raw bytes for later delivery. On read, the mailbox decodes the retained envelope, re-encodes it canonically, and compares sender, recipient, message id, expiry and ciphertext length against the indexed row metadata before returning any delivery. Unknown/noncanonical or mismatched retained bytes fail closed as corrupt state.
+The storage interface rechecks that a `MailboxRecord` contains exactly the canonical encoding of its structured envelope. Callers therefore cannot supply one routing envelope for validation and unrelated raw bytes for later delivery. On read, the mailbox decodes the retained envelope, re-encodes it canonically, and compares sender, recipient, message id, expiry and ciphertext length against the indexed row metadata before returning any delivery. It also revalidates persisted `accepted_at` and the maximum 72-hour acceptance-to-expiry window, rather than relying only on SQLite `CHECK` constraints. Unknown/noncanonical or mismatched retained bytes/metadata fail closed as corrupt state.
 
 Unknown-recipient handling returns the same generic mailbox rejection class used for other non-capacity send rejection. #52 must continue to map these internal results to the coarse public M4 error contract and must not expose the internal identity lookup as an endpoint.
 
@@ -59,7 +59,7 @@ The Android-side crash-safe rule from ADR 0011 remains mandatory: #53 must not s
 
 A retained row is expired exactly when `now >= expires_at`. Expired rows are excluded from delivery immediately at that boundary even if physical cleanup has not yet run.
 
-`OpenSQLiteMailboxStore` performs one bounded cleanup batch at startup. The server also performs bounded mailbox cleanup on the existing hourly retention tick. Each storage operation may additionally remove one bounded expired batch before a new insert so stale physical rows cannot accumulate indefinitely while writes continue.
+`OpenSQLiteMailboxStore` performs one bounded cleanup batch at startup. The server also performs bounded mailbox cleanup on the existing hourly retention tick. Contact/invite cleanup and mailbox cleanup use separate bounded timeout contexts so failure or timeout in one retention domain does not cancel the other. Each storage operation may additionally remove one bounded expired batch before a new insert so stale physical rows cannot accumulate indefinitely while writes continue.
 
 The physical global count/byte quotas include rows awaiting cleanup. This keeps disk use bounded even if cleanup is delayed or repeatedly interrupted.
 
@@ -75,13 +75,17 @@ The mailbox database requires:
 - field-length/expiry/ciphertext/envelope checks in the schema;
 - indexes for recipient delivery, sender quota accounting, and expiry cleanup.
 
-Read paths revalidate stored routing ids, message ids, expiry, ciphertext-size metadata, the decoded encrypted envelope, and its canonical encoding. Malformed persisted state fails closed with `ErrMailboxCorrupt` rather than being delivered.
+Read paths revalidate stored routing ids, message ids, acceptance/expiry metadata, ciphertext-size metadata and envelope bounds. Malformed persisted state fails closed with `ErrMailboxCorrupt` rather than being delivered.
 
 ## Logging and privacy
 
 No mailbox method logs plaintext, ciphertext, complete envelope bytes, message ids, sender/recipient ids, or quota usage. The server's maintenance loop emits only generic cleanup-failure text.
 
 A compromised server still learns sender/recipient routing ids, timing, envelope size and mailbox occupancy and can retain or suppress ciphertext outside policy. M3 encryption plus the #50 authenticated inner/outer context binding prevents the mailbox from learning plaintext or silently changing the authenticated sender/recipient/message-id/expiry seen by a correct recipient.
+
+## Verification record
+
+The #51 candidate was reviewed with explicit tests for restart durability, exact retry/conflict handling, expiry boundaries, bounded cleanup, quotas under concurrency, malformed/noncanonical persisted state, SQLite path/mode/schema hardening, canonical envelope binding, persisted acceptance-window corruption, and ACK scoping. Repository policy verification pins the storage/resource/canonicalization and independent-retention-timeout invariants.
 
 ## Scope boundary
 
