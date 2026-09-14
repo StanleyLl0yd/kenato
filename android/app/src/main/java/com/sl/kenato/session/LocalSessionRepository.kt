@@ -544,6 +544,7 @@ internal class LocalSessionRepository(
             buildHandoff(context.copyForCaller(), plaintextForBuilder).copyForCaller()
         } catch (error: Throwable) {
             result.snapshot.pickleKey.zeroize()
+            result.plaintext.zeroize()
             throw error
         } finally {
             plaintextForBuilder.zeroize()
@@ -588,7 +589,7 @@ internal class LocalSessionRepository(
 
     @Synchronized
     fun pendingMessageHandoffs(ownerIdentityId: ByteArray): List<SessionMessageHandoff> =
-        requireState(ownerIdentityId).messageHandoffs.map(SessionMessageHandoff::copyForCaller)
+        requireState(ownerIdentityId).messageHandoffs.map { it.copyForCaller() }
 
     @Synchronized
     fun completeMessageHandoff(
@@ -951,7 +952,7 @@ internal class LocalSessionRepository(
                 ),
             )
         },
-        messageHandoffs = messageHandoffs.map(SessionMessageHandoff::copyForCaller),
+        messageHandoffs = messageHandoffs.map { it.copyForCaller() },
     )
 
     private fun SessionMessageCryptoContext.copyForCaller(): SessionMessageCryptoContext = copy(
