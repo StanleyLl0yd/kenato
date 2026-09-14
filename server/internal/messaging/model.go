@@ -22,6 +22,15 @@ var (
 	ErrExpiredMessaging = errors.New("messaging value expired")
 )
 
+type MessagingErrorCode uint32
+
+const (
+	MessagingErrorMalformed MessagingErrorCode = iota + 1
+	MessagingErrorAuthenticationFailed
+	MessagingErrorSendRejected
+	MessagingErrorRetryLater
+)
+
 type Envelope struct {
 	ProtocolVersion      uint32
 	RecipientIdentityID  []byte
@@ -65,4 +74,26 @@ type SendAccepted struct {
 	ProtocolVersion     uint32
 	RecipientIdentityID []byte
 	MessageID           []byte
+}
+
+type MessagingError struct {
+	ProtocolVersion uint32
+	Code            MessagingErrorCode
+	MessageID       []byte
+}
+
+type ClientFrame struct {
+	ProtocolVersion uint32
+	AuthResponse    *AuthResponse
+	Send            *Envelope
+	Ack             *DeliveryAck
+}
+
+type ServerFrame struct {
+	ProtocolVersion uint32
+	AuthChallenge   *AuthChallenge
+	Authenticated   bool
+	Delivery        *Envelope
+	SendAccepted    *SendAccepted
+	Error           *MessagingError
 }

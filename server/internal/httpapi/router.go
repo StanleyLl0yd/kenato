@@ -15,14 +15,18 @@ type healthResponse struct {
 }
 
 func NewHandler(service contactService) http.Handler {
-	return newHandler(service, nil)
+	return newHandler(service, nil, nil)
 }
 
 func NewHandlerWithSession(service contactService, sessions sessionService) http.Handler {
-	return newHandler(service, sessions)
+	return newHandler(service, sessions, nil)
 }
 
-func newHandler(service contactService, sessions sessionService) http.Handler {
+func NewHandlerWithMessaging(service contactService, sessions sessionService, messagingWS *MessagingWebSocketServer) http.Handler {
+	return newHandler(service, sessions, messagingWS)
+}
+
+func newHandler(service contactService, sessions sessionService, messagingWS *MessagingWebSocketServer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
 	gate := newCryptoGate(time.Now)
@@ -33,6 +37,9 @@ func newHandler(service contactService, sessions sessionService) http.Handler {
 	}
 	if sessions != nil {
 		newSessionAPI(sessions, gate).register(mux)
+	}
+	if messagingWS != nil {
+		messagingWS.register(mux)
 	}
 	return withSecurityHeaders(withRequestLimit(mux))
 }

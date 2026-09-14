@@ -3,6 +3,7 @@ module github.com/StanleyLl0yd/kenato/server
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.58.0
 )

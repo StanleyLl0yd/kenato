@@ -61,9 +61,11 @@ func main() {
 
 	contactService := contact.NewService(store)
 	sessionService := contact.NewSessionService(store, store)
+	mailboxService := messaging.NewMailboxService(mailboxStore, store)
+	messagingWS := httpapi.NewMessagingWebSocketServer(contactService, mailboxService)
 	server := &http.Server{
 		Addr:              listenAddress(),
-		Handler:           httpapi.NewHandlerWithSession(contactService, sessionService),
+		Handler:           httpapi.NewHandlerWithMessaging(contactService, sessionService, messagingWS),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -113,15 +115,24 @@ running:
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
-	defer cancel()
+	// Stop upgraded WSS work first so its bounded send/drain workers finish
+	// before the mailbox/contact stores are closed by the deferred cleanup.
+	// Give the WebSocket and HTTP shutdown phases independent bounded budgets so
+	// a slow WSS close cannot consume the HTTP server's entire graceful deadline.
+	messagingShutdownCtx, messagingShutdownCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	if err := messagingWS.Shutdown(messagingShutdownCtx); err != nil {
+		logger.Printf("messaging shutdown failed")
+	}
+	messagingShutdownCancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	httpShutdownCtx, httpShutdownCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	if err := server.Shutdown(httpShutdownCtx); err != nil {
 		logger.Printf("graceful shutdown failed")
 		if closeErr := server.Close(); closeErr != nil {
 			logger.Printf("forced shutdown failed")
 		}
 	}
+	httpShutdownCancel()
 }
 
 func listenAddress() string {
