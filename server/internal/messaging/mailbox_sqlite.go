@@ -136,57 +136,52 @@ func prepareMailboxDatabaseFile(path string) error {
 		return file.Close()
 	}
 	if !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("create mailbox sqlite file: %w", err)
+		return fmt.Errorf("create mailbox file: %w", err)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("inspect mailbox sqlite file: %w", err)
+		return fmt.Errorf("inspect mailbox file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("mailbox sqlite path must reference a regular file")
+		return errors.New("mailbox path must be a regular file")
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("restrict mailbox sqlite file permissions: %w", err)
+	if info.Mode().Perm() != 0o600 {
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("set mailbox file mode: %w", err)
+		}
 	}
 	return nil
 }
 
 func mailboxSQLiteDSN(path string) string {
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	query := u.Query()
+	query := url.Values{}
 	query.Set("_busy_timeout", "5000")
 	query.Set("_journal_mode", "WAL")
 	query.Set("_synchronous", "FULL")
 	query.Set("_defensive", "1")
 	query.Set("_dqs", "0")
-	u.RawQuery = query.Encode()
-	return u.String()
+	return "file:" + filepath.ToSlash(path) + "?" + query.Encode()
 }
 
 func (s *SQLiteMailboxStore) initialize(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := s.db.PingContext(ctx); err != nil {
-		return fmt.Errorf("ping mailbox sqlite: %w", err)
-	}
 	var version int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("read mailbox sqlite schema version: %w", err)
+		return fmt.Errorf("read mailbox schema version: %w", err)
 	}
-	if version < 0 || version > mailboxSQLiteSchemaVersion {
-		return fmt.Errorf("unsupported mailbox sqlite schema version %d", version)
+	if version > mailboxSQLiteSchemaVersion {
+		return fmt.Errorf("mailbox schema version %d is newer than supported %d", version, mailboxSQLiteSchemaVersion)
 	}
 	if _, err := s.db.ExecContext(ctx, mailboxSQLiteSchema); err != nil {
-		return fmt.Errorf("initialize mailbox sqlite schema: %w", err)
+		return fmt.Errorf("initialize mailbox schema: %w", err)
 	}
 	if version < mailboxSQLiteSchemaVersion {
 		if _, err := s.db.ExecContext(ctx, setMailboxSchemaVersion); err != nil {
-			return fmt.Errorf("set mailbox sqlite schema version: %w", err)
+			return fmt.Errorf("set mailbox schema version: %w", err)
 		}
 	}
 	var journalMode string
 	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode); err != nil {
-		return fmt.Errorf("read mailbox sqlite journal mode: %w", err)
+		return fmt.Errorf("read mailbox journal mode: %w", err)
 	}
 	if !strings.EqualFold(journalMode, "wal") {
 		return fmt.Errorf("mailbox sqlite WAL mode is required, got %q", journalMode)
@@ -278,7 +273,7 @@ func (s *SQLiteMailboxStore) ListMailbox(ctx context.Context, recipientIdentityI
 		return nil, ErrMailboxRejected
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT sender_identity_id, message_id, expires_at, ciphertext_size, encoded_envelope
+SELECT sender_identity_id, message_id, accepted_at, expires_at, ciphertext_size, encoded_envelope
 FROM mailbox_messages
 WHERE recipient_identity_id = ? AND expires_at > ?
 ORDER BY mailbox_id
@@ -291,12 +286,15 @@ LIMIT ?`, recipientIdentityID, nowUnixSeconds, limit)
 	out := make([]MailboxDelivery, 0, limit)
 	for rows.Next() {
 		var sender, messageID, encoded []byte
-		var expiresAt int64
+		var acceptedAt, expiresAt int64
 		var ciphertextSize int
-		if err := rows.Scan(&sender, &messageID, &expiresAt, &ciphertextSize, &encoded); err != nil {
+		if err := rows.Scan(&sender, &messageID, &acceptedAt, &expiresAt, &ciphertextSize, &encoded); err != nil {
 			return nil, fmt.Errorf("scan mailbox message: %w", err)
 		}
-		if len(sender) != IdentityIDBytes || bytes.Equal(sender, recipientIdentityID) || !validMessageID(messageID) || expiresAt <= nowUnixSeconds || ciphertextSize <= 0 || ciphertextSize > MaxCiphertextBytes || len(encoded) == 0 || len(encoded) > MaxEnvelopeBytes {
+		if len(sender) != IdentityIDBytes || bytes.Equal(sender, recipientIdentityID) || !validMessageID(messageID) ||
+			acceptedAt < 0 || expiresAt <= acceptedAt || expiresAt-acceptedAt > MaxMessageTTLSeconds ||
+			expiresAt <= nowUnixSeconds || ciphertextSize <= 0 || ciphertextSize > MaxCiphertextBytes ||
+			len(encoded) == 0 || len(encoded) > MaxEnvelopeBytes {
 			return nil, ErrMailboxCorrupt
 		}
 		decoded, err := DecodeEnvelope(encoded)
