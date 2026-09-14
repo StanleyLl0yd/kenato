@@ -24,6 +24,14 @@ jobs:
           fail-on-severity: high
           vulnerability-check: true
           license-check: true
+          # v5 requires an explicit allow/deny policy for license-check to block.
+          # Keep strong copyleft out until the owner makes a reviewed licensing decision.
+          deny-licenses: >-
+            AGPL-1.0, AGPL-1.0-only, AGPL-1.0-or-later,
+            AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later,
+            GPL-1.0, GPL-1.0-only, GPL-1.0-or-later,
+            GPL-2.0, GPL-2.0-only, GPL-2.0-or-later,
+            GPL-3.0, GPL-3.0-only, GPL-3.0-or-later
           comment-summary-in-pr: never
           retry-on-snapshot-warnings: true
           retry-on-snapshot-warnings-timeout: 120
