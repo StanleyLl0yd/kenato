@@ -13,13 +13,15 @@ import (
 
 	"github.com/StanleyLl0yd/kenato/server/internal/contact"
 	"github.com/StanleyLl0yd/kenato/server/internal/httpapi"
+	"github.com/StanleyLl0yd/kenato/server/internal/messaging"
 )
 
 const (
-	defaultListenAddress  = "127.0.0.1:8080"
-	defaultDatabasePath   = "kenato.db"
-	inviteCleanupInterval = time.Hour
-	maintenanceTimeout    = 10 * time.Second
+	defaultListenAddress       = "127.0.0.1:8080"
+	defaultDatabasePath        = "kenato.db"
+	defaultMailboxDatabasePath = "kenato-mailbox.db"
+	retentionCleanupInterval   = time.Hour
+	maintenanceTimeout         = 10 * time.Second
 )
 
 func main() {
@@ -45,6 +47,18 @@ func main() {
 		}
 	}()
 
+	mailboxCtx, mailboxCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	mailboxStore, err := messaging.OpenSQLiteMailboxStore(mailboxCtx, mailboxDatabasePath())
+	mailboxCancel()
+	if err != nil {
+		logger.Fatalf("mailbox store initialization failed")
+	}
+	defer func() {
+		if err := mailboxStore.Close(); err != nil {
+			logger.Printf("mailbox store close failed")
+		}
+	}()
+
 	contactService := contact.NewService(store)
 	sessionService := contact.NewSessionService(store, store)
 	server := &http.Server{
@@ -67,18 +81,26 @@ func main() {
 	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
 
-	cleanupTicker := time.NewTicker(inviteCleanupInterval)
+	cleanupTicker := time.NewTicker(retentionCleanupInterval)
 	defer cleanupTicker.Stop()
 
 running:
 	for {
 		select {
 		case now := <-cleanupTicker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
-			_, cleanupErr := store.PruneExpiredInvites(ctx, now.UTC())
-			cancel()
-			if cleanupErr != nil {
+			inviteCleanupCtx, inviteCleanupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+			_, inviteCleanupErr := store.PruneExpiredInvites(inviteCleanupCtx, now.UTC())
+			inviteCleanupCancel()
+
+			mailboxCleanupCtx, mailboxCleanupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+			_, mailboxCleanupErr := mailboxStore.PruneExpired(mailboxCleanupCtx, now.UTC())
+			mailboxCleanupCancel()
+
+			if inviteCleanupErr != nil {
 				logger.Printf("contact retention cleanup failed")
+			}
+			if mailboxCleanupErr != nil {
+				logger.Printf("mailbox retention cleanup failed")
 			}
 		case sig := <-signalCh:
 			logger.Printf("shutdown requested: %s", sig)
@@ -114,4 +136,11 @@ func databasePath() string {
 		return path
 	}
 	return defaultDatabasePath
+}
+
+func mailboxDatabasePath() string {
+	if path := strings.TrimSpace(os.Getenv("KENATO_MAILBOX_DB_PATH")); path != "" {
+		return path
+	}
+	return defaultMailboxDatabasePath
 }

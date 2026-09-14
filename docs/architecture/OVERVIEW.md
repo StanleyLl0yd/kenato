@@ -21,11 +21,12 @@ kenato-server (Go)
   |- identity public material / prekeys
   |- invite lifecycle
   |- M3 public session bootstrap / temporary init state
-  |- authenticated WSS routing            [M4]
-  |- bounded offline mailbox              [M4]
+  |- authenticated WSS routing            [M4 #52]
+  |- bounded offline mailbox              [M4 #51]
   |- temporary TURN credentials           [later]
   |
-  +-- SQLite
+  +-- SQLite contact/session state
+  +-- SQLite mailbox state
 
 Voice media:
 Android <---- WebRTC / ICE ----> Android
@@ -33,7 +34,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-M0–M3 are complete. M4 is active. The first M4 slice defines the authenticated messaging wire contract and shared protocol bounds; durable mailbox persistence, live WSS routing, Android local history, and final M4 verification are separate child slices. TURN credentials and calling remain later milestones.
+M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds. #51 implements the bounded durable mailbox; live WSS routing, Android local history, and final M4 verification remain #52–#54. TURN credentials and calling remain later milestones.
 
 ## Client
 
@@ -87,14 +88,17 @@ Current server foundation:
 - authenticated M3 public Olm-account publication and bounded OTK allocation;
 - temporary invite-bound M3 reservation/init state only;
 - destructive creator claim with transactional cleanup of temporary relationship/bootstrap state;
-- periodic expired-invite retention cleanup plus cleanup at process start;
-- no public identity/session lookup or search endpoint;
+- a separate bounded M4 mailbox SQLite/WAL database for opaque encrypted envelopes;
+- periodic expired-invite and mailbox retention cleanup plus bounded cleanup at process start;
+- no public identity/session/mailbox lookup or search endpoint;
 - loopback listener by default;
 - intended deployment behind a reviewed TLS-terminating reverse proxy.
 
-The active M4 protocol requires WSS connections to authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication.
+The M4 protocol requires WSS connections to authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication. The WSS listener/connection hub itself remains #52.
 
-The server never receives private P-256, prekey, Olm account/session, or ratchet keys and never decrypts ordinary message content. M4 server-visible state is limited to bounded routing identifiers, random message ids, expiry/timing, opaque ciphertext, authenticated connection state, and later bounded mailbox/delivery bookkeeping.
+The server never receives private P-256, prekey, Olm account/session, or ratchet keys and never decrypts ordinary message content. The #51 mailbox retains only bounded routing identifiers, random message ids, acceptance/expiry timing, ciphertext-size metadata and the canonical opaque encrypted envelope. Recipient existence is resolved only through an internal contact-store interface; no lookup endpoint is added.
+
+The mailbox has an independent schema/version lifecycle from the M2/M3 contact/bootstrap database. This prevents ACK/expiry retention behavior from coupling to destructive invite/bootstrap cleanup while preserving the same local durability posture: regular mode-0600 database files, WAL, synchronous `FULL`, bounded transactions, and fail-closed schema versions.
 
 No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
 
@@ -107,6 +111,8 @@ M2/M3/M4 canonical signature/control payloads are defined independently of proto
 Transport-level metadata contains only fields required for routing and protocol evolution. Ordinary message text and semantic application content remain inside authenticated ciphertext whenever the server does not require them.
 
 M4 intentionally duplicates sender identity, recipient identity, message id, and expiry inside the encrypted application plaintext. The receiver must compare those authenticated inner values with the outer routing envelope after decrypt. A malicious relay can still drop, delay, reorder, duplicate, or retain traffic, but cannot silently relabel a correctly validated message without causing a mismatch or M3 authentication failure.
+
+The mailbox does not trust caller-supplied raw protobuf bytes separately from validated routing fields. It canonically encodes the validated envelope before persistence. Readback decodes and canonically re-encodes the retained envelope and cross-checks its sender, recipient, message id, expiry and ciphertext length against indexed row metadata before a delivery is returned.
 
 ## Identity and contact discovery
 
@@ -144,14 +150,23 @@ Message protocol limits are:
 - M4 ciphertext: at most 64 KiB;
 - encoded envelope: at most 96 KiB;
 - encoded WSS frame: at most 100 KiB;
-- message TTL: at most 72 hours;
-- mailbox design bound: at most 500 retained messages per recipient.
+- message TTL: at most 72 hours.
 
-When a recipient is online, the server should attempt direct opaque delivery without durable mailbox storage. If direct delivery cannot complete with an authenticated ACK under the bounded direct-attempt policy, the immutable envelope may enter bounded durable mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding a presence oracle.
+The #51 durable mailbox additionally enforces:
 
-Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry and quota enforcement must be transaction-safe and fail closed.
+- at most 500 retained messages / 16 MiB per recipient;
+- at most 1,000 retained messages / 32 MiB per sender;
+- at most 100,000 retained messages / 256 MiB globally;
+- delivery pages of at most 50 envelopes;
+- physical expiry cleanup batches of at most 1,000 rows.
 
-The exact mailbox row/byte/global quotas, direct-delivery timeout policy, WSS queue bounds, and server persistence implementation are completed in later M4 child issues; implementations may be stricter than the protocol maxima but may not silently exceed them.
+Count/byte quotas are checked transactionally by the Go store and backed by a SQLite `BEFORE INSERT` trigger. The global physical quotas include expired rows awaiting deletion, so delayed cleanup cannot make disk use unbounded.
+
+When a recipient is online, #52 will attempt direct opaque delivery without durable mailbox storage. If direct delivery cannot complete with an authenticated ACK under the bounded direct-attempt policy, the immutable canonical envelope may enter mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding an explicit presence oracle.
+
+Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. Exact mailbox retry is idempotent only for the same sender/message id and identical retained routing/envelope bytes; conflicting reuse fails closed. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry is enforced at `now >= expires_at` even before physical cleanup.
+
+The remaining M4 server work is #52: authenticated WSS connection management, direct delivery, queue/backpressure/timeout limits and mapping internal mailbox/auth failures to the coarse public non-enumerating error contract.
 
 ## Calling
 
@@ -180,9 +195,10 @@ See the threat model for detail. Architecture changes must preserve:
 7. M4 ACK cannot precede the required crash-safe local delivery handoff;
 8. WSS routing identity requires cryptographic authentication, not an identity id alone;
 9. authenticated inner M4 routing context must match the outer envelope;
-10. untrusted inputs, queues, timers and retained state are bounded;
-11. no public user enumeration or intentional online-presence oracle;
-12. no plaintext user content or secrets in logs.
+10. retained mailbox bytes must match their indexed routing metadata and canonical envelope representation;
+11. untrusted inputs, queues, timers and retained state are bounded;
+12. no public user enumeration or intentional online-presence oracle;
+13. no plaintext user content or secrets in logs.
 
 ## Deployment
 
@@ -190,6 +206,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete and M4 is active under tracker #49. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
+M0–M3 are complete and M4 is active under tracker #49. #50 is complete; #51 implements durable mailbox custody; #52–#54 remain. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
 
 Self-hosted federation is explicitly out of scope for 1.0.
