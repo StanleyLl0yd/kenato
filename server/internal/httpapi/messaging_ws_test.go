@@ -182,14 +182,28 @@ func TestMessagingWSSFailedReplacementDoesNotEvictAuthenticatedPeer(t *testing.T
 	identityID := testIdentity(0x66)
 	first := dialAuthenticatedPeer(t, httpServer.URL, identityID, []byte("ok"))
 	defer first.CloseNow()
+
+	wsServer.mu.Lock()
+	originalPeer := wsServer.peers[string(identityID)]
+	wsServer.mu.Unlock()
+	if originalPeer == nil {
+		t.Fatal("authenticated peer was not registered")
+	}
+
 	failed := dialPeerExpectAuthFailure(t, httpServer.URL, identityID)
 	defer failed.CloseNow()
 
 	wsServer.mu.Lock()
 	peer := wsServer.peers[string(identityID)]
 	wsServer.mu.Unlock()
-	if peer == nil || peer.conn != first {
-		t.Fatal("failed authentication evicted the existing authenticated peer")
+	if peer != originalPeer {
+		t.Fatal("failed authentication replaced the existing authenticated peer")
+	}
+
+	pingCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := first.Ping(pingCtx); err != nil {
+		t.Fatalf("existing authenticated peer was disconnected: %v", err)
 	}
 }
 
