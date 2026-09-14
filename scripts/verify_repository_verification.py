@@ -141,6 +141,8 @@ for fragment in (
     '"ndk;28.2.13676358"',
     "cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force",
     'ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh',
+    "--no-build-cache",
+    "--rerun-tasks",
     ":android:app:assembleDebug",
 ):
     if fragment not in codeql:
@@ -155,7 +157,7 @@ if jni_bridge:
     for java_array in ("initial_plaintext", "plaintext"):
         pattern = (
             rf"SecretBytes::new\(read_bytes\(\s*env,\s*&{java_array},\s*"
-            rf"MAX_PLAINTEXT_BYTES,\s*true,\s*\)\?\)"
+            rf"MAX_PLAINTEXT_BYTES,\s*true,?\s*\)\?\)"
         )
         if not re.search(pattern, jni_bridge):
             errors.append(f"session-jni: Java {java_array} copies must be zeroized after native use")
