@@ -76,7 +76,6 @@ END;
 type SQLiteMailboxStore struct {
 	db      *sql.DB
 	writeMu sync.Mutex
-	clock   func() time.Time
 }
 
 func OpenSQLiteMailboxStore(ctx context.Context, path string) (*SQLiteMailboxStore, error) {
@@ -112,7 +111,7 @@ func openSQLiteMailboxStoreWithClock(ctx context.Context, path string, clock fun
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(0)
 
-	store := &SQLiteMailboxStore{db: db, clock: clock}
+	store := &SQLiteMailboxStore{db: db}
 	if err := store.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -300,6 +299,22 @@ LIMIT ?`, recipientIdentityID, nowUnixSeconds, limit)
 		if len(sender) != IdentityIDBytes || bytes.Equal(sender, recipientIdentityID) || !validMessageID(messageID) || expiresAt <= nowUnixSeconds || ciphertextSize <= 0 || ciphertextSize > MaxCiphertextBytes || len(encoded) == 0 || len(encoded) > MaxEnvelopeBytes {
 			return nil, ErrMailboxCorrupt
 		}
+		decoded, err := DecodeEnvelope(encoded)
+		if err != nil {
+			return nil, ErrMailboxCorrupt
+		}
+		canonical, err := EncodeEnvelope(decoded)
+		if err != nil || !bytes.Equal(canonical, encoded) ||
+			!bytes.Equal(decoded.SenderIdentityID, sender) ||
+			!bytes.Equal(decoded.RecipientIdentityID, recipientIdentityID) ||
+			!bytes.Equal(decoded.MessageID, messageID) ||
+			decoded.ExpiresAtUnixSeconds != expiresAt ||
+			len(decoded.Ciphertext) != ciphertextSize {
+			return nil, ErrMailboxCorrupt
+		}
+		if err := ValidateEnvelopeAt(decoded, nowUnixSeconds); err != nil {
+			return nil, ErrMailboxCorrupt
+		}
 		out = append(out, MailboxDelivery{
 			SenderIdentityID:     bytes.Clone(sender),
 			RecipientIdentityID:  bytes.Clone(recipientIdentityID),
@@ -357,29 +372,15 @@ func (s *SQLiteMailboxStore) PruneExpired(ctx context.Context, now time.Time) (i
 	return removed, nil
 }
 
-func (s *SQLiteMailboxStore) RunCleanupLoop(ctx context.Context, interval time.Duration) error {
-	if s == nil || s.db == nil || s.clock == nil || interval <= 0 {
-		return errors.New("mailbox cleanup loop configuration is invalid")
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if _, err := s.PruneExpired(ctx, s.clock().UTC()); err != nil {
-				return err
-			}
-		}
-	}
-}
-
 func validateMailboxRecord(record MailboxRecord) error {
 	if record.AcceptedAtUnixSeconds < 0 || len(record.EncodedEnvelope) == 0 || len(record.EncodedEnvelope) > MaxEnvelopeBytes {
 		return ErrMailboxRejected
 	}
 	if err := ValidateEnvelopeAt(record.Envelope, record.AcceptedAtUnixSeconds); err != nil {
+		return ErrMailboxRejected
+	}
+	canonical, err := EncodeEnvelope(record.Envelope)
+	if err != nil || !bytes.Equal(canonical, record.EncodedEnvelope) {
 		return ErrMailboxRejected
 	}
 	return nil

@@ -34,6 +34,16 @@ for fragment in (
 ):
     require("server/internal/messaging/mailbox_model.go", model, fragment)
 
+wire = read("server/internal/messaging/wire.go")
+for fragment in (
+    "func EncodeEnvelope",
+    "func DecodeEnvelope",
+    "MaxEnvelopeBytes",
+    "validEnvelopeShape",
+    "protowire.AppendTag(out, 6, protowire.BytesType)",
+):
+    require("server/internal/messaging/wire.go", wire, fragment)
+
 store = read("server/internal/messaging/mailbox_sqlite.go")
 for fragment in (
     "STRICT;",
@@ -51,6 +61,9 @@ for fragment in (
     "0o600",
     "MaxMailboxCleanupBatch",
     "ORDER BY mailbox_id",
+    "decoded, err := DecodeEnvelope(encoded)",
+    "canonical, err := EncodeEnvelope(decoded)",
+    "!bytes.Equal(canonical, encoded)",
 ):
     require("server/internal/messaging/mailbox_sqlite.go", store, fragment)
 
@@ -59,7 +72,7 @@ for fragment in (
     "IdentityExists",
     "bytes.Equal(authenticatedSender, envelope.SenderIdentityID)",
     "ValidateEnvelopeAt(envelope, now)",
-    "MaxEnvelopeBytes",
+    "encodedEnvelope, err := EncodeEnvelope(envelope)",
     "MaxMailboxDeliveryPage",
     "AckMailbox",
 ):
@@ -86,6 +99,7 @@ for fragment in (
     "100,000",
     "exact retry",
     "recipient existence",
+    "canonical",
     "ACK",
 ):
     require("docs/security/M4_MAILBOX_REVIEW.md", security, fragment)

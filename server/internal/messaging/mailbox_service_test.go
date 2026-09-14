@@ -39,28 +39,31 @@ func (f fakeIdentityDirectory) IdentityExists(context.Context, []byte) (bool, er
 	return f.exists, f.err
 }
 
-func TestMailboxServiceBindsAuthenticatedSenderAndRecipientExistence(t *testing.T) {
+func TestMailboxServiceBindsAuthenticatedSenderAndCanonicalEnvelope(t *testing.T) {
 	now := time.Unix(2_000_000_000, 0).UTC()
 	store := &fakeMailboxStore{}
 	service := newMailboxServiceWithClock(store, fakeIdentityDirectory{exists: true}, func() time.Time { return now })
 	sender := testBytes(1, IdentityIDBytes)
 	recipient := testBytes(40, IdentityIDBytes)
 	envelope := testEnvelope(sender, recipient, testBytes(90, MessageIDBytes), now.Unix()+60)
-	encoded := []byte{1, 2, 3}
 
-	if err := service.Store(context.Background(), sender, envelope, encoded); err != nil {
+	if err := service.Store(context.Background(), sender, envelope); err != nil {
 		t.Fatalf("store valid envelope: %v", err)
 	}
 	if store.putCalls != 1 || store.putRecord.AcceptedAtUnixSeconds != now.Unix() {
 		t.Fatal("valid envelope was not passed to persistence exactly once")
 	}
-	if !bytes.Equal(store.putRecord.EncodedEnvelope, encoded) {
-		t.Fatal("encoded envelope changed before persistence")
+	want, err := EncodeEnvelope(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(store.putRecord.EncodedEnvelope, want) {
+		t.Fatal("mailbox did not persist canonical envelope bytes")
 	}
 
 	wrongSender := bytes.Clone(sender)
 	wrongSender[0] ^= 0xff
-	if err := service.Store(context.Background(), wrongSender, envelope, encoded); !errors.Is(err, ErrMailboxRejected) {
+	if err := service.Store(context.Background(), wrongSender, envelope); !errors.Is(err, ErrMailboxRejected) {
 		t.Fatalf("sender substitution error=%v", err)
 	}
 	if store.putCalls != 1 {
@@ -75,7 +78,7 @@ func TestMailboxServiceHidesUnknownRecipientBehindGenericRejection(t *testing.T)
 	sender := testBytes(1, IdentityIDBytes)
 	recipient := testBytes(40, IdentityIDBytes)
 	envelope := testEnvelope(sender, recipient, testBytes(90, MessageIDBytes), now.Unix()+60)
-	if err := service.Store(context.Background(), sender, envelope, []byte{1}); !errors.Is(err, ErrMailboxRejected) {
+	if err := service.Store(context.Background(), sender, envelope); !errors.Is(err, ErrMailboxRejected) {
 		t.Fatalf("unknown recipient error=%v", err)
 	}
 	if store.putCalls != 0 {
@@ -83,7 +86,7 @@ func TestMailboxServiceHidesUnknownRecipientBehindGenericRejection(t *testing.T)
 	}
 }
 
-func TestMailboxServiceRejectsExpiredOversizedAndInvalidPaging(t *testing.T) {
+func TestMailboxServiceRejectsExpiredOversizedCiphertextAndInvalidPaging(t *testing.T) {
 	now := time.Unix(2_000_000_000, 0).UTC()
 	store := &fakeMailboxStore{}
 	service := newMailboxServiceWithClock(store, fakeIdentityDirectory{exists: true}, func() time.Time { return now })
@@ -91,12 +94,13 @@ func TestMailboxServiceRejectsExpiredOversizedAndInvalidPaging(t *testing.T) {
 	recipient := testBytes(40, IdentityIDBytes)
 
 	expired := testEnvelope(sender, recipient, testBytes(90, MessageIDBytes), now.Unix())
-	if err := service.Store(context.Background(), sender, expired, []byte{1}); !errors.Is(err, ErrMailboxRejected) {
+	if err := service.Store(context.Background(), sender, expired); !errors.Is(err, ErrMailboxRejected) {
 		t.Fatalf("expired envelope error=%v", err)
 	}
-	valid := testEnvelope(sender, recipient, testBytes(91, MessageIDBytes), now.Unix()+60)
-	if err := service.Store(context.Background(), sender, valid, make([]byte, MaxEnvelopeBytes+1)); !errors.Is(err, ErrMailboxRejected) {
-		t.Fatalf("oversized envelope error=%v", err)
+	oversized := testEnvelope(sender, recipient, testBytes(91, MessageIDBytes), now.Unix()+60)
+	oversized.Ciphertext = make([]byte, MaxCiphertextBytes+1)
+	if err := service.Store(context.Background(), sender, oversized); !errors.Is(err, ErrMailboxRejected) {
+		t.Fatalf("oversized ciphertext error=%v", err)
 	}
 	if _, err := service.Deliveries(context.Background(), recipient, MaxMailboxDeliveryPage+1); !errors.Is(err, ErrMailboxRejected) {
 		t.Fatalf("oversized page error=%v", err)

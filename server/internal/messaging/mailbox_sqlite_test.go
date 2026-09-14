@@ -21,11 +21,7 @@ func TestSQLiteMailboxExactRetryConflictRestartAndAck(t *testing.T) {
 	sender := testBytes(1, IdentityIDBytes)
 	recipient := testBytes(40, IdentityIDBytes)
 	messageID := testBytes(90, MessageIDBytes)
-	record := MailboxRecord{
-		Envelope:              testEnvelope(sender, recipient, messageID, now.Unix()+60),
-		EncodedEnvelope:       []byte{0x08, 0x01, 0x12, 0x01, 0x02},
-		AcceptedAtUnixSeconds: now.Unix(),
-	}
+	record := mailboxRecord(t, testEnvelope(sender, recipient, messageID, now.Unix()+60), now.Unix())
 	inserted, err := store.PutMailbox(ctx, record)
 	if err != nil || !inserted {
 		t.Fatalf("first put inserted=%v err=%v", inserted, err)
@@ -34,8 +30,8 @@ func TestSQLiteMailboxExactRetryConflictRestartAndAck(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("exact retry inserted=%v err=%v", inserted, err)
 	}
-	conflict := record
-	conflict.EncodedEnvelope = []byte{9, 9, 9}
+	otherRecipient := testBytes(140, IdentityIDBytes)
+	conflict := mailboxRecord(t, testEnvelope(sender, otherRecipient, messageID, now.Unix()+60), now.Unix())
 	if _, err := store.PutMailbox(ctx, conflict); !errors.Is(err, ErrMailboxRejected) {
 		t.Fatalf("conflicting retry error=%v", err)
 	}
@@ -59,6 +55,19 @@ func TestSQLiteMailboxExactRetryConflictRestartAndAck(t *testing.T) {
 	}
 }
 
+func TestSQLiteMailboxRejectsNonCanonicalRecordBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(2_000_000_000, 0).UTC()
+	store := openTestMailboxStore(t, ctx, filepath.Join(t.TempDir(), "mailbox.db"), now)
+	defer store.Close()
+	envelope := testEnvelope(testBytes(1, IdentityIDBytes), testBytes(40, IdentityIDBytes), testBytes(90, MessageIDBytes), now.Unix()+60)
+	record := mailboxRecord(t, envelope, now.Unix())
+	record.EncodedEnvelope = append(record.EncodedEnvelope, 0x38, 0x01)
+	if _, err := store.PutMailbox(ctx, record); !errors.Is(err, ErrMailboxRejected) {
+		t.Fatalf("noncanonical record error=%v", err)
+	}
+}
+
 func TestSQLiteMailboxAckIsBoundToRecipientAndSender(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(2_000_000_000, 0).UTC()
@@ -68,11 +77,7 @@ func TestSQLiteMailboxAckIsBoundToRecipientAndSender(t *testing.T) {
 	otherSender := testBytes(80, IdentityIDBytes)
 	recipient := testBytes(40, IdentityIDBytes)
 	messageID := testBytes(120, MessageIDBytes)
-	_, err := store.PutMailbox(ctx, MailboxRecord{
-		Envelope:              testEnvelope(sender, recipient, messageID, now.Unix()+60),
-		EncodedEnvelope:       []byte{1},
-		AcceptedAtUnixSeconds: now.Unix(),
-	})
+	_, err := store.PutMailbox(ctx, mailboxRecord(t, testEnvelope(sender, recipient, messageID, now.Unix()+60), now.Unix()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,19 +166,20 @@ VALUES(?, ?, ?, ?, ?, 1, x'01')`, sender, recipient, mailboxMessageID(i), now.Un
 		t.Fatal(err)
 	}
 
+	records := []MailboxRecord{
+		mailboxRecord(t, testEnvelope(sender, recipient, mailboxMessageID(MaxMailboxMessagesPerRecipient-1), now.Unix()+60), now.Unix()),
+		mailboxRecord(t, testEnvelope(sender, recipient, mailboxMessageID(MaxMailboxMessagesPerRecipient), now.Unix()+60), now.Unix()),
+	}
 	var wg sync.WaitGroup
-	results := make(chan error, 2)
-	for i := MaxMailboxMessagesPerRecipient - 1; i <= MaxMailboxMessagesPerRecipient; i++ {
+	results := make(chan error, len(records))
+	for _, record := range records {
+		record := record
 		wg.Add(1)
-		go func(id int) {
+		go func() {
 			defer wg.Done()
-			_, err := store.PutMailbox(ctx, MailboxRecord{
-				Envelope:              testEnvelope(sender, recipient, mailboxMessageID(id), now.Unix()+60),
-				EncodedEnvelope:       []byte{1},
-				AcceptedAtUnixSeconds: now.Unix(),
-			})
+			_, err := store.PutMailbox(ctx, record)
 			results <- err
-		}(i)
+		}()
 	}
 	wg.Wait()
 	close(results)
@@ -202,11 +208,7 @@ func TestSQLiteMailboxRejectsMalformedStoredState(t *testing.T) {
 	sender := testBytes(1, IdentityIDBytes)
 	recipient := testBytes(40, IdentityIDBytes)
 	messageID := testBytes(90, MessageIDBytes)
-	_, err := store.PutMailbox(ctx, MailboxRecord{
-		Envelope:              testEnvelope(sender, recipient, messageID, now.Unix()+60),
-		EncodedEnvelope:       []byte{1},
-		AcceptedAtUnixSeconds: now.Unix(),
-	})
+	_, err := store.PutMailbox(ctx, mailboxRecord(t, testEnvelope(sender, recipient, messageID, now.Unix()+60), now.Unix()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +220,30 @@ func TestSQLiteMailboxRejectsMalformedStoredState(t *testing.T) {
 	}
 	if _, err := store.ListMailbox(ctx, recipient, now.Unix(), 1); !errors.Is(err, ErrMailboxCorrupt) {
 		t.Fatalf("malformed stored state error=%v", err)
+	}
+}
+
+func TestSQLiteMailboxRejectsStoredEnvelopeMetadataMismatch(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(2_000_000_000, 0).UTC()
+	store := openTestMailboxStore(t, ctx, filepath.Join(t.TempDir(), "mailbox.db"), now)
+	defer store.Close()
+	sender := testBytes(1, IdentityIDBytes)
+	recipient := testBytes(40, IdentityIDBytes)
+	messageID := testBytes(90, MessageIDBytes)
+	_, err := store.PutMailbox(ctx, mailboxRecord(t, testEnvelope(sender, recipient, messageID, now.Unix()+60), now.Unix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, "PRAGMA ignore_check_constraints = ON"); err != nil {
+		t.Fatal(err)
+	}
+	otherSender := testBytes(100, IdentityIDBytes)
+	if _, err := store.db.ExecContext(ctx, "UPDATE mailbox_messages SET sender_identity_id = ?", otherSender); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListMailbox(ctx, recipient, now.Unix(), 1); !errors.Is(err, ErrMailboxCorrupt) {
+		t.Fatalf("metadata mismatch error=%v", err)
 	}
 }
 
@@ -293,6 +319,15 @@ func openTestMailboxStore(t *testing.T, ctx context.Context, path string, now ti
 		t.Fatalf("open mailbox store: %v", err)
 	}
 	return store
+}
+
+func mailboxRecord(t *testing.T, envelope Envelope, acceptedAt int64) MailboxRecord {
+	t.Helper()
+	encoded, err := EncodeEnvelope(envelope)
+	if err != nil {
+		t.Fatalf("encode mailbox envelope: %v", err)
+	}
+	return MailboxRecord{Envelope: envelope, EncodedEnvelope: encoded, AcceptedAtUnixSeconds: acceptedAt}
 }
 
 func mailboxMessageID(value int) []byte {

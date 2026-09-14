@@ -20,14 +20,16 @@ The byte limits are deliberately stricter than the theoretical count multiplied 
 
 Both service code and a SQLite `BEFORE INSERT` trigger enforce count/byte capacity. The trigger is the storage-level backstop if a future caller bypasses the normal service quota check.
 
-## Authentication and recipient existence
+## Authentication, canonical bytes, and recipient existence
 
 A mailbox write is accepted by the service only when:
 
 - the authenticated sender identity exactly matches the outer envelope sender;
 - the #50 envelope validation succeeds at the server acceptance time;
-- the encoded envelope is within the 96 KiB bound; and
-- the recipient exists according to the internal contact identity directory.
+- the recipient exists according to the internal contact identity directory; and
+- the mailbox itself produces the canonical protobuf envelope bytes that it persists.
+
+The storage interface rechecks that a `MailboxRecord` contains exactly the canonical encoding of its structured envelope. Callers therefore cannot supply one routing envelope for validation and unrelated raw bytes for later delivery. On read, the mailbox decodes the retained envelope, re-encodes it canonically, and compares sender, recipient, message id, expiry and ciphertext length against the indexed row metadata before returning any delivery. Unknown/noncanonical or mismatched retained bytes fail closed as corrupt state.
 
 Unknown-recipient handling returns the same generic mailbox rejection class used for other non-capacity send rejection. #52 must continue to map these internal results to the coarse public M4 error contract and must not expose the internal identity lookup as an endpoint.
 
@@ -37,7 +39,7 @@ The mailbox database itself does not duplicate public identity bundles or contac
 
 The storage uniqueness key is `(sender_identity_id, message_id)`.
 
-An exact retry is idempotent only when recipient, expiry, ciphertext length and the retained encoded envelope bytes are unchanged. Reusing the same sender/message id with different retained bytes or routing metadata is a generic conflict/rejection.
+An exact retry is idempotent only when recipient, expiry, ciphertext length and the retained canonical envelope bytes are unchanged. Reusing the same sender/message id with different retained bytes or routing metadata is a generic conflict/rejection.
 
 This means a lost `SendAccepted` can be retried safely without creating a second retained row, while deliberate message-id reuse cannot overwrite or retarget existing custody.
 
@@ -73,7 +75,7 @@ The mailbox database requires:
 - field-length/expiry/ciphertext/envelope checks in the schema;
 - indexes for recipient delivery, sender quota accounting, and expiry cleanup.
 
-Read paths revalidate stored routing ids, message ids, expiry, ciphertext-size metadata and envelope bounds. Malformed persisted state fails closed with `ErrMailboxCorrupt` rather than being delivered.
+Read paths revalidate stored routing ids, message ids, expiry, ciphertext-size metadata, the decoded encrypted envelope, and its canonical encoding. Malformed persisted state fails closed with `ErrMailboxCorrupt` rather than being delivered.
 
 ## Logging and privacy
 
