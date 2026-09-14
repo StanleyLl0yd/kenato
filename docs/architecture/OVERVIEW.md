@@ -34,7 +34,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds. #51 implements the bounded durable mailbox; live WSS routing, Android local history, and final M4 verification remain #52–#54. TURN credentials and calling remain later milestones.
+M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds. #51 completed the bounded durable mailbox. The current #52 slice implements authenticated WSS connection ownership, direct delivery and bounded mailbox fallback; Android local history and final M4 verification remain #53–#54. TURN credentials and calling remain later milestones.
 
 ## Client
 
@@ -89,12 +89,13 @@ Current server foundation:
 - temporary invite-bound M3 reservation/init state only;
 - destructive creator claim with transactional cleanup of temporary relationship/bootstrap state;
 - a separate bounded M4 mailbox SQLite/WAL database for opaque encrypted envelopes;
+- authenticated M4 WSS routing with bounded connection/queue/pending-direct state;
 - periodic expired-invite and mailbox retention cleanup plus bounded cleanup at process start;
-- no public identity/session/mailbox lookup or search endpoint;
+- no public identity/session/mailbox/presence lookup or search endpoint;
 - loopback listener by default;
 - intended deployment behind a reviewed TLS-terminating reverse proxy.
 
-The M4 protocol requires WSS connections to authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication. The WSS listener/connection hub itself remains #52.
+M4 WSS connections authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication. The server permits only bounded binary application frames, disables WebSocket compression and replaces an existing same-identity peer only after the new proof succeeds.
 
 The server never receives private P-256, prekey, Olm account/session, or ratchet keys and never decrypts ordinary message content. The #51 mailbox retains only bounded routing identifiers, random message ids, acceptance/expiry timing, ciphertext-size metadata and the canonical opaque encrypted envelope. Recipient existence is resolved only through an internal contact-store interface; no lookup endpoint is added.
 
@@ -162,11 +163,13 @@ The #51 durable mailbox additionally enforces:
 
 Count/byte quotas are checked transactionally by the Go store and backed by a SQLite `BEFORE INSERT` trigger. The global physical quotas include expired rows awaiting deletion, so delayed cleanup cannot make disk use unbounded.
 
-When a recipient is online, #52 will attempt direct opaque delivery without durable mailbox storage. If direct delivery cannot complete with an authenticated ACK under the bounded direct-attempt policy, the immutable canonical envelope may enter mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding an explicit presence oracle.
+For an online recipient, #52 attempts direct opaque delivery without durable mailbox storage. The transport bounds active authenticated peers at 128, unauthenticated handshakes at 32, per-peer outbound queues at four frames, concurrent per-peer sends at four, global send workers at 128 and pending direct deliveries at 256. Authentication has a 10-second deadline and a direct attempt waits at most five seconds for authenticated ACK.
+
+If direct delivery cannot complete under those bounds, the immutable canonical envelope may enter mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding an explicit presence oracle. A failed same-identity authentication cannot affect the current authenticated peer; successful authentication replaces the old peer only after verification.
 
 Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. Exact mailbox retry is idempotent only for the same sender/message id and identical retained routing/envelope bytes; conflicting reuse fails closed. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry is enforced at `now >= expires_at` even before physical cleanup.
 
-The remaining M4 server work is #52: authenticated WSS connection management, direct delivery, queue/backpressure/timeout limits and mapping internal mailbox/auth failures to the coarse public non-enumerating error contract.
+The current #52 server slice supplies the routing layer required by M4. Remaining milestone work is #53 Android transport/history with crash-safe durable ACK handoff, followed by #54 end-to-end/security verification.
 
 ## Calling
 
@@ -206,6 +209,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete and M4 is active under tracker #49. #50 is complete; #51 implements durable mailbox custody; #52–#54 remain. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
+M0–M3 are complete and M4 is active under tracker #49. #50 and #51 are complete; #52 is the current authenticated WSS routing slice; #53–#54 remain. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
 
 Self-hosted federation is explicitly out of scope for 1.0.
