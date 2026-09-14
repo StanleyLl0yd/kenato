@@ -77,6 +77,8 @@ for fragment in (
     "s.ackDirect(peer.identityID, ack.SenderIdentityID, ack.MessageID)",
     "s.mailbox.Ack(ctx, peer.identityID, ack)",
     "s.mailbox.Deliveries(ctx, peer.identityID, messaging.MaxMailboxDeliveryPage)",
+    "recipientPeer := s.peers[string(envelope.RecipientIdentityID)]",
+    "recipientPeer.signalDrain()",
 ):
     require("server/internal/httpapi/messaging_routing.go", routing, fragment)
 
@@ -93,10 +95,13 @@ main = read("server/cmd/kenato-server/main.go")
 for fragment in (
     "NewMessagingWebSocketServer(contactService, mailboxService)",
     "NewHandlerWithMessaging(contactService, sessionService, messagingWS)",
-    "messagingWS.Shutdown(ctx)",
+    "messagingShutdownCtx, messagingShutdownCancel := context.WithTimeout",
+    "messagingWS.Shutdown(messagingShutdownCtx)",
+    "httpShutdownCtx, httpShutdownCancel := context.WithTimeout",
+    "server.Shutdown(httpShutdownCtx)",
 ):
     require("server/cmd/kenato-server/main.go", main, fragment)
-if main.find("messagingWS.Shutdown(ctx)") > main.find("server.Shutdown(ctx)"):
+if main.find("messagingWS.Shutdown(messagingShutdownCtx)") > main.find("server.Shutdown(httpShutdownCtx)"):
     errors.append("server/cmd/kenato-server/main.go: WSS shutdown must precede HTTP server shutdown")
 
 security_tests = read("server/internal/httpapi/messaging_ws_security_test.go")
@@ -120,6 +125,13 @@ for fragment in (
     "TestMessagingWSSShutdownClosesAuthenticatedPeer",
 ):
     require("server/internal/httpapi/messaging_ws_test.go", integration_tests, fragment)
+
+liveness_tests = read("server/internal/httpapi/messaging_routing_liveness_test.go")
+for fragment in (
+    "TestMessagingMailboxStoreWakesCurrentRecipientPeer",
+    "TestMessagingMailboxStoreFailureDoesNotWakeRecipientPeer",
+):
+    require("server/internal/httpapi/messaging_routing_liveness_test.go", liveness_tests, fragment)
 
 security_review = read("docs/security/M4_TRANSPORT_REVIEW.md")
 for fragment in (
