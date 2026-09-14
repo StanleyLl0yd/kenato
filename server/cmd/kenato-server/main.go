@@ -88,10 +88,14 @@ running:
 	for {
 		select {
 		case now := <-cleanupTicker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
-			_, inviteCleanupErr := store.PruneExpiredInvites(ctx, now.UTC())
-			_, mailboxCleanupErr := mailboxStore.PruneExpired(ctx, now.UTC())
-			cancel()
+			inviteCleanupCtx, inviteCleanupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+			_, inviteCleanupErr := store.PruneExpiredInvites(inviteCleanupCtx, now.UTC())
+			inviteCleanupCancel()
+
+			mailboxCleanupCtx, mailboxCleanupCancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+			_, mailboxCleanupErr := mailboxStore.PruneExpired(mailboxCleanupCtx, now.UTC())
+			mailboxCleanupCancel()
+
 			if inviteCleanupErr != nil {
 				logger.Printf("contact retention cleanup failed")
 			}
