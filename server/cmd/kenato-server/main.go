@@ -61,9 +61,11 @@ func main() {
 
 	contactService := contact.NewService(store)
 	sessionService := contact.NewSessionService(store, store)
+	mailboxService := messaging.NewMailboxService(mailboxStore, store)
+	messagingWS := httpapi.NewMessagingWebSocketServer(contactService, mailboxService)
 	server := &http.Server{
 		Addr:              listenAddress(),
-		Handler:           httpapi.NewHandlerWithSession(contactService, sessionService),
+		Handler:           httpapi.NewHandlerWithMessaging(contactService, sessionService, messagingWS),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -116,6 +118,11 @@ running:
 	ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
 	defer cancel()
 
+	// Stop upgraded WSS work first so its bounded send/drain workers finish
+	// before the mailbox/contact stores are closed by the deferred cleanup.
+	if err := messagingWS.Shutdown(ctx); err != nil {
+		logger.Printf("messaging shutdown failed")
+	}
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Printf("graceful shutdown failed")
 		if closeErr := server.Close(); closeErr != nil {
