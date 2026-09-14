@@ -1,6 +1,6 @@
 # Contributing to Kenato
 
-Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, and M2 Invite + Contact Establishment are complete. M3 E2EE Session implementation (#34/#40) is merged and the final repository-wide M3 audit/remediation and exact-main verification (#35) are in progress. M4 remains scope-gated by `ROADMAP.md` and `AGENTS.md` and must not start before M3 closes.
+Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, M2 Invite + Contact Establishment, and M3 E2EE Session are complete. M4 Minimal Messaging has not started and remains scope-gated by `ROADMAP.md` and `AGENTS.md`; later-milestone implementation should begin only through explicit milestone/owner direction.
 
 ## Workflow
 
@@ -25,7 +25,7 @@ Changes to cryptography, identity, wire formats, authentication, persistence, or
 
 ## CI and supply chain
 
-Workflow changes must preserve full-SHA Action pins, least-privilege permissions, non-persistent checkout credentials, required security gates, and release-secret isolation. The repository-wide `make test` contract, protobuf linting, Go vulnerability scanning, Rust advisory scanning for both native lockfiles, security-policy verification, Android lint/tests/builds, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions are part of the M3 verification baseline. Do not merge around a failing security gate; fix the cause or make an explicit reviewed policy change.
+Workflow changes must preserve full-SHA Action pins, least-privilege permissions, non-persistent checkout credentials, required security gates, and release-secret isolation. The repository-wide `make test` contract, protobuf linting, Go vulnerability scanning, Rust advisory scanning for both native lockfiles, security-policy verification, Android lint/tests/builds, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions are part of the current verification baseline. Dependency Review must enforce the reviewed dependency-license policy in addition to vulnerability checks. Do not merge around a failing security gate; fix the cause or make an explicit reviewed policy change.
 
 ## Dependencies
 
@@ -39,6 +39,8 @@ Before adding a dependency, consider:
 - telemetry;
 - supply-chain risk;
 - lock/checksum/integrity impact and vulnerability-scanner coverage.
+
+Until the owner makes a different reviewed licensing decision, do not silently add strong-copyleft AGPL/GPL dependencies that would constrain Kenato's reserved pre-1.0 licensing choices.
 
 ## Scope discipline
 
