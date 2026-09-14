@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 is in progress and adds authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 is complete and adds authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package.
 
 The current schemas live under:
 
@@ -14,7 +14,7 @@ The current schemas live under:
 - `contact.proto` — M2 public identity publication and invite/contact establishment;
 - `session.proto` — M3 public session-account material, one-time-key reservation, initial Olm pre-key frame exchange, and the local/native ciphertext envelope.
 
-M3 deliberately does **not** add WebSocket routing, an offline mailbox, acknowledgements, conversation history, or product messaging. Those remain M4.
+M3 deliberately does **not** add WebSocket routing, an offline mailbox, acknowledgements, conversation history, or product messaging. Those remain M4, which has not started.
 
 ## M2 invite URI
 
