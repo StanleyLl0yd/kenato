@@ -33,7 +33,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-Through the current M3 work, identity/contact establishment and the asynchronous E2EE session/bootstrap boundary are implemented. Ordinary encrypted-message routing/mailbox behavior, TURN credentials, and calling remain later milestones.
+Through completed M3, identity/contact establishment and the asynchronous E2EE session/bootstrap boundary are implemented. Ordinary encrypted-message routing/mailbox behavior, TURN credentials, and calling remain later milestones.
 
 ## Client
 
@@ -68,7 +68,7 @@ M1 implements the device-local P-256 identity boundary. M2 adds canonical invite
 
 M3 retains that P-256 identity as the sole contact trust anchor and adds a persistent vodozemac Olm account/session boundary. Engine-specific Ed25519/Curve25519 account material and OTKs are authenticated by the existing P-256 identity. The invite redeemer deterministically creates the outbound session and the invite creator accepts the matching inbound session only after M2/M3 provenance, exact local OTK provenance, and the decrypted canonical control payload are verified.
 
-Account/session snapshots use fresh per-mutation pickle keys whose wrapping keys are protected by Android Keystore. State advances are durably committed before ciphertext/plaintext escapes, and account OTK consumption plus inbound-session creation are one atomic M3 state update. Session state is app-private and backup/device-transfer excluded.
+Account/session snapshots use fresh per-mutation pickle keys whose wrapping keys are protected by Android Keystore. State advances are durably committed before ciphertext/plaintext escapes, and account OTK consumption plus inbound-session creation are one atomic M3 state update. Session state is app-private and backup/device-transfer excluded. The JNI boundary minimizes native plaintext lifetime by zeroizing temporary Java→Rust plaintext copies and decrypted/inbound plaintext buffers after response transfer.
 
 ## Server
 
@@ -170,6 +170,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0, M1, and M2 are complete. M3 implementation (#34/#40) is merged; the final literal repository-wide #35 audit/remediation and exact-main verification are in progress. M4 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0–M3 are complete. M4 has not started. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.

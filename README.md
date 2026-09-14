@@ -36,9 +36,9 @@ docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-**M0 — Foundation**, **M1 — Local Identity**, and **M2 — Invite + Contact Establishment** are complete. **M3 — E2EE Session** is in progress. **M4 — Minimal Messaging** has not started.
+**M0 — Foundation**, **M1 — Local Identity**, **M2 — Invite + Contact Establishment**, and **M3 — E2EE Session** are complete. **M4 — Minimal Messaging** has not started.
 
-M3 is adding a reviewed asynchronous one-to-one Double Ratchet session boundary rooted in the already-pinned Kenato identity. ADR 0009 selects Apache-2.0 `vodozemac` Olm as the session engine and keeps the M1/M2 P-256 identity as the trust anchor. M3 deliberately stops before WebSocket routing, offline mailbox behavior, conversation history, or other M4 messaging features.
+M3 added a reviewed asynchronous one-to-one Double Ratchet session boundary rooted in the already-pinned Kenato identity. ADR 0009 selects Apache-2.0 `vodozemac` Olm as the session engine and keeps the M1/M2 P-256 identity as the trust anchor. The completed M3 boundary deliberately stops before WebSocket routing, offline mailbox behavior, conversation history, or other M4 messaging features.
 
 ## Security
 

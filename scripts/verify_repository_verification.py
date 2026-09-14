@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify repository-wide M3 verification and dependency-monitoring controls."""
+"""Verify repository-wide verification and dependency-monitoring controls."""
 
 from __future__ import annotations
 
@@ -60,6 +60,30 @@ for directory in ("/native/session-engine", "/native/session-jni"):
     if not re.search(pattern, dependabot):
         errors.append(f"dependabot.yml: Cargo monitoring is required for {directory}")
 
+dependency_review = read(".github/workflows/dependency-review.yml")
+for fragment in ("license-check: true", "deny-licenses: >-"):
+    if fragment not in dependency_review:
+        errors.append(f"dependency-review.yml: missing license-policy control {fragment!r}")
+for license_id in (
+    "AGPL-1.0",
+    "AGPL-1.0-only",
+    "AGPL-1.0-or-later",
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "GPL-1.0",
+    "GPL-1.0-only",
+    "GPL-1.0-or-later",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+):
+    if not re.search(rf"(?<![A-Za-z0-9.-]){re.escape(license_id)}(?![A-Za-z0-9.-])", dependency_review):
+        errors.append(f"dependency-review.yml: strong-copyleft license {license_id} must remain denied")
+
 makefile = read("Makefile")
 required_make_fragments = (
     "test: test-protocol test-go test-rust test-security test-android",
@@ -117,10 +141,26 @@ for fragment in (
     '"ndk;28.2.13676358"',
     "cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force",
     'ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh',
+    "--no-build-cache",
+    "--rerun-tasks",
     ":android:app:assembleDebug",
 ):
     if fragment not in codeql:
         errors.append(f"codeql.yml: Java/Kotlin extraction is missing {fragment!r}")
+
+jni_bridge = read("native/session-jni/src/lib.rs")
+if jni_bridge:
+    if "impl Drop for SecretBytes" not in jni_bridge or "self.0.zeroize();" not in jni_bridge:
+        errors.append("session-jni: SecretBytes must zeroize its native backing buffer on drop")
+    if jni_bridge.count("let plaintext = SecretBytes::new(plaintext);") < 2:
+        errors.append("session-jni: inbound/decrypted engine plaintext must enter zeroizing RAII storage before response encoding")
+    for java_array in ("initial_plaintext", "plaintext"):
+        pattern = (
+            rf"SecretBytes::new\(read_bytes\(\s*env,\s*&{java_array},\s*"
+            rf"MAX_PLAINTEXT_BYTES,\s*true,?\s*\)\?\)"
+        )
+        if not re.search(pattern, jni_bridge):
+            errors.append(f"session-jni: Java {java_array} copies must be zeroized after native use")
 
 state_store = read("android/app/src/main/java/com/sl/kenato/session/SessionStateStore.kt")
 if state_store:

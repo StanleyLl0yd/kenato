@@ -44,7 +44,7 @@ Exit: public identity/prekey publication and invite/contact establishment are au
 
 ## M3 — E2EE Session
 
-Status: **In progress — #34/#40 are merged; #35 final repository-wide audit/remediation and exact-main verification are in progress** (started 2026-09-10).
+Status: **Complete** (2026-09-13; tracker #31 and final verification #35 closed).
 
 - reviewed asynchronous session establishment rooted in the pinned M1/M2 Kenato identity;
 - Apache-2.0 vodozemac Olm/Double Ratchet engine, exact-version pinned through the Android native boundary;
@@ -60,7 +60,7 @@ Status: **In progress — #34/#40 are merged; #35 final repository-wide audit/re
 
 Exit: a pinned contact can establish and persist a reviewed asynchronous ratcheted session, encrypt/decrypt bounded opaque application payloads with explicit replay/reordering behavior, survive restart without ratchet rollback, fail closed on identity/session-state corruption or replacement, and pass repository-wide exact-head/exact-main verification without introducing M4 routing/mailbox/product messaging behavior.
 
-M3 is complete only after #35's literal full repository-wide audit/refactor has remediated every confirmed finding, all exact-head gates and required security checks are green, the PR is squash-merged, final exact-main repository-wide verification is green, and M3 tracking is closed. M4 must not begin before that point.
+Completion record: #32–#35 are complete, the final M3 PR was squash-merged to protected `main`, exact-main verification completed, and the expanded 11-context required-check baseline is active. M4 was not started as part of M3 and remains a separate milestone.
 
 ## M4 — Minimal Messaging
 

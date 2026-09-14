@@ -1,9 +1,10 @@
 # M3 Session Engine Review
 
-Status: implementation review for the merged M3 Android/native session boundary; final repository-wide #35 verification in progress  
-Date: 2026-09-11
+Status: implementation and final repository-wide M3 review complete  
+Date: 2026-09-11  
+Final verification: 2026-09-13
 
-This review records both the dependency/security decision behind ADR 0009 and the Android/native implementation merged through #34/#40. M3 is not considered complete until the separate repository-wide #35 audit/remediation is squash-merged and exact `main` verification is green.
+This review records both the dependency/security decision behind ADR 0009 and the Android/native implementation merged through #34/#40, together with the final repository-wide #35 audit/remediation and exact-main verification. M3 is complete; later post-M3 hardening must preserve the same trust, persistence, and scope boundaries unless an explicit reviewed decision changes them.
 
 ## Requirements
 
@@ -45,7 +46,7 @@ Kenato does not expose an API that changes those constants or low-level message-
 
 ## Implemented dependency and native boundary
 
-The merged M3 implementation exact-pins the native dependency and build boundary:
+The M3 implementation exact-pins the native dependency and build boundary:
 
 - `vodozemac = =0.10.0`, with the reviewed feature surface;
 - Rust `1.85.0` for both native crates;
@@ -57,13 +58,17 @@ The merged M3 implementation exact-pins the native dependency and build boundary
 
 The Kenato-owned JNI crate is deliberately narrow. It exposes the reviewed account/session operations needed by Kotlin and delegates cryptography to vodozemac. It does not implement DH, KDF, ratchet, AEAD/MAC, signatures, or caller-selected cipher suites. Native/JNI inputs and outputs are bounded and private engine key material is not exposed as an application API.
 
+JNI secret lifetime is explicitly bounded as a defense-in-depth property. Pickle-key copies are stored in zeroizing RAII buffers; Java-to-Rust application/control plaintext copies use the same zeroizing lifetime; plaintext returned by inbound-session creation or decryption is moved into zeroizing RAII storage before response encoding; and the encoded native response buffer is zeroized immediately after the JVM copy is attempted. This does not claim that managed JVM copies can be synchronously erased, but it prevents avoidable plaintext/pickle-key remnants from being left in ordinary native heap buffers after the bridge operation completes or fails.
+
 CI and Android release workflows build the pinned native libraries before Gradle packaging and verify that the expected three ABI libraries, and no unexpected `.so` entries, are present. The repository security baseline pins and checks the same Rust/NDK/cargo-ndk/API/ABI contract so workflow drift fails closed.
+
+Dependency Review additionally enforces an explicit strong-copyleft deny policy for AGPL/GPL identifiers. The policy preserves ADR 0006's owner-reserved pre-1.0 licensing decision instead of relying on a license-check toggle with no allow/deny rule. Changing that policy is a licensing/security review event.
 
 ## Persistence implementation
 
 Vodozemac's encrypted pickle helper derives its pickle cipher IV deterministically from the caller-provided pickle key. Reusing one pickle key across changing snapshots is therefore unacceptable for Kenato state persistence.
 
-The Android repository uses a **fresh cryptographically random 32-byte pickle key for every account/session snapshot mutation**. Each pickle key is wrapped with a non-exportable Android Keystore AES-GCM key and stored only with the corresponding encrypted pickle. Snapshot wrapping is context-bound with Kenato AAD, and ordinary in-process pickle-key buffers are zeroed when practical.
+The Android repository uses a **fresh cryptographically random 32-byte pickle key for every account/session snapshot mutation**. Each pickle key is wrapped with a non-exportable Android Keystore AES-GCM key and stored only with the corresponding encrypted pickle. Snapshot wrapping is context-bound with Kenato AAD, and ordinary in-process pickle-key buffers are zeroed when practical, including JNI-native copies after crossing the bridge.
 
 M3 state is app-private and backup/device-transfer excluded. Persisted state is bounded and self-validating, and Android Keystore/state loss or mismatch fails closed instead of silently regenerating the Olm account.
 
@@ -115,4 +120,4 @@ Rejected. Implementing the protocol ourselves would create exactly the unaudited
 
 The merged #34/#40 implementation contains Rust engine/JNI tests plus Android protocol, persistence, corruption/key-loss, restart, atomicity, pending-init recovery, cancellation, substitution, and lifecycle regression coverage. Its exact-head required gates passed before merge, including the pinned three-ABI native build and Android verification.
 
-M3 #35 is now performing the literal final repository-wide audit/remediation. Its verification baseline adds pinned cargo-audit scans for both native lockfiles, protolint, the repository-wide `make test` gate, CodeQL Java/Kotlin and Rust coverage, and regression-policy checks for audit findings. #35 must reach exact-head green, be squash-merged, and pass final exact-main verification before M3 is marked complete. M4 remains out of scope.
+M3 #35 completed the literal repository-wide audit/remediation, adding pinned cargo-audit scans for both native lockfiles, protolint, the repository-wide `make test` gate, CodeQL Java/Kotlin and Rust coverage, and regression-policy checks for audit findings. The final M3 head passed required gates, was squash-merged, exact-main verification completed, and #35/#31 were closed. The live `Protect main` baseline requires all 11 post-M3 check contexts. M4 was not started as part of M3.

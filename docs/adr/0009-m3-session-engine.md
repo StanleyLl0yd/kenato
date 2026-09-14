@@ -1,8 +1,8 @@
 # ADR 0009 — M3 E2EE session engine
 
-Status: Accepted and implemented through merged M3 #34/#40; final repository-wide #35 verification in progress  
+Status: Accepted and implemented; M3 final repository-wide verification complete  
 Date: 2026-09-10  
-Implementation review updated: 2026-09-13
+Implementation review updated: 2026-09-14
 
 ## Context
 
@@ -28,6 +28,8 @@ The selected release:
 - internally bounds out-of-order handling: vodozemac 0.10.0 retains at most 40 skipped message keys and rejects message gaps larger than 2000.
 
 Kenato integrates the Rust library behind a deliberately small Android JNI boundary. The bridge marshals bounded inputs/outputs and encrypted engine snapshots but does not reimplement, fork, weaken, or expose low-level ratchet cryptography. The implementation pins Rust `1.85.0`, Android NDK `28.2.13676358`, `cargo-ndk 4.1.2`, API 26 native targets, and the `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABI set. The engine's direct `rand` dependency is exact-pinned to the reviewed fixed `=0.8.6`; CI/repository verification audits both native Cargo lockfiles with pinned cargo-audit 0.22.2. CI/release paths build and verify the native boundary before Gradle packaging.
+
+Post-M3 audit hardening additionally requires temporary JNI plaintext and pickle-key copies to use zeroizing native buffers and requires Dependency Review to enforce an explicit AGPL/GPL deny policy while ADR 0006 reserves the permanent licensing decision to the owner. These are defense-in-depth controls and do not change the selected engine or protocol.
 
 ## Kenato identity binding
 
@@ -131,7 +133,7 @@ M3 adds new versioned session-bootstrap/session-envelope protocol messages witho
 
 M3-specific canonical signature/control payloads are independent of protobuf serialization. Unsupported protocol/engine versions fail explicitly; there is no automatic downgrade to an unauthenticated or non-ratcheted mode.
 
-Because Kenato is pre-1.0 and M3 has not shipped, no production migration from an earlier session format is required. Persisted M3 state and wire messages are versioned from their first implementation so future changes cannot silently reinterpret them.
+Because Kenato is pre-1.0 and M3 had not shipped before its implementation, no production migration from an earlier session format was required. Persisted M3 state and wire messages are versioned from their first implementation so future changes cannot silently reinterpret them.
 
 ## Consequences
 
@@ -165,4 +167,4 @@ Trade-offs:
 
 The native/JNI boundary, Android persistence lifecycle, Keystore wrapping, restart/corruption/key-loss behavior, bootstrap retry/commit boundaries, and representative replay/reordering/substitution cases were implemented and exact-head verified before #34/#40 merged. `docs/security/THREAT_MODEL.md` and `docs/security/M3_ENGINE_REVIEW.md` describe the resulting boundary.
 
-M3 #35 is the final literal full repository-wide audit/refactor. It must remediate all confirmed findings, reach exact-head green under the expanded repository/security verification baseline, be squash-merged, and pass exact-main verification before M3/#31 closes. M4 remains out of scope until that completes.
+M3 #35 then completed the literal full repository-wide audit/refactor, remediated its confirmed findings, reached exact-head green under the expanded verification baseline, was squash-merged, and passed exact-main verification before #35/#31 closed. The live `Protect main` ruleset now requires the full 11-context post-M3 gate set. M4 was not started as part of M3.

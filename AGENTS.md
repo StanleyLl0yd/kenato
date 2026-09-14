@@ -38,9 +38,9 @@ Brand:
 
 Current repository phase:
 
-`M3 — E2EE Session`: implementation #34/#40 is merged; final repository-wide #35 audit/remediation and exact-main verification are in progress.
+M0–M3 are complete. M4 — Minimal Messaging has not started. The completed M3 boundary includes the reviewed E2EE session engine/bootstrap and the final repository-wide #35 verification baseline.
 
-M0–M2 are complete. M4 has not started. Do not start M4 or any later-milestone implementation until M3/#31 is closed. Do not implement later-milestone features merely because the architecture could support them.
+Do not start M4 or any later-milestone implementation merely because M3 is complete or the architecture could support it. Begin a later milestone only when the project owner or an explicitly active milestone directs that implementation. Repository-wide audit/refactor/hardening work must preserve the completed M3 boundary and must not silently grow into M4 product work.
 
 Kenato 1.0 is intentionally narrow:
 
@@ -128,7 +128,7 @@ The initial backend is intentionally small:
 
 - one Go service binary;
 - SQLite/WAL;
-- coturn as a separate service.
+- coturn as a separate system service.
 
 Do not introduce Redis, Kafka, RabbitMQ, Kubernetes, a service mesh, or a microservice split unless measured requirements justify the added complexity.
 
@@ -274,6 +274,8 @@ Do not place sensitive plaintext or secrets in:
 
 Backup behavior for sensitive state must be explicit, reviewed, and tested.
 
+Native/JNI copies of secret keys and plaintext must have bounded lifetimes and must be zeroized where the implementation can reliably control the backing native buffer. Do not weaken the M3 JNI zeroizing RAII boundary merely to reduce copying or code size.
+
 Background calling, audio routing, Bluetooth handling, notifications, lock-screen behavior, and Android lifecycle are correctness and security concerns, not merely UI details.
 
 Avoid blocking work on the main thread.
@@ -326,7 +328,9 @@ Dependency resolution rules:
 - commit `go.sum` as soon as Go module dependencies require it;
 - keep Gradle Wrapper distribution verification enabled and preserve the pinned wrapper JAR checksum gate;
 - use package-manager integrity mechanisms rather than blindly executing downloaded tools;
-- any direct executable/archive download in CI must use HTTPS plus a pinned version and checksum/signature verification.
+- any direct executable/archive download in CI must use HTTPS plus a pinned version and checksum/signature verification;
+- preserve an explicit Dependency Review license policy; do not treat `license-check: true` without an allow/deny policy as license enforcement;
+- until an owner-reviewed licensing decision changes ADR 0006, do not silently introduce strong-copyleft AGPL/GPL dependencies that constrain the project's reserved pre-1.0 licensing choices.
 
 For GitHub Actions and CI:
 
@@ -338,7 +342,7 @@ For GitHub Actions and CI:
 - ordinary pull-request workflows must use `pull_request`, not `pull_request_target`;
 - do not inherit reusable-workflow secrets or expose production signing/deployment secrets to untrusted PR code;
 - repository CI supply-chain policy checks are mandatory and must stay green;
-- repository-wide `make test`, protolint, Go/Rust vulnerability scanning, and CodeQL coverage for Go, Java/Kotlin, Rust, and Actions are part of the current M3 verification baseline;
+- repository-wide `make test`, protolint, Go/Rust vulnerability scanning, Dependency Review license/vulnerability policy, and CodeQL coverage for Go, Java/Kotlin, Rust, and Actions are part of the current post-M3 verification baseline;
 - merge gates must include the relevant build/tests, SAST, secret scan, dependency review/vulnerability scan, and CodeQL checks that are supported by the current stack.
 
 Release integrity rules:
@@ -450,7 +454,7 @@ Depending on repository state and changed area, verification can include:
 - server build;
 - deployment/config validation.
 
-Before a release or full audit, perform repository-wide verification. The current M3 repository-wide contract is `make test` plus the required CI/security/CodeQL gates documented in `docs/development/TOOLCHAIN.md` and `docs/security/GITHUB_SETTINGS.md`.
+Before a release or full audit, perform repository-wide verification. The current post-M3 repository-wide contract is `make test` plus the required CI/security/CodeQL gates documented in `docs/development/TOOLCHAIN.md` and `docs/security/GITHUB_SETTINGS.md`.
 
 Never claim a test, build, security scan, race check, or other verification step passed unless it was actually run and completed successfully.
 

@@ -1,9 +1,9 @@
 //! Minimal JNI boundary for the Kenato M3 vodozemac session engine.
 //!
 //! All Java inputs are bounded before copying, native failures become a pending
-//! `IllegalStateException`, and secret pickle-key buffers are zeroized after
-//! crossing the JNI copy boundary. The Android layer remains responsible for
-//! wrapping each fresh pickle key and durably committing advanced snapshots
+//! `IllegalStateException`, and secret pickle-key/plaintext buffers are zeroized
+//! after crossing the JNI copy boundary. The Android layer remains responsible
+//! for wrapping each fresh pickle key and durably committing advanced snapshots
 //! before releasing ciphertext or plaintext.
 
 use std::{
@@ -63,6 +63,10 @@ impl From<EngineError> for BridgeError {
 struct SecretBytes(Vec<u8>);
 
 impl SecretBytes {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
     fn as_slice(&self) -> &[u8] {
         &self.0
     }
@@ -144,7 +148,7 @@ fn read_secret_pickle_key(
     env: &JNIEnv<'_>,
     value: &JByteArray<'_>,
 ) -> Result<SecretBytes, BridgeError> {
-    Ok(SecretBytes(read_exact(env, value, PICKLE_KEY_BYTES)?))
+    Ok(SecretBytes::new(read_exact(env, value, PICKLE_KEY_BYTES)?))
 }
 
 fn read_snapshot_text(
@@ -240,11 +244,18 @@ fn encode_outbound(result: OutboundSessionResult) -> Result<Vec<u8>, BridgeError
 }
 
 fn encode_inbound(result: InboundSessionResult) -> Result<Vec<u8>, BridgeError> {
+    let InboundSessionResult {
+        account,
+        session,
+        session_id,
+        plaintext,
+    } = result;
+    let plaintext = SecretBytes::new(plaintext);
     let mut output = begin_response();
-    write_snapshot(&mut output, result.account)?;
-    write_snapshot(&mut output, result.session)?;
-    write_string(&mut output, &result.session_id)?;
-    write_bytes(&mut output, &result.plaintext)?;
+    write_snapshot(&mut output, account)?;
+    write_snapshot(&mut output, session)?;
+    write_string(&mut output, &session_id)?;
+    write_bytes(&mut output, plaintext.as_slice())?;
     Ok(output)
 }
 
@@ -257,9 +268,11 @@ fn encode_encrypt(result: EncryptResult) -> Result<Vec<u8>, BridgeError> {
 }
 
 fn encode_decrypt(result: DecryptResult) -> Result<Vec<u8>, BridgeError> {
+    let DecryptResult { session, plaintext } = result;
+    let plaintext = SecretBytes::new(plaintext);
     let mut output = begin_response();
-    write_snapshot(&mut output, result.session)?;
-    write_bytes(&mut output, &result.plaintext)?;
+    write_snapshot(&mut output, session)?;
+    write_bytes(&mut output, plaintext.as_slice())?;
     Ok(output)
 }
 
@@ -343,13 +356,18 @@ pub extern "system" fn Java_com_sl_kenato_session_NativeSessionBridge_createOutb
         let pickle_key = read_secret_pickle_key(env, &account_pickle_key)?;
         let peer_identity = read_exact(env, &peer_curve25519_identity_key, OLM_PUBLIC_KEY_BYTES)?;
         let peer_one_time_key = read_exact(env, &peer_one_time_key, OLM_PUBLIC_KEY_BYTES)?;
-        let plaintext = read_bytes(env, &initial_plaintext, MAX_PLAINTEXT_BYTES, true)?;
+        let plaintext = SecretBytes::new(read_bytes(
+            env,
+            &initial_plaintext,
+            MAX_PLAINTEXT_BYTES,
+            true,
+        )?);
         encode_outbound(create_outbound_session(
             &ciphertext,
             pickle_key.as_slice(),
             &peer_identity,
             &peer_one_time_key,
-            &plaintext,
+            plaintext.as_slice(),
         )?)
     })
 }
@@ -398,11 +416,11 @@ pub extern "system" fn Java_com_sl_kenato_session_NativeSessionBridge_encryptSes
     run_bridge(env, |env| {
         let ciphertext = read_snapshot_text(env, &session_ciphertext, MAX_SESSION_SNAPSHOT_BYTES)?;
         let pickle_key = read_secret_pickle_key(env, &session_pickle_key)?;
-        let plaintext = read_bytes(env, &plaintext, MAX_PLAINTEXT_BYTES, true)?;
+        let plaintext = SecretBytes::new(read_bytes(env, &plaintext, MAX_PLAINTEXT_BYTES, true)?);
         encode_encrypt(encrypt_session(
             &ciphertext,
             pickle_key.as_slice(),
-            &plaintext,
+            plaintext.as_slice(),
         )?)
     })
 }

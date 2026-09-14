@@ -1,8 +1,8 @@
 # ADR 0010 — M3 session-bootstrap protocol and server state
 
-Status: Accepted and implemented through merged M3 #34/#40; final repository-wide #35 verification in progress  
+Status: Accepted and implemented; M3 final repository-wide verification complete  
 Date: 2026-09-10  
-Implementation review updated: 2026-09-13
+Implementation review updated: 2026-09-14
 
 ## Context
 
@@ -76,7 +76,7 @@ The Android responder re-verifies the returned M2 redemption and redeemer M3 bin
 
 The server deletes the invite relationship and associated temporary reservation/init state in the same SQLite transaction that produces the claim result. As with M2's destructive claim, loss of a successful claim response before the creator durably commits local state requires a fresh invite rather than retaining social/session-bootstrap metadata for replay recovery.
 
-After the destructive claim returns, the Android responder does not honor cancellation until response verification and local commit completes or fails. The two local stores cannot be atomically committed together, so the authenticated M2 contact pin is committed first and the atomic M3 inbound state second. If M2 commit fails, M3 state and the OTK remain untouched. If the M3 commit fails, the valid M2 pin may remain but no M3 session is persisted and the OTK remains unconsumed; because the server claim is already consumed, recovery requires a fresh invite. M3-first ordering is forbidden because it could leave a session without its durable M2 trust anchor.
+After the destructive claim returns, the Android responder does not honor cancellation until response verification and local commit completes or fails. The two local stores cannot be atomically committed together, so the authenticated M2 contact pin is committed first and the atomic M3 inbound state second. If M2 commit fails, M3 state and the OTK remain untouched. If the M3 commit fails, the valid M2 pin may remain but no session is persisted and the OTK remains unconsumed; because the server claim is already consumed, recovery requires a fresh invite. M3-first ordering is forbidden because it could leave a session without its durable M2 trust anchor.
 
 ### Resource bounds
 
@@ -103,6 +103,8 @@ Session bootstrap publication replacement, OTK reservation, init submission, and
 
 The Android session repository separately provides app-private atomic M3 account/session persistence. `AtomicFile.openRead()` is allowed to perform its backup recovery before the recovered base-file size is validated, so a pending valid backup is not incorrectly rejected as missing/corrupt. Outbound encryption and inbound decryption commit the advanced ratchet snapshot before ciphertext/plaintext is returned. Inbound-session creation commits account OTK consumption and the new session in one M3 state write before plaintext escapes. Every native account/session snapshot uses a fresh random pickle key protected by Android Keystore wrapping; persisted-state/Keystore mismatch fails closed and requires explicit recovery rather than silent account regeneration.
 
+The JNI bridge treats temporary native plaintext and pickle-key copies as short-lived secret buffers and zeroizes them on drop, including error paths, after response bytes have crossed the JNI copy boundary. This defense-in-depth memory hygiene does not alter wire or persisted-state semantics.
+
 The server does not attempt to recreate missing or corrupt session-bootstrap material. Clients treat missing, mismatched, changed, or unverifiable M3 identity/account material as a failed bootstrap rather than silently starting a different session identity.
 
 ## Compatibility
@@ -115,4 +117,4 @@ This design exposes to the server only public Olm account material, a bounded on
 
 A malicious server can deny service, withhold public keys/frames, exhaust allocations, or replay stale valid public session material within accepted version/generation rules. It cannot make a correct client silently accept a substituted M3 engine identity, wrong local creator generation/OTK, altered submit context, stale redeemer generation committed after rollover, or transplanted initial frame without causing P-256 binding/proof, transaction guard, local provenance, expected-peer Olm identity, or inner control-record verification to fail, assuming the pinned Kenato identity key and Olm primitives remain uncompromised.
 
-The protocol/server and Android/native portions of the M3 bootstrap are implemented together under ADRs 0009 and 0010 and were merged through #34/#40. M3 remains incomplete until #35 completes the required full repository-wide audit/remediation, reaches exact-head green, is squash-merged, and final exact-main verification succeeds. M4 routing/mailbox/product messaging remains out of scope.
+The protocol/server and Android/native portions of the M3 bootstrap were implemented together under ADRs 0009 and 0010 and merged through #34/#40. Final M3 verification #35 completed the literal repository-wide audit/remediation, exact-head gates, squash merge, and exact-main verification before #35/#31 closed. M4 routing/mailbox/product messaging was not started as part of M3.

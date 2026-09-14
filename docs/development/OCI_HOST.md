@@ -42,6 +42,6 @@ Source-IP restriction for SSH and final production perimeter rules are deliberat
 
 ## Milestone boundary
 
-M0–M2 are complete. M3 E2EE Session implementation (#34/#40) is merged and #35 is performing the final repository-wide audit/remediation and exact-main verification. M4 has not started and must not begin before M3 closes. The OCI host does not expand the current product or protocol milestone scope.
+M0–M3 are complete. M4 has not started. The OCI host does not expand the current product or protocol milestone scope and must not be used as a reason to introduce later-milestone routing, mailbox, signaling, or calling behavior outside an explicitly started milestone.
 
 Do not expose the server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.

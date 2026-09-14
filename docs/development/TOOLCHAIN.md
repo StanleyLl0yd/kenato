@@ -1,6 +1,6 @@
 # Development Toolchain
 
-Current M3 baseline:
+Current post-M3 baseline:
 
 - Android Gradle Plugin: 9.4.0
 - Gradle Wrapper: 9.7.1
@@ -38,8 +38,10 @@ Release signing material must never be committed. The tag-triggered signed-relea
 
 ## Verification baseline
 
-M3 #35 expands repository verification rather than weakening the existing gates. `make test` is the repository-wide contract and covers protobuf/protolint validation, Go module/format/test/race/vet/govulncheck/build checks, both Rust crates' format/check/clippy/test/build/advisory scans, security-policy verification, Gradle Wrapper verification, pinned native JNI build, and Android lint/unit/build/bundle verification.
+M3 #35 established the repository-wide verification baseline rather than weakening the existing gates. `make test` is the repository-wide contract and covers protobuf/protolint validation, Go module/format/test/race/vet/govulncheck/build checks, both Rust crates' format/check/clippy/test/build/advisory scans, security-policy verification, Gradle Wrapper verification, pinned native JNI build, and Android lint/unit/build/bundle verification.
 
 CI also runs focused Android, Go, and protocol jobs. CodeQL analyzes Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin extraction installs the pinned Android SDK/NDK and native Rust tooling, builds the three reviewed JNI ABIs, and runs a real `:android:app:assembleDebug` under manual CodeQL build mode.
+
+Dependency Review is a required PR gate for vulnerability and reviewed license-policy enforcement. Its explicit strong-copyleft deny policy prevents AGPL/GPL dependencies from silently constraining the pre-1.0 licensing decision reserved by ADR 0006; changing that policy requires explicit licensing review.
 
 Semgrep remains a required complementary SAST gate and Qodana remains scheduled/manual JVM/Kotlin defense-in-depth; neither substitutes for the Java/Kotlin CodeQL job.

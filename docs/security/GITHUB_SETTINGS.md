@@ -13,7 +13,7 @@ Enable all available repository protections for this public repository:
 - push protection;
 - Private Vulnerability Reporting.
 
-Dependency Review, Dependabot version updates, Gitleaks, Semgrep, govulncheck, cargo-audit, protolint, repository-wide `make test`, and CodeQL remain defense-in-depth even when GitHub-native protections are enabled.
+Dependency Review, Dependabot version updates, Gitleaks, Semgrep, govulncheck, cargo-audit, protolint, repository-wide `make test`, and CodeQL remain defense-in-depth even when GitHub-native protections are enabled. Dependency Review must retain an explicit reviewed license policy; `license-check: true` without an allow/deny policy is not sufficient enforcement.
 
 ## Default branch ruleset
 
@@ -34,7 +34,7 @@ Required rules:
 - bypass actors: none;
 - strict required status checks: enabled.
 
-The M3 verification baseline requires these successful check contexts before merge:
+The current post-M3 verification baseline requires these successful check contexts before merge:
 
 - `Android`;
 - `Go`;
@@ -79,7 +79,7 @@ Add Code Scanning enforcement:
 - alert/error threshold: `errors`;
 - bypass actors: none.
 
-Kenato's M3 baseline runs CodeQL for Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin uses manual extraction with the pinned Android SDK/NDK/Rust/cargo-ndk prerequisites and a real debug Android build; Rust and Actions use no-build extraction. Semgrep remains the required complementary SAST gate and Qodana provides scheduled JVM/Kotlin defense-in-depth.
+Kenato's current baseline runs CodeQL for Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin uses manual extraction with the pinned Android SDK/NDK/Rust/cargo-ndk prerequisites and a real debug Android build; Rust and Actions use no-build extraction. Semgrep remains the required complementary SAST gate and Qodana provides scheduled JVM/Kotlin defense-in-depth.
 
 ## Repository merge settings
 
@@ -147,9 +147,14 @@ If a second trusted reviewer exists, an environment approval can be useful. Do n
 - The protected `release` environment exists.
 - Production signing secrets and certificate trust material are intentionally not yet provisioned; they are required before the first production-signed release.
 
-### M3 #35 ruleset update
+### M3 final state — verified 2026-09-13
 
-The M3 audit adds the `Repository make test`, `Analyze (java-kotlin)`, and `Analyze (rust)` contexts. The live `Protect main` ruleset must require those contexts before #35 is merged, in addition to preserving all existing required checks. The CodeQL ruleset remains active while the workflow itself expands to all four supported language targets.
+- M3 tracker #31 and final verification #35 are closed/completed.
+- `Protect main` remains active with no bypass actors and strict required-status-check policy.
+- The live ruleset requires all 11 post-M3 contexts listed above, adding `Repository make test`, `Analyze (java-kotlin)`, and `Analyze (rust)` while preserving the original M0 checks.
+- The `Require CodeQL` ruleset remains active while the workflow covers Go, Java/Kotlin, Rust, and GitHub Actions.
+- M3's final repository-wide PR was squash-merged only after exact-head gates passed; exact-main verification then completed before the milestone was closed.
+- M4 was not started as part of M3.
 
 ### Ongoing verification
 

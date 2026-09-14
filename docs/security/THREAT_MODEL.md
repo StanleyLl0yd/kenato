@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0-M2 complete. M3 E2EE session protocol/server and Android/native implementation (#34/#40) are merged; the final repository-wide #35 audit/remediation and exact-main verification are in progress. M4 has not started.
+Status: M0–M3 complete. M4 has not started.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -47,6 +47,8 @@ M3 keeps the M1/M2 P-256 identity as the sole contact trust anchor. Vodozemac Ol
 M3 Olm account/session snapshots are app-private and backup/device-transfer excluded. Every encrypted native snapshot uses a fresh random 32-byte pickle key; the pickle key is wrapped with a non-exportable Android Keystore AES-GCM key using context-specific AAD. Missing/mismatched Keystore or persisted M3 state fails closed and requires explicit recovery rather than silent Olm-account regeneration.
 
 Ratchet-state durability is part of the cryptographic boundary: outbound ciphertext and inbound plaintext are not returned until the advanced session state is durably committed. Inbound-session creation commits consumed local OTK bookkeeping and the new session together in one atomic M3 state write before returning the authenticated control plaintext. Android AtomicFile reads perform backup recovery before validating recovered base-file size, preserving crash-recovery semantics without weakening state-size bounds.
+
+The Rust/JNI bridge treats controllable native copies of pickle keys and application/control plaintext as short-lived secrets. Java-to-Rust plaintext copies and engine-produced inbound/decrypted plaintext are held in zeroizing RAII buffers, including error paths, and the encoded native response buffer is zeroized after the JVM copy is attempted. This reduces avoidable native-heap remanence; it does not claim synchronous erasure of managed JVM copies outside native buffer control.
 
 ### Kenato server
 
@@ -96,7 +98,7 @@ The M0 repository/release foundation establishes:
 - the protected `release` environment exists; production signing secrets and certificate trust material, when provisioned, are confined to it;
 - release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
 
-The M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. The engine's direct `rand` dependency is pinned to reviewed fixed `=0.8.6`. Both native crates have committed lockfiles, Cargo Dependabot coverage, and pinned cargo-audit scanning. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift. The M3 verification baseline also adds protolint, repository-wide `make test`, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions.
+The completed post-M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. The engine's direct `rand` dependency is pinned to reviewed fixed `=0.8.6`. Both native crates have committed lockfiles, Cargo Dependabot coverage, and pinned cargo-audit scanning. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift. The post-M3 verification baseline includes protolint, repository-wide `make test`, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions. Dependency Review enforces both vulnerability policy and an explicit strong-copyleft AGPL/GPL deny policy so ADR 0006's pre-1.0 licensing decision cannot be silently constrained by a dependency update.
 
 ## Threats in scope
 
@@ -112,7 +114,7 @@ Mitigations:
 - immutable `v*` release tags;
 - full-SHA-pinned GitHub Actions and digest-pinned critical containers;
 - least-privilege workflow permissions and non-persistent checkout credentials;
-- Semgrep, Gitleaks, Dependency Review, govulncheck, cargo-audit, protolint, Android lint, Qodana, repository-wide `make test`, and CodeQL for Go/Java-Kotlin/Rust/Actions;
+- Semgrep, Gitleaks, Dependency Review vulnerability/license policy, govulncheck, cargo-audit, protolint, Android lint, Qodana, repository-wide `make test`, and CodeQL for Go/Java-Kotlin/Rust/Actions;
 - exact native dependency/toolchain/NDK/cargo-ndk pins and committed Cargo locks;
 - Cargo Dependabot coverage for both native crates;
 - three-ABI native build/packaging verification before Android build/release;
@@ -278,6 +280,7 @@ Mitigations:
 - M2 contact pins and pending invite secrets remain app-private and are covered by the existing all-domain backup/device-transfer denial;
 - M3 account/session state is app-private and covered by the same backup/device-transfer denial;
 - every M3 native account/session snapshot uses a fresh random 32-byte pickle key, protected by a non-exportable Android Keystore AES-GCM wrapping key with context AAD;
+- temporary native JNI copies of pickle keys and application/control/decrypted plaintext are stored in zeroizing buffers and erased when those buffers leave scope, including native error paths where the backing buffer is under Kenato's control;
 - cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
 - cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
 - backup policy is enforced by repository checks and Android build/lint validation;
@@ -333,9 +336,9 @@ Before the first stable public release:
 - protocol test vectors checked;
 - malformed/replayed/reordered input tests exist for protocol layers that implement those semantics;
 - invite/session lifecycle and abuse limits validated;
-- M3 native crypto persistence, substitution, replay/reordering and native-boundary behavior pass M3's final repository-wide audit/verification;
+- completed M3 native crypto persistence, substitution, replay/reordering, JNI-boundary, and final repository-wide verification remain green as a regression baseline;
 - mailbox and TURN abuse limits validated in their milestones;
-- dependency and supply-chain review completed;
+- dependency and supply-chain review completed, including explicit dependency-license policy;
 - default-branch, release-tag, and CodeQL rulesets verified active;
 - release signing identity/provenance controls verified;
 - Android backup and logging behavior reviewed;
