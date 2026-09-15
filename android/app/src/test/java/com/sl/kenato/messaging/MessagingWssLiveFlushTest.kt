@@ -122,7 +122,7 @@ class MessagingWssLiveFlushTest {
             sockets = sockets,
             identity = FakeIdentity(),
             recovery = recovery,
-            inbound = MessagingInboundDeliveryHandler { null },
+            inbound = MessagingInboundDeliveryHandler { _, _ -> null },
             scheduler = scheduler,
             clock = MessagingWssClock { 100 },
         )

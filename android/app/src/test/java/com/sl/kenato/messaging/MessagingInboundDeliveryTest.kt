@@ -20,7 +20,7 @@ class MessagingInboundDeliveryTest {
         fixture.persistHistory(envelope)
         fixture.sessions.missingSession = true
 
-        val ack = fixture.handler.handle(envelope)
+        val ack = fixture.handle(envelope)
 
         assertArrayEquals(PEER, ack.senderIdentityId)
         assertArrayEquals(envelope.messageId, ack.messageId)
@@ -37,7 +37,7 @@ class MessagingInboundDeliveryTest {
         val changed = inboundEnvelope(1, olmMessage = byteArrayOf(9, 8, 7))
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(changed)
+            fixture.handle(changed)
         }
 
         assertEquals(0, fixture.sessions.resolveCount)
@@ -57,7 +57,7 @@ class MessagingInboundDeliveryTest {
             assertArrayEquals(envelope.messageId, pending.single().messageId)
         }
 
-        val ack = fixture.handler.handle(envelope)
+        val ack = fixture.handle(envelope)
 
         assertArrayEquals(PEER, ack.senderIdentityId)
         assertArrayEquals(envelope.messageId, ack.messageId)
@@ -73,6 +73,34 @@ class MessagingInboundDeliveryTest {
     }
 
     @Test
+    fun receiveTimeSnapshotRemainsValidThroughPostDecryptContextCheck() {
+        val fixture = Fixture()
+        val envelope = inboundEnvelope(11)
+        fixture.sessions.decryptedPlaintext = encodedPlaintext(envelope)
+
+        val ack = fixture.handle(envelope, receivedAtEpochSeconds = 199)
+
+        assertArrayEquals(envelope.messageId, ack.messageId)
+        assertEquals(1, fixture.sessions.decryptCount)
+        assertEquals(1, fixture.history.pendingInboundAcks(OWNER).size)
+    }
+
+    @Test
+    fun exactExpiryBoundaryFailsBeforeSessionLookupOrDecrypt() {
+        val fixture = Fixture()
+        val envelope = inboundEnvelope(12)
+        fixture.sessions.decryptedPlaintext = encodedPlaintext(envelope)
+
+        assertThrows(MessagingProtocolException::class.java) {
+            fixture.handle(envelope, receivedAtEpochSeconds = 200)
+        }
+
+        assertEquals(0, fixture.sessions.resolveCount)
+        assertEquals(0, fixture.sessions.decryptCount)
+        assertEquals(0, fixture.historyStore.writeCount)
+    }
+
+    @Test
     fun failedHistoryWriteLeavesAtomicHandoffAndProducesNoAck() {
         val fixture = Fixture()
         val envelope = inboundEnvelope(3)
@@ -80,7 +108,7 @@ class MessagingInboundDeliveryTest {
         fixture.historyStore.failWrites = true
 
         assertThrows(ConversationHistoryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(1, fixture.sessions.decryptCount)
@@ -97,13 +125,13 @@ class MessagingInboundDeliveryTest {
         fixture.sessions.failComplete = true
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
         assertEquals(1, fixture.sessions.decryptCount)
         assertEquals(1, fixture.sessions.staged.size)
         assertEquals(1, fixture.history.pendingInboundAcks(OWNER).size)
 
-        val ack = fixture.handler.handle(envelope)
+        val ack = fixture.handle(envelope)
 
         assertArrayEquals(envelope.messageId, ack.messageId)
         assertEquals(1, fixture.sessions.decryptCount)
@@ -118,7 +146,7 @@ class MessagingInboundDeliveryTest {
         fixture.sessions.missingSession = true
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(1, fixture.sessions.resolveCount)
@@ -148,7 +176,7 @@ class MessagingInboundDeliveryTest {
         )
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(0, fixture.sessions.resolveCount)
@@ -165,7 +193,7 @@ class MessagingInboundDeliveryTest {
         )
 
         assertThrows(MessagingProtocolException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(1, fixture.sessions.decryptCount)
@@ -181,7 +209,7 @@ class MessagingInboundDeliveryTest {
         fixture.sessions.decryptedPlaintext = encodedPlaintext(envelope) + byteArrayOf(0x78, 0x01)
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(1, fixture.sessions.decryptCount)
@@ -201,7 +229,7 @@ class MessagingInboundDeliveryTest {
         )
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(0, fixture.sessions.resolveCount)
@@ -217,7 +245,7 @@ class MessagingInboundDeliveryTest {
         fixture.sessions.contextPeer = OTHER.copyOf()
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            fixture.handler.handle(envelope)
+            fixture.handle(envelope)
         }
 
         assertEquals(1, fixture.sessions.decryptCount)
@@ -232,8 +260,12 @@ class MessagingInboundDeliveryTest {
         val handler = DurableMessagingInboundDeliveryHandler(
             sessions = sessions,
             history = history,
-            clock = MessagingInboundClock { 100 },
         )
+
+        fun handle(
+            envelope: MessagingEnvelope,
+            receivedAtEpochSeconds: Long = 100,
+        ): MessagingDeliveryAck = handler.handle(envelope, receivedAtEpochSeconds)
 
         fun persistHistory(envelope: MessagingEnvelope) {
             history.importInboundPendingAck(

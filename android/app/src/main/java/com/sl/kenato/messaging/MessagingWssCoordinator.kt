@@ -98,11 +98,13 @@ internal class DurableMessagingRecoveryDriver(
 }
 
 /**
- * Delivery processing is deliberately outside the socket layer. Implementations must return an ACK
- * only after the exact delivery is already represented durably in authenticated local history.
+ * Delivery processing is deliberately outside the socket layer. Implementations receive the exact
+ * socket receive-time snapshot used to validate the outer envelope and must reuse it for any
+ * decrypted inner-context validation. They may return an ACK only after the exact delivery is
+ * already represented durably in authenticated local history.
  */
 internal fun interface MessagingInboundDeliveryHandler {
-    fun handle(envelope: MessagingEnvelope): MessagingDeliveryAck?
+    fun handle(envelope: MessagingEnvelope, receivedAtEpochSeconds: Long): MessagingDeliveryAck?
 }
 
 internal interface MessagingScheduledTask {
@@ -332,11 +334,12 @@ internal class MessagingWssCoordinator(
 
     private fun handleDelivery(socket: MessagingSocket, envelope: MessagingEnvelope) {
         val owner = requireAuthenticatedIdentity()
-        MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds())
+        val receivedAt = nowEpochSeconds()
+        MessagingProtocol.validateEnvelope(envelope, receivedAt)
         if (!envelope.recipientIdentityId.contentEquals(owner)) {
             throw MessagingWssException("M4 delivery recipient does not match authenticated identity")
         }
-        val ack = inbound.handle(envelope) ?: return
+        val ack = inbound.handle(envelope, receivedAt) ?: return
         if (
             !ack.senderIdentityId.contentEquals(envelope.senderIdentityId) ||
             !ack.messageId.contentEquals(envelope.messageId)

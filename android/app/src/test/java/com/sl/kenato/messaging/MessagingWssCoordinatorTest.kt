@@ -126,6 +126,7 @@ class MessagingWssCoordinatorTest {
         socket.serverFrame(MessagingServerFrame(delivery = delivery))
 
         assertEquals(2, fixture.inbound.deliveries.size)
+        assertEquals(listOf(100L, 100L), fixture.inbound.receiveTimes)
         assertEquals(3, socket.sent.size)
         socket.sent.drop(1).forEach { encoded ->
             val ack = MessagingWire.decodeClientFrame(encoded).ack!!
@@ -422,9 +423,14 @@ class MessagingWssCoordinatorTest {
     private class FakeInbound : MessagingInboundDeliveryHandler {
         var result: MessagingDeliveryAck? = null
         val deliveries = ArrayList<MessagingEnvelope>()
+        val receiveTimes = ArrayList<Long>()
 
-        override fun handle(envelope: MessagingEnvelope): MessagingDeliveryAck? {
+        override fun handle(
+            envelope: MessagingEnvelope,
+            receivedAtEpochSeconds: Long,
+        ): MessagingDeliveryAck? {
             deliveries += envelope
+            receiveTimes += receivedAtEpochSeconds
             return result
         }
     }

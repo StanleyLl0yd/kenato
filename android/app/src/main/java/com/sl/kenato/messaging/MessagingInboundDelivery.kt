@@ -6,7 +6,6 @@ import com.sl.kenato.session.SessionCiphertextWire
 import com.sl.kenato.session.SessionMessageCryptoContext
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
-import java.time.Instant
 
 internal class MessagingInboundDeliveryException(message: String, cause: Throwable? = null) :
     IllegalStateException(message, cause)
@@ -63,30 +62,25 @@ internal class LocalMessagingInboundSessionDriver(
     )
 }
 
-internal fun interface MessagingInboundClock {
-    fun nowEpochSeconds(): Long
-}
-
-private object SystemMessagingInboundClock : MessagingInboundClock {
-    override fun nowEpochSeconds(): Long = Instant.now().epochSecond
-}
-
 /**
  * Bridges an authenticated WSS delivery into the M3 ratchet and durable M4 history boundary.
  * The WSS coordinator verifies that [MessagingEnvelope.recipientIdentityId] is the authenticated
- * socket identity before invoking this handler. This class independently revalidates the durable
- * owner/session state and never ACKs a message before authenticated history contains it.
+ * socket identity and supplies the exact receive-time snapshot used for outer-envelope validation.
+ * This class independently revalidates the same envelope/context at that immutable snapshot and
+ * never ACKs a message before authenticated history contains it.
  */
 internal class DurableMessagingInboundDeliveryHandler(
     private val sessions: MessagingInboundSessionDriver,
     private val history: ConversationHistoryRepository,
-    private val clock: MessagingInboundClock = SystemMessagingInboundClock,
 ) : MessagingInboundDeliveryHandler {
     @Synchronized
-    override fun handle(envelope: MessagingEnvelope): MessagingDeliveryAck {
+    override fun handle(
+        envelope: MessagingEnvelope,
+        receivedAtEpochSeconds: Long,
+    ): MessagingDeliveryAck {
         val ownerIdentityId = envelope.recipientIdentityId.copyOf()
         requireIdentity(ownerIdentityId, "M4 inbound owner identity id")
-        MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds())
+        MessagingProtocol.validateEnvelope(envelope, receivedAtEpochSeconds)
 
         val encodedEnvelope = MessagingWire.encodeEnvelope(envelope)
 
@@ -151,7 +145,7 @@ internal class DurableMessagingInboundDeliveryHandler(
             if (!encodedPlaintext.contentEquals(decryptedPlaintext)) {
                 throw MessagingInboundDeliveryException("M4 decrypted plaintext is not canonical")
             }
-            MessagingProtocol.validateDeliveryContext(envelope, plaintext, nowEpochSeconds())
+            MessagingProtocol.validateDeliveryContext(envelope, plaintext, receivedAtEpochSeconds)
             SessionMessageHandoff(
                 localContactId = context.localContactId.copyOf(),
                 peerIdentityId = context.peerIdentityId.copyOf(),
@@ -216,9 +210,5 @@ internal class DurableMessagingInboundDeliveryHandler(
         if (value.size != MESSAGING_IDENTITY_BYTES) {
             throw MessagingInboundDeliveryException("$name size is invalid")
         }
-    }
-
-    private fun nowEpochSeconds(): Long = clock.nowEpochSeconds().also {
-        if (it < 0) throw MessagingInboundDeliveryException("M4 inbound clock returned an invalid timestamp")
     }
 }

@@ -17,7 +17,6 @@ class MessagingInboundCiphertextCanonicalityTest {
         val handler = DurableMessagingInboundDeliveryHandler(
             sessions = sessions,
             history = history,
-            clock = MessagingInboundClock { 100 },
         )
         val canonical = SessionCiphertextWire.encode(
             SessionCiphertext(
@@ -41,7 +40,7 @@ class MessagingInboundCiphertextCanonicalityTest {
         )
 
         assertThrows(MessagingInboundDeliveryException::class.java) {
-            handler.handle(envelope)
+            handler.handle(envelope, receivedAtEpochSeconds = 100)
         }
 
         assertEquals(0, sessions.resolveCount)
