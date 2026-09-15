@@ -13,6 +13,53 @@ internal class ConversationHistoryRepository(
         return loadState(ownerIdentityId)?.copyForCaller()
     }
 
+    /**
+     * Validates that a new outbound plaintext can fit the exact retained-history bounds before the
+     * M3 ratchet is advanced. The placeholder digest is never persisted; retained history stores a
+     * fixed-size digest, so this is an exact capacity check for the eventual record.
+     */
+    @Synchronized
+    fun requireCanAppendOutbound(
+        ownerIdentityId: ByteArray,
+        localContactId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        encodedPlaintext: ByteArray,
+    ) {
+        requireIdentity(ownerIdentityId, "owner identity id")
+        if (localContactId.size != SessionStateCodec.LOCAL_CONTACT_ID_BYTES) {
+            throw ConversationHistoryException("Outbound history preflight contact id is invalid")
+        }
+        requireIdentity(peerIdentityId, "outbound history preflight peer identity id")
+        if (peerIdentityId.contentEquals(ownerIdentityId)) {
+            throw ConversationHistoryException("Outbound history preflight peer cannot be the local identity")
+        }
+        requireMessageId(messageId)
+        val plaintext = decodeCanonicalPlaintext(encodedPlaintext)
+        if (
+            !plaintext.senderIdentityId.contentEquals(ownerIdentityId) ||
+            !plaintext.recipientIdentityId.contentEquals(peerIdentityId) ||
+            !plaintext.messageId.contentEquals(messageId)
+        ) {
+            throw ConversationHistoryException("Outbound history preflight plaintext provenance is invalid")
+        }
+
+        val state = loadState(ownerIdentityId) ?: emptyState(ownerIdentityId)
+        val candidate = ConversationHistoryRecord(
+            localContactId = localContactId.copyOf(),
+            peerIdentityId = peerIdentityId.copyOf(),
+            messageId = messageId.copyOf(),
+            direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+            deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            encodedPlaintext = encodedPlaintext.copyOf(),
+            envelopeDigest = ByteArray(ConversationHistoryStateCodec.ENVELOPE_DIGEST_BYTES),
+        )
+        if (state.messages.any { sameIdempotencyKey(it, candidate) }) {
+            throw ConversationHistoryException("Outbound history preflight message id already exists")
+        }
+        ConversationHistoryStateCodec.encode(state.copy(messages = state.messages + candidate))
+    }
+
     @Synchronized
     fun importInboundPendingAck(
         ownerIdentityId: ByteArray,
