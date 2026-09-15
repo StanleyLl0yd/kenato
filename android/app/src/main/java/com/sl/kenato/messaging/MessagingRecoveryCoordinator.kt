@@ -113,10 +113,11 @@ internal class MessagingRecoveryCoordinator(
     }
 
     /**
-     * Called only for a durable outbound key that has not yet been sent on the active WSS
-     * connection. If the exact plaintext/envelope expiry is due, history is transitioned first and
-     * the staged ciphertext is removed second. A crash between those writes is recovered by
-     * [recover] from the durable EXPIRED state without another send.
+     * Reconciles one recovered outbound key that is not known to be in flight on the caller's
+     * current socket. If TTL is due, history becomes EXPIRED before the staged ciphertext is
+     * removed. ACCEPTED/EXPIRED are idempotent terminal outcomes so a stale recovery plan cannot
+     * resurrect or fail on work completed by another path through this coordinator.
+     * Returns true when the key is terminal and must not be sent or counted as active staged work.
      */
     @Synchronized
     fun expireOutboundIfDue(
@@ -126,6 +127,16 @@ internal class MessagingRecoveryCoordinator(
         nowEpochSeconds: Long,
     ): Boolean {
         requireIdentity(ownerIdentityId)
+        val before = history.currentState(ownerIdentityId)
+            ?.messages
+            ?.singleOrNull {
+                it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                    it.peerIdentityId.contentEquals(peerIdentityId) &&
+                    it.messageId.contentEquals(messageId)
+            }
+            ?: throw MessagingRecoveryException("Expiring outbound message is absent from history")
+        val wasExpired = before.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED
+
         val record = history.expireOutboundIfDue(
             ownerIdentityId = ownerIdentityId,
             peerIdentityId = peerIdentityId,
@@ -134,15 +145,25 @@ internal class MessagingRecoveryCoordinator(
         )
         return when (record.deliveryState) {
             ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> false
+            ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED -> {
+                // A stale plan can observe ACCEPTED after SendAccepted already removed the handoff.
+                // Removing again is intentionally best-effort and still terminal.
+                sessions.completeMessageHandoff(
+                    ownerIdentityId = ownerIdentityId,
+                    peerIdentityId = peerIdentityId,
+                    messageId = messageId,
+                    direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                )
+                true
+            }
             ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED -> {
-                if (
-                    !sessions.completeMessageHandoff(
-                        ownerIdentityId = ownerIdentityId,
-                        peerIdentityId = peerIdentityId,
-                        messageId = messageId,
-                        direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
-                    )
-                ) {
+                val removed = sessions.completeMessageHandoff(
+                    ownerIdentityId = ownerIdentityId,
+                    peerIdentityId = peerIdentityId,
+                    messageId = messageId,
+                    direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                )
+                if (!removed && !wasExpired) {
                     throw MessagingRecoveryException("Expired outbound message lost its staged handoff")
                 }
                 true

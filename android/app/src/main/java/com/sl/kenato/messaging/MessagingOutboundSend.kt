@@ -50,12 +50,35 @@ internal class LocalMessagingOutboundSessionDriver(
 
 internal fun interface MessagingOutboundRecovery {
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan
+
+    /**
+     * Returns true when a recovered key is terminal and must not count as active staged work.
+     * Implementations that do not own terminal persistence may conservatively return false.
+     */
+    fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean = false
 }
 
 internal class CoordinatorMessagingOutboundRecovery(
     private val coordinator: MessagingRecoveryCoordinator,
 ) : MessagingOutboundRecovery {
     override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = coordinator.recover(ownerIdentityId)
+
+    override fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean = coordinator.expireOutboundIfDue(
+        ownerIdentityId = ownerIdentityId,
+        peerIdentityId = peerIdentityId,
+        messageId = messageId,
+        nowEpochSeconds = nowEpochSeconds,
+    )
 }
 
 internal fun interface MessagingMessageIdGenerator {
@@ -107,10 +130,23 @@ internal class DurableMessagingOutboundSender(
             throw MessagingOutboundSendException("M4 outbound message TTL is invalid")
         }
 
-        // Reconcile every older crypto handoff first. This keeps the lower 32-send transport bound
-        // authoritative even though the crypto journal itself permits up to 64 crash handoffs.
+        val now = nowEpochSeconds()
+
+        // Reconcile every older crypto handoff first. Expired/otherwise terminal recovered work must
+        // not consume the lower 32-send admission bound while offline; otherwise a device that was
+        // disconnected past TTL could be unable to stage any fresh work until WSS authentication.
         val plan = recovery.recover(ownerIdentityId.copyOf())
-        if (plan.outboundSends.size >= MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS) {
+        var activeStagedSends = 0
+        plan.outboundSends.forEach { recovered ->
+            val terminal = recovery.expireOutboundIfDue(
+                ownerIdentityId = ownerIdentityId,
+                peerIdentityId = recovered.peerIdentityId,
+                messageId = recovered.messageId,
+                nowEpochSeconds = now,
+            )
+            if (!terminal) activeStagedSends++
+        }
+        if (activeStagedSends >= MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS) {
             throw MessagingOutboundSendException("M4 outbound staged send queue is full")
         }
 
@@ -119,7 +155,6 @@ internal class DurableMessagingOutboundSender(
             throw MessagingOutboundSendException("M4 outbound local contact id is invalid")
         }
 
-        val now = nowEpochSeconds()
         if (now > Long.MAX_VALUE - ttlSeconds) {
             throw MessagingOutboundSendException("M4 outbound message expiry overflows")
         }
@@ -183,7 +218,10 @@ internal class DurableMessagingOutboundSender(
                 expiresAtEpochSeconds = expiresAt,
             )
             try {
-                MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds())
+                // Use the same stage-time snapshot that created sentAt/expiresAt. The WSS boundary
+                // revalidates current expiry before queueing, so wall-clock movement during native
+                // encryption cannot turn a valid logical stage into a partial local failure.
+                MessagingProtocol.validateEnvelope(envelope, now)
             } catch (error: Exception) {
                 throw MessagingOutboundSendException("M4 outbound envelope is invalid", error)
             }
