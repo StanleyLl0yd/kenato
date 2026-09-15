@@ -20,25 +20,45 @@ internal class ConversationHistoryRepository(
     ): ConversationHistoryRecord {
         requireIdentity(ownerIdentityId, "owner identity id")
         val candidate = inboundPendingAck(ownerIdentityId, handoff)
-        val state = loadState(ownerIdentityId) ?: ConversationHistoryState(
-            ownerIdentityId = ownerIdentityId.copyOf(),
-            messages = emptyList(),
-        )
-        val existing = state.messages.singleOrNull {
-            sameIdempotencyKey(it, candidate)
-        }
+        val state = loadState(ownerIdentityId) ?: emptyState(ownerIdentityId)
+        val existing = state.messages.singleOrNull { sameIdempotencyKey(it, candidate) }
         if (existing != null) {
-            if (!sameRecord(existing, candidate)) {
+            if (
+                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK ||
+                !sameRecordPayload(existing, candidate)
+            ) {
                 throw ConversationHistoryException("Conflicting conversation history record for authenticated message id")
             }
             return existing.copyForCaller()
         }
 
-        val updated = state.copy(messages = state.messages + candidate)
-        val encoded = ConversationHistoryStateCodec.encode(updated)
-        if (!stateStore.write(encoded)) {
-            throw ConversationHistoryException("Unable to durably persist conversation history")
+        persist(state.copy(messages = state.messages + candidate))
+        return candidate.copyForCaller()
+    }
+
+    @Synchronized
+    fun importOutboundPendingAcceptance(
+        ownerIdentityId: ByteArray,
+        handoff: SessionMessageHandoff,
+    ): ConversationHistoryRecord {
+        requireIdentity(ownerIdentityId, "owner identity id")
+        val candidate = outboundPendingAcceptance(ownerIdentityId, handoff)
+        val state = loadState(ownerIdentityId) ?: emptyState(ownerIdentityId)
+        val existing = state.messages.singleOrNull { sameIdempotencyKey(it, candidate) }
+        if (existing != null) {
+            if (
+                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE &&
+                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED
+            ) {
+                throw ConversationHistoryException("Conflicting conversation history record for authenticated message id")
+            }
+            if (!sameRecordPayload(existing, candidate)) {
+                throw ConversationHistoryException("Conflicting conversation history record for authenticated message id")
+            }
+            return existing.copyForCaller()
         }
+
+        persist(state.copy(messages = state.messages + candidate))
         return candidate.copyForCaller()
     }
 
@@ -53,6 +73,49 @@ internal class ConversationHistoryRepository(
             }
             ?.map(ConversationHistoryRecord::copyForCaller)
             .orEmpty()
+    }
+
+    @Synchronized
+    fun pendingOutboundAcceptances(ownerIdentityId: ByteArray): List<ConversationHistoryRecord> {
+        requireIdentity(ownerIdentityId, "owner identity id")
+        return loadState(ownerIdentityId)
+            ?.messages
+            ?.filter {
+                it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                    it.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE
+            }
+            ?.map(ConversationHistoryRecord::copyForCaller)
+            .orEmpty()
+    }
+
+    @Synchronized
+    fun markOutboundAccepted(
+        ownerIdentityId: ByteArray,
+        accepted: MessagingSendAccepted,
+    ): ConversationHistoryRecord {
+        requireIdentity(ownerIdentityId, "owner identity id")
+        requireSendAccepted(accepted)
+        val state = loadState(ownerIdentityId)
+            ?: throw ConversationHistoryException("Accepted outbound message is not represented in conversation history")
+        val index = state.messages.indexOfFirst {
+            it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                it.peerIdentityId.contentEquals(accepted.recipientIdentityId) &&
+                it.messageId.contentEquals(accepted.messageId)
+        }
+        if (index < 0) {
+            throw ConversationHistoryException("Accepted outbound message is not represented in conversation history")
+        }
+        val existing = state.messages[index]
+        if (existing.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED) {
+            return existing.copyForCaller()
+        }
+        if (existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE) {
+            throw ConversationHistoryException("Outbound conversation history cannot transition to accepted")
+        }
+        val updatedRecord = existing.copy(deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED)
+        val messages = state.messages.toMutableList().also { it[index] = updatedRecord }
+        persist(state.copy(messages = messages))
+        return updatedRecord.copyForCaller()
     }
 
     @Synchronized
@@ -83,15 +146,23 @@ internal class ConversationHistoryRepository(
         return state
     }
 
+    private fun emptyState(ownerIdentityId: ByteArray): ConversationHistoryState = ConversationHistoryState(
+        ownerIdentityId = ownerIdentityId.copyOf(),
+        messages = emptyList(),
+    )
+
+    private fun persist(state: ConversationHistoryState) {
+        val encoded = ConversationHistoryStateCodec.encode(state)
+        if (!stateStore.write(encoded)) {
+            throw ConversationHistoryException("Unable to durably persist conversation history")
+        }
+    }
+
     private fun inboundPendingAck(
         ownerIdentityId: ByteArray,
         handoff: SessionMessageHandoff,
     ): ConversationHistoryRecord {
-        if (handoff.localContactId.size != SessionStateCodec.LOCAL_CONTACT_ID_BYTES) {
-            throw ConversationHistoryException("Inbound history handoff contact id is invalid")
-        }
-        requireIdentity(handoff.peerIdentityId, "inbound history handoff peer identity id")
-        requireMessageId(handoff.messageId)
+        validateHandoffShape(handoff)
         if (handoff.direction != SessionStateCodec.HANDOFF_DIRECTION_INBOUND) {
             throw ConversationHistoryException("Only inbound handoffs may enter PENDING_ACK")
         }
@@ -121,19 +192,61 @@ internal class ConversationHistoryRepository(
         )
     }
 
+    private fun outboundPendingAcceptance(
+        ownerIdentityId: ByteArray,
+        handoff: SessionMessageHandoff,
+    ): ConversationHistoryRecord {
+        validateHandoffShape(handoff)
+        if (handoff.direction != SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND) {
+            throw ConversationHistoryException("Only outbound handoffs may enter PENDING_ACCEPTANCE")
+        }
+
+        val plaintext = decodeCanonicalPlaintext(handoff.encodedPlaintext)
+        val envelope = decodeCanonicalEnvelope(handoff.encodedEnvelope)
+        if (
+            !plaintext.senderIdentityId.contentEquals(ownerIdentityId) ||
+            !plaintext.recipientIdentityId.contentEquals(handoff.peerIdentityId) ||
+            !plaintext.messageId.contentEquals(handoff.messageId) ||
+            !envelope.senderIdentityId.contentEquals(ownerIdentityId) ||
+            !envelope.recipientIdentityId.contentEquals(handoff.peerIdentityId) ||
+            !envelope.messageId.contentEquals(handoff.messageId) ||
+            envelope.expiresAtEpochSeconds != plaintext.expiresAtEpochSeconds
+        ) {
+            throw ConversationHistoryException("Outbound history handoff does not match authenticated messaging context")
+        }
+
+        return ConversationHistoryRecord(
+            localContactId = handoff.localContactId.copyOf(),
+            peerIdentityId = handoff.peerIdentityId.copyOf(),
+            messageId = handoff.messageId.copyOf(),
+            direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+            deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            encodedPlaintext = handoff.encodedPlaintext.copyOf(),
+            envelopeDigest = MessageDigest.getInstance("SHA-256").digest(handoff.encodedEnvelope),
+        )
+    }
+
+    private fun validateHandoffShape(handoff: SessionMessageHandoff) {
+        if (handoff.localContactId.size != SessionStateCodec.LOCAL_CONTACT_ID_BYTES) {
+            throw ConversationHistoryException("History handoff contact id is invalid")
+        }
+        requireIdentity(handoff.peerIdentityId, "history handoff peer identity id")
+        requireMessageId(handoff.messageId)
+    }
+
     private fun decodeCanonicalPlaintext(encoded: ByteArray): MessagingPlaintext {
         val value = try {
             MessagingWire.decodePlaintext(encoded)
         } catch (error: Exception) {
-            throw ConversationHistoryException("Inbound history plaintext is invalid", error)
+            throw ConversationHistoryException("Conversation history plaintext is invalid", error)
         }
         val canonical = try {
             MessagingWire.encodePlaintext(value)
         } catch (error: Exception) {
-            throw ConversationHistoryException("Inbound history plaintext is invalid", error)
+            throw ConversationHistoryException("Conversation history plaintext is invalid", error)
         }
         if (!canonical.contentEquals(encoded)) {
-            throw ConversationHistoryException("Inbound history plaintext is not canonical")
+            throw ConversationHistoryException("Conversation history plaintext is not canonical")
         }
         return value
     }
@@ -142,17 +255,25 @@ internal class ConversationHistoryRepository(
         val value = try {
             MessagingWire.decodeEnvelope(encoded)
         } catch (error: Exception) {
-            throw ConversationHistoryException("Inbound history envelope is invalid", error)
+            throw ConversationHistoryException("Conversation history envelope is invalid", error)
         }
         val canonical = try {
             MessagingWire.encodeEnvelope(value)
         } catch (error: Exception) {
-            throw ConversationHistoryException("Inbound history envelope is invalid", error)
+            throw ConversationHistoryException("Conversation history envelope is invalid", error)
         }
         if (!canonical.contentEquals(encoded)) {
-            throw ConversationHistoryException("Inbound history envelope is not canonical")
+            throw ConversationHistoryException("Conversation history envelope is not canonical")
         }
         return value
+    }
+
+    private fun requireSendAccepted(value: MessagingSendAccepted) {
+        if (value.protocolVersion != MESSAGING_PROTOCOL_VERSION) {
+            throw ConversationHistoryException("Outbound acceptance protocol version is invalid")
+        }
+        requireIdentity(value.recipientIdentityId, "outbound acceptance recipient identity id")
+        requireMessageId(value.messageId)
     }
 
     private fun requireIdentity(value: ByteArray, name: String) {
@@ -163,7 +284,7 @@ internal class ConversationHistoryRepository(
 
     private fun requireMessageId(value: ByteArray) {
         if (value.size != MESSAGING_MESSAGE_ID_BYTES || value.all { it == 0.toByte() }) {
-            throw ConversationHistoryException("Inbound history message id is invalid")
+            throw ConversationHistoryException("Conversation history message id is invalid")
         }
     }
 
@@ -175,7 +296,7 @@ internal class ConversationHistoryRepository(
             first.peerIdentityId.contentEquals(second.peerIdentityId) &&
             first.messageId.contentEquals(second.messageId)
 
-    private fun sameRecord(
+    private fun sameRecordPayload(
         first: ConversationHistoryRecord,
         second: ConversationHistoryRecord,
     ): Boolean =
@@ -183,7 +304,6 @@ internal class ConversationHistoryRepository(
             first.peerIdentityId.contentEquals(second.peerIdentityId) &&
             first.messageId.contentEquals(second.messageId) &&
             first.direction == second.direction &&
-            first.deliveryState == second.deliveryState &&
             first.encodedPlaintext.contentEquals(second.encodedPlaintext) &&
-            first.envelopeDigest.contentEquals(second.envelopeDigest)
+            MessageDigest.isEqual(first.envelopeDigest, second.envelopeDigest)
 }

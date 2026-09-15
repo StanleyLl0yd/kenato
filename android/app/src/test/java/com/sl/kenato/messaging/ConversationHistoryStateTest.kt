@@ -28,6 +28,54 @@ class ConversationHistoryStateTest {
     }
 
     @Test
+    fun outboundPendingAndAcceptedHistoryRoundTrip() {
+        val pending = outboundRecord(1, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE)
+        val accepted = outboundRecord(2, ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED)
+        val decoded = ConversationHistoryStateCodec.decode(
+            ConversationHistoryStateCodec.encode(
+                ConversationHistoryState(OWNER.copyOf(), listOf(pending, accepted)),
+            ),
+        )
+
+        assertEquals(2, decoded.messages.size)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            decoded.messages[0].deliveryState,
+        )
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, decoded.messages[1].deliveryState)
+        decoded.messages.forEach { actual ->
+            assertEquals(SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, actual.direction)
+            val plaintext = MessagingWire.decodePlaintext(actual.encodedPlaintext)
+            assertArrayEquals(OWNER, plaintext.senderIdentityId)
+            assertArrayEquals(PEER, plaintext.recipientIdentityId)
+        }
+    }
+
+    @Test
+    fun directionDeliveryStateMismatchFailsClosed() {
+        assertThrows(ConversationHistoryException::class.java) {
+            ConversationHistoryStateCodec.encode(
+                ConversationHistoryState(
+                    OWNER.copyOf(),
+                    listOf(record(1).copy(deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE)),
+                ),
+            )
+        }
+        assertThrows(ConversationHistoryException::class.java) {
+            ConversationHistoryStateCodec.encode(
+                ConversationHistoryState(
+                    OWNER.copyOf(),
+                    listOf(
+                        outboundRecord(1, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE).copy(
+                            deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK,
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
     fun checksumCorruptionFailsClosed() {
         val encoded = ConversationHistoryStateCodec.encode(
             ConversationHistoryState(OWNER.copyOf(), listOf(record(1))),
@@ -43,7 +91,7 @@ class ConversationHistoryStateTest {
     fun duplicateAuthenticatedIdempotencyKeyFailsClosed() {
         val first = record(1)
         val conflicting = first.copy(
-            encodedPlaintext = encodedPlaintext(1, "different"),
+            encodedPlaintext = encodedPlaintext(1, "different", SessionStateCodec.HANDOFF_DIRECTION_INBOUND),
             envelopeDigest = bytes(0x7f, ConversationHistoryStateCodec.ENVELOPE_DIGEST_BYTES),
         )
 
@@ -90,14 +138,25 @@ class ConversationHistoryStateTest {
             messageId = messageId(index),
             direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
             deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK,
-            encodedPlaintext = encodedPlaintext(index, text),
+            encodedPlaintext = encodedPlaintext(index, text, SessionStateCodec.HANDOFF_DIRECTION_INBOUND),
             envelopeDigest = bytes(index, ConversationHistoryStateCodec.ENVELOPE_DIGEST_BYTES),
         )
 
-    private fun encodedPlaintext(index: Int, text: String): ByteArray = MessagingWire.encodePlaintext(
+    private fun outboundRecord(index: Int, deliveryState: Int): ConversationHistoryRecord =
+        ConversationHistoryRecord(
+            localContactId = CONTACT.copyOf(),
+            peerIdentityId = PEER.copyOf(),
+            messageId = messageId(index),
+            direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+            deliveryState = deliveryState,
+            encodedPlaintext = encodedPlaintext(index, "message-$index", SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND),
+            envelopeDigest = bytes(index, ConversationHistoryStateCodec.ENVELOPE_DIGEST_BYTES),
+        )
+
+    private fun encodedPlaintext(index: Int, text: String, direction: Int): ByteArray = MessagingWire.encodePlaintext(
         MessagingPlaintext(
-            senderIdentityId = PEER.copyOf(),
-            recipientIdentityId = OWNER.copyOf(),
+            senderIdentityId = if (direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND) PEER.copyOf() else OWNER.copyOf(),
+            recipientIdentityId = if (direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND) OWNER.copyOf() else PEER.copyOf(),
             messageId = messageId(index),
             sentAtEpochSeconds = 100,
             expiresAtEpochSeconds = 200,

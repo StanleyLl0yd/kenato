@@ -98,6 +98,135 @@ class ConversationHistoryRepositoryTest {
     }
 
     @Test
+    fun outboundPendingAcceptanceIsDurableBeforeSend() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+
+        val imported = fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+
+        assertEquals(1, fixture.store.writeCount)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, imported.deliveryState)
+        assertEquals(SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, imported.direction)
+        val pending = fixture.newRepository().pendingOutboundAcceptances(OWNER).single()
+        assertArrayEquals(handoff.messageId, pending.messageId)
+        assertArrayEquals(handoff.encodedPlaintext, pending.encodedPlaintext)
+    }
+
+    @Test
+    fun identicalOutboundReimportIsIdempotent() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        val second = fixture.newRepository().importOutboundPendingAcceptance(OWNER, handoff)
+
+        assertEquals(1, fixture.store.writeCount)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, second.deliveryState)
+        assertEquals(1, fixture.newRepository().currentState(OWNER)!!.messages.size)
+    }
+
+    @Test
+    fun conflictingOutboundSameKeyPlaintextOrEnvelopeIsRejected() {
+        val fixture = Fixture()
+        fixture.repository.importOutboundPendingAcceptance(OWNER, outboundHandoff(2))
+
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.newRepository().importOutboundPendingAcceptance(
+                OWNER,
+                outboundHandoff(2, text = "different"),
+            )
+        }
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.newRepository().importOutboundPendingAcceptance(
+                OWNER,
+                outboundHandoff(2, ciphertext = "different-ciphertext".toByteArray()),
+            )
+        }
+        assertEquals(1, fixture.store.writeCount)
+    }
+
+    @Test
+    fun sendAcceptedIsDurableAndIdempotentBeforeStagedEnvelopeRemoval() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        val accepted = MessagingSendAccepted(PEER.copyOf(), handoff.messageId.copyOf())
+
+        val first = fixture.repository.markOutboundAccepted(OWNER, accepted)
+        val second = fixture.newRepository().markOutboundAccepted(OWNER, accepted)
+
+        assertEquals(2, fixture.store.writeCount)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, first.deliveryState)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, second.deliveryState)
+        assertTrue(fixture.newRepository().pendingOutboundAcceptances(OWNER).isEmpty())
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+            fixture.newRepository().currentState(OWNER)!!.messages.single().deliveryState,
+        )
+    }
+
+    @Test
+    fun acceptedOutboundReimportPreservesAcceptanceAcrossCrashWindow() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        fixture.repository.markOutboundAccepted(
+            OWNER,
+            MessagingSendAccepted(PEER.copyOf(), handoff.messageId.copyOf()),
+        )
+
+        val recovered = fixture.newRepository().importOutboundPendingAcceptance(OWNER, handoff)
+
+        assertEquals(2, fixture.store.writeCount)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, recovered.deliveryState)
+        assertTrue(fixture.newRepository().pendingOutboundAcceptances(OWNER).isEmpty())
+    }
+
+    @Test
+    fun failedAcceptanceWriteLeavesOutboundPending() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        fixture.store.failWrites = true
+
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.markOutboundAccepted(
+                OWNER,
+                MessagingSendAccepted(PEER.copyOf(), handoff.messageId.copyOf()),
+            )
+        }
+
+        fixture.store.failWrites = false
+        assertEquals(1, fixture.store.writeCount)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            fixture.newRepository().pendingOutboundAcceptances(OWNER).single().deliveryState,
+        )
+    }
+
+    @Test
+    fun unknownOrMalformedSendAcceptedFailsClosed() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.markOutboundAccepted(
+                OWNER,
+                MessagingSendAccepted(bytes(0x44, MESSAGING_IDENTITY_BYTES), handoff.messageId.copyOf()),
+            )
+        }
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.markOutboundAccepted(
+                OWNER,
+                MessagingSendAccepted(PEER.copyOf(), handoff.messageId.copyOf(), protocolVersion = 2),
+            )
+        }
+        assertEquals(1, fixture.store.writeCount)
+        assertEquals(1, fixture.repository.pendingOutboundAcceptances(OWNER).size)
+    }
+
+    @Test
     fun persistedOwnerIdentityMismatchFailsClosed() {
         val fixture = Fixture()
         fixture.repository.importInboundPendingAck(OWNER, handoff(1))
@@ -125,16 +254,25 @@ class ConversationHistoryRepositoryTest {
         assertThrows(ConversationHistoryException::class.java) {
             fixture.repository.importInboundPendingAck(OWNER, envelopeWithUnknownField)
         }
+        val outbound = outboundHandoff(2)
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.importOutboundPendingAcceptance(
+                OWNER,
+                outbound.copy(encodedEnvelope = outbound.encodedEnvelope + byteArrayOf(0x78, 0x01)),
+            )
+        }
         assertEquals(0, fixture.store.writeCount)
     }
 
     @Test
-    fun outboundHandoffCannotEnterPendingAckHistory() {
+    fun handoffDirectionsCannotEnterTheWrongHistoryState() {
         val fixture = Fixture()
-        val outbound = handoff(1).copy(direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND)
 
         assertThrows(ConversationHistoryException::class.java) {
-            fixture.repository.importInboundPendingAck(OWNER, outbound)
+            fixture.repository.importInboundPendingAck(OWNER, outboundHandoff(2))
+        }
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.importOutboundPendingAcceptance(OWNER, handoff(1))
         }
         assertEquals(0, fixture.store.writeCount)
     }
@@ -208,19 +346,45 @@ class ConversationHistoryRepositoryTest {
             index: Int,
             text: String = "message-$index",
             ciphertext: ByteArray = "ciphertext-$index".toByteArray(),
+        ): SessionMessageHandoff = handoff(
+            index = index,
+            text = text,
+            ciphertext = ciphertext,
+            direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
+        )
+
+        private fun outboundHandoff(
+            index: Int,
+            text: String = "message-$index",
+            ciphertext: ByteArray = "ciphertext-$index".toByteArray(),
+        ): SessionMessageHandoff = handoff(
+            index = index,
+            text = text,
+            ciphertext = ciphertext,
+            direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+        )
+
+        private fun handoff(
+            index: Int,
+            text: String,
+            ciphertext: ByteArray,
+            direction: Int,
         ): SessionMessageHandoff {
             val messageId = messageId(index)
+            val inbound = direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND
+            val sender = if (inbound) PEER else OWNER
+            val recipient = if (inbound) OWNER else PEER
             val plaintext = MessagingPlaintext(
-                senderIdentityId = PEER.copyOf(),
-                recipientIdentityId = OWNER.copyOf(),
+                senderIdentityId = sender.copyOf(),
+                recipientIdentityId = recipient.copyOf(),
                 messageId = messageId.copyOf(),
                 sentAtEpochSeconds = 100,
                 expiresAtEpochSeconds = 200,
                 text = text,
             )
             val envelope = MessagingEnvelope(
-                senderIdentityId = PEER.copyOf(),
-                recipientIdentityId = OWNER.copyOf(),
+                senderIdentityId = sender.copyOf(),
+                recipientIdentityId = recipient.copyOf(),
                 messageId = messageId.copyOf(),
                 ciphertext = ciphertext.copyOf(),
                 expiresAtEpochSeconds = 200,
@@ -229,7 +393,7 @@ class ConversationHistoryRepositoryTest {
                 localContactId = CONTACT.copyOf(),
                 peerIdentityId = PEER.copyOf(),
                 messageId = messageId,
-                direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
+                direction = direction,
                 encodedPlaintext = MessagingWire.encodePlaintext(plaintext),
                 encodedEnvelope = MessagingWire.encodeEnvelope(envelope),
             )

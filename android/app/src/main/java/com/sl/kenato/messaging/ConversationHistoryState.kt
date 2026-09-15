@@ -31,6 +31,8 @@ internal object ConversationHistoryStateCodec {
     const val MAX_MESSAGES_PER_CONVERSATION = 1000
     const val MAX_CONVERSATION_BYTES = 4 * 1024 * 1024
     const val DELIVERY_STATE_PENDING_ACK = 1
+    const val DELIVERY_STATE_PENDING_ACCEPTANCE = 2
+    const val DELIVERY_STATE_ACCEPTED = 3
     const val ENVELOPE_DIGEST_BYTES = 32
 
     private const val FORMAT_VERSION = 1
@@ -149,11 +151,21 @@ internal object ConversationHistoryStateCodec {
         ) {
             throw ConversationHistoryException("Conversation history message id is invalid")
         }
-        if (record.direction != SessionStateCodec.HANDOFF_DIRECTION_INBOUND) {
-            throw ConversationHistoryException("Conversation history direction is unsupported")
-        }
-        if (record.deliveryState != DELIVERY_STATE_PENDING_ACK) {
-            throw ConversationHistoryException("Conversation history delivery state is unsupported")
+        when (record.direction) {
+            SessionStateCodec.HANDOFF_DIRECTION_INBOUND -> {
+                if (record.deliveryState != DELIVERY_STATE_PENDING_ACK) {
+                    throw ConversationHistoryException("Inbound conversation history delivery state is unsupported")
+                }
+            }
+            SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
+                if (
+                    record.deliveryState != DELIVERY_STATE_PENDING_ACCEPTANCE &&
+                    record.deliveryState != DELIVERY_STATE_ACCEPTED
+                ) {
+                    throw ConversationHistoryException("Outbound conversation history delivery state is unsupported")
+                }
+            }
+            else -> throw ConversationHistoryException("Conversation history direction is unsupported")
         }
         if (
             record.encodedPlaintext.isEmpty() ||
@@ -166,9 +178,19 @@ internal object ConversationHistoryStateCodec {
         }
 
         val plaintext = decodeCanonicalPlaintext(record.encodedPlaintext)
+        val expectedSender = if (record.direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND) {
+            record.peerIdentityId
+        } else {
+            ownerIdentityId
+        }
+        val expectedRecipient = if (record.direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND) {
+            ownerIdentityId
+        } else {
+            record.peerIdentityId
+        }
         if (
-            !plaintext.senderIdentityId.contentEquals(record.peerIdentityId) ||
-            !plaintext.recipientIdentityId.contentEquals(ownerIdentityId) ||
+            !plaintext.senderIdentityId.contentEquals(expectedSender) ||
+            !plaintext.recipientIdentityId.contentEquals(expectedRecipient) ||
             !plaintext.messageId.contentEquals(record.messageId)
         ) {
             throw ConversationHistoryException("Conversation history plaintext provenance is invalid")
