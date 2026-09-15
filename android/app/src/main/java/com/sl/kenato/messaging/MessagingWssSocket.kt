@@ -67,7 +67,7 @@ private class OkHttpMessagingSocket(
                         this@OkHttpMessagingSocket,
                         MessagingWssException("M4 WebSocket text frames are forbidden"),
                     )
-                    cancel()
+                    this@OkHttpMessagingSocket.cancel()
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
