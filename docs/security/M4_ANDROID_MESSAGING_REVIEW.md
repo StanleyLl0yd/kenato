@@ -23,11 +23,13 @@ A logical send has two durability layers:
 
 The sender performs history capacity preflight before advancing the ratchet. After the atomic M3 handoff exists, a history write failure does not trigger re-encryption: restart recovery imports the exact staged plaintext/envelope into history and then reuses the exact staged envelope bytes.
 
+Sender admission uses an outbound-only recovery path. It may reconcile staged outbound envelopes and terminal outbound cleanup, but it deliberately does not import or remove inbound handoffs and never creates inbound ACK work as a side effect of a foreground send attempt. Full inbound/outbound recovery remains owned by the WSS lifecycle, which is also responsible for emitting the resulting durable ACK work. This separation prevents foreground sending from racing the WSS inbound delivery/ACK path.
+
 `SendAccepted` is applied in crash-safe order: conversation history becomes `ACCEPTED` first, then the M3 staged envelope is removed. A crash between those writes is recovered by observing durable `ACCEPTED` and deleting the leftover handoff without resending.
 
 A staged outbound message that reaches its protocol TTL without a durable `SendAccepted` is persisted as terminal `EXPIRED` before its staged M3 handoff is removed. Application code exposes this as `EXPIRED_UNCONFIRMED`, not as a claim that the recipient definitely did not receive the message: an earlier WebSocket enqueue or server receipt may have succeeded while the acceptance response was lost. A crash after the terminal history write is recovered without another send.
 
-Before admitting a fresh logical send, the sender recovers older durable work and evaluates it through `WssMessagingOutboundAdmission`. That admission boundary synchronizes on the same coordinator monitor used by WSS callbacks and live flush. When no authenticated WSS exists, no application envelope can become newly in flight during the decision, so expired offline work may be durably terminalized before the **32 staged outbound sends** admission count is evaluated. Thus a device disconnected past TTL cannot be permanently blocked by 32 expired offline work items.
+Before admitting a fresh logical send, the sender recovers older durable outbound work and evaluates it through `WssMessagingOutboundAdmission`. That admission boundary synchronizes on the same coordinator monitor used by WSS callbacks and live flush. When no authenticated WSS exists, no application envelope can become newly in flight during the decision, so expired offline work may be durably terminalized before the **32 staged outbound sends** admission count is evaluated. Thus a device disconnected past TTL cannot be permanently blocked by 32 expired offline work items.
 
 While WSS is `AUTHENTICATED`, sender-side terminalization is deliberately deferred for all recovered sends. The transport retains exact per-key in-flight authority: an envelope that has already been accepted by `sendBinary` must remain eligible for a later `SendAccepted`, even if its TTL crosses before the acceptance frame arrives. This conservative authenticated-state rule also removes the check-then-send race between admission and `pumpRecovery`; WSS socket work and admission use the same monitor. The WSS transport itself terminalizes only recovered keys not already in `sentThisConnection` before queueing them.
 
@@ -66,9 +68,9 @@ The M3 session handoff journal is independently bounded to 64 entries / 4 MiB, w
 
 ## Authenticated WSS lifecycle
 
-Android uses the exact-pinned OkHttp `5.5.0` dependency for the M4 WebSocket adapter. The adapter adds no logging interceptor, custom trust manager, hostname override or alternate TLS stack. A service origin must be a bare HTTPS origin; the coordinator derives the exact `wss://host[:port]/v1/messaging/ws` endpoint.
+Android uses the exact-pinned OkHttp `5.5.0` dependency for the M4 WebSocket adapter. `OkHttpMessagingSocketFactory` owns its dedicated client instead of accepting an externally configured/shared client. HTTP redirects and HTTPS↔HTTP redirects are explicitly disabled, so a server response cannot move the reviewed `wss://host[:port]/v1/messaging/ws` handshake to another origin. The client adds no logging interceptor, custom trust manager, hostname override or alternate TLS stack; certificate and hostname validation remain OkHttp/platform defaults.
 
-Application frames are binary only and bounded by the shared 100 KiB wire-frame limit. Text frames fail closed. One coordinator owns at most one active socket.
+A service origin must be a bare HTTPS origin and the coordinator derives the exact `wss://host[:port]/v1/messaging/ws` endpoint. Application frames are binary only and bounded by the shared 100 KiB wire-frame limit. Text frames fail closed. One coordinator owns at most one active socket.
 
 Connection authentication reuses the long-lived Kenato P-256 identity. The client validates the server challenge, signs the canonical `KENATO-MESSAGING-AUTH-V1` payload and does not send/recover application work until the server confirms authentication.
 
@@ -107,7 +109,7 @@ Durability failures are not converted into ACK/send success. Recovery keeps the 
 
 ## Dependency and privacy posture
 
-The new Android network dependency is exact-pinned in the Gradle version catalog and remains covered by Dependency Review, Android/CodeQL build paths and repository-wide `make test`. The WSS adapter relies on platform/OkHttp TLS validation rather than an application-local trust bypass.
+The new Android network dependency is exact-pinned in the Gradle version catalog and remains covered by Dependency Review, Android/CodeQL build paths and repository-wide `make test`. The dedicated WSS client relies on platform/OkHttp TLS validation, disables redirect follow-ups, and cannot be replaced at construction with a separately configured application client.
 
 M4 does not claim metadata hiding from the Kenato server. Routing identities, random message id, expiry, ciphertext size, connection timing and delivery bookkeeping remain server-visible by design. Ordinary text and semantic application content remain inside M3 authenticated ciphertext on the network/server boundary.
 
@@ -117,9 +119,11 @@ Before #53 is complete:
 
 - session-state v1→v2 and conversation-history v1→v2 migration tests must pass;
 - outbound/inbound atomic handoff failure and restart windows must pass;
+- foreground outbound recovery must leave inbound handoffs/ACK state untouched;
 - offline/reconnect/live flush must reuse exact staged envelope bytes without re-encryption;
 - duplicate/conflicting envelope and canonical-ciphertext tests must pass;
 - expiry-before-send, offline-expiry admission, authenticated in-flight deferral, terminal-idempotence and receive-time-boundary tests must pass;
+- the dedicated WSS OkHttp client must keep redirects disabled and contain no application interceptors;
 - safe pruning must respect pending-send/pending-ACK durability rules;
 - the minimal conversation API must expose only validated durable records;
 - Android lint/unit/build and repository-wide `make test` must pass;

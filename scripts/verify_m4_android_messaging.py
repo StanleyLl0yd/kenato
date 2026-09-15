@@ -163,20 +163,26 @@ for fragment in (
         fragment,
     )
 
-socket = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssSocket.kt")
+socket_path = "android/app/src/main/java/com/sl/kenato/messaging/MessagingWssSocket.kt"
+socket = read(socket_path)
 for fragment in (
+    "internal class OkHttpMessagingSocketFactory private constructor(",
+    "constructor() : this(buildMessagingClient())",
+    "OkHttpClient.Builder()",
+    ".followRedirects(false)",
+    ".followSslRedirects(false)",
     "client.newWebSocket(",
     "MessagingWssException(\"M4 WebSocket text frames are forbidden\")",
     "value.size > MESSAGING_MAX_WIRE_FRAME_BYTES",
 ):
-    require("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssSocket.kt", socket, fragment)
+    require(socket_path, socket, fragment)
 for fragment in (
     "HttpLoggingInterceptor",
     "hostnameVerifier",
     "sslSocketFactory",
     "X509TrustManager",
 ):
-    forbid("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssSocket.kt", socket, fragment)
+    forbid(socket_path, socket, fragment)
 
 wss = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssCoordinator.kt")
 for fragment in (
@@ -214,6 +220,8 @@ forbid(
 outbound_path = "android/app/src/main/java/com/sl/kenato/messaging/MessagingOutboundSend.kt"
 outbound = read(outbound_path)
 for fragment in (
+    "outboundSends = coordinator.recoverOutbound(ownerIdentityId)",
+    "inboundAcks = emptyList()",
     "internal class WssMessagingOutboundAdmission(",
     "synchronized(wss)",
     "if (wss.currentState() == MessagingWssState.AUTHENTICATED)",
@@ -232,11 +240,20 @@ for fragment in (
 forbid(
     outbound_path,
     outbound,
+    "override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = coordinator.recover(ownerIdentityId)",
+)
+forbid(
+    outbound_path,
+    outbound,
     "if (plan.outboundSends.size >= MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS)",
 )
 
-recovery = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingRecoveryCoordinator.kt")
+recovery_path = "android/app/src/main/java/com/sl/kenato/messaging/MessagingRecoveryCoordinator.kt"
+recovery = read(recovery_path)
 for fragment in (
+    "fun recoverOutbound(",
+    "includeInbound = false",
+    "if (includeInbound) recoverInbound(ownerIdentityId, handoff)",
     "history.importInboundPendingAck",
     "history.importOutboundPendingAcceptance",
     "val wasExpired = before.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED",
@@ -246,7 +263,7 @@ for fragment in (
     "if (!removed && !wasExpired)",
     "history.markOutboundAccepted",
 ):
-    require("android/app/src/main/java/com/sl/kenato/messaging/MessagingRecoveryCoordinator.kt", recovery, fragment)
+    require(recovery_path, recovery, fragment)
 
 conversation = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingConversationService.kt")
 for fragment in (
@@ -297,6 +314,9 @@ required_tests = {
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingRecoveryCoordinatorTest.kt": (
         "class MessagingRecoveryCoordinatorTest",
     ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingOutboundRecoveryIsolationTest.kt": (
+        "outboundOnlyRecoveryLeavesInboundHandoffAndAckStateUntouched",
+    ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingOfflineExpiryRecoveryTest.kt": (
         "expiredRecoveredQueueIsTerminalizedOfflineBeforeFreshAdmission",
         "outboundStageUsesOneClockSnapshotAcrossNativeEncryption",
@@ -313,6 +333,9 @@ required_tests = {
         "flushDurableWorkSendsNewlyStagedEnvelopeOnlyOncePerConnection",
         "expiredNewlyStagedWorkIsTerminalizedWithoutFailingLiveSocket",
     ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSocketPolicyTest.kt": (
+        "factoryOwnedClientDoesNotFollowRedirectsOrInstallInterceptors",
+    ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingConversationServiceTest.kt": (
         "class MessagingConversationServiceTest",
     ),
@@ -328,8 +351,10 @@ for fragment in (
     "1000 messages / 4 MiB",
     "4096 messages / 16 MiB",
     "32 staged outbound sends",
+    "outbound-only recovery path",
     "expired offline work",
     "authenticated WSS",
+    "redirects",
     "EXPIRED_UNCONFIRMED",
     "one receive-time snapshot",
     "one stage-time snapshot",
