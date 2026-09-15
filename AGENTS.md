@@ -38,9 +38,9 @@ Brand:
 
 Current repository phase:
 
-M0–M3 are complete. M4 — Minimal Messaging has not started. The completed M3 boundary includes the reviewed E2EE session engine/bootstrap and the final repository-wide #35 verification baseline.
+M0–M3 are complete. M4 — Minimal Messaging is active under tracker #49. #50 protocol/auth, #51 bounded mailbox persistence, and #52 authenticated WSS/direct routing are complete; #53 Android messaging/history is the current slice and #54 final M4 end-to-end/security verification follows it.
 
-Do not start M4 or any later-milestone implementation merely because M3 is complete or the architecture could support it. Begin a later milestone only when the project owner or an explicitly active milestone directs that implementation. Repository-wide audit/refactor/hardening work must preserve the completed M3 boundary and must not silently grow into M4 product work.
+Do not start M5 or later-milestone implementation while M4 is active. After M4 is complete and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate; M5 remains blocked until #59 is complete. Repository-wide audit/refactor/hardening work must preserve completed milestone boundaries and must not silently grow into a later product milestone.
 
 Kenato 1.0 is intentionally narrow:
 
@@ -342,7 +342,7 @@ For GitHub Actions and CI:
 - ordinary pull-request workflows must use `pull_request`, not `pull_request_target`;
 - do not inherit reusable-workflow secrets or expose production signing/deployment secrets to untrusted PR code;
 - repository CI supply-chain policy checks are mandatory and must stay green;
-- repository-wide `make test`, protolint, Go/Rust vulnerability scanning, Dependency Review license/vulnerability policy, and CodeQL coverage for Go, Java/Kotlin, Rust, and Actions are part of the current post-M3 verification baseline;
+- repository-wide `make test`, protolint, Go/Rust vulnerability scanning, Dependency Review license/vulnerability policy, and CodeQL coverage for Go, Java/Kotlin, Rust, and Actions are part of the current verification baseline;
 - merge gates must include the relevant build/tests, SAST, secret scan, dependency review/vulnerability scan, and CodeQL checks that are supported by the current stack.
 
 Release integrity rules:
@@ -454,7 +454,7 @@ Depending on repository state and changed area, verification can include:
 - server build;
 - deployment/config validation.
 
-Before a release or full audit, perform repository-wide verification. The current post-M3 repository-wide contract is `make test` plus the required CI/security/CodeQL gates documented in `docs/development/TOOLCHAIN.md` and `docs/security/GITHUB_SETTINGS.md`.
+Before a release or full audit, perform repository-wide verification. The current repository-wide contract is `make test` plus the required CI/security/CodeQL gates documented in `docs/development/TOOLCHAIN.md` and `docs/security/GITHUB_SETTINGS.md`.
 
 Never claim a test, build, security scan, race check, or other verification step passed unless it was actually run and completed successfully.
 

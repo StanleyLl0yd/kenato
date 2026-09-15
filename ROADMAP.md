@@ -73,7 +73,29 @@ Status: **Active** (2026-09-14; tracker #49).
 - local conversation history;
 - server deletion after acknowledged delivery.
 
-Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **active**; #53 Android transport/history — pending; #54 final end-to-end/security verification — pending. M5 remains out of scope until M4 is complete.
+Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **complete**; #53 Android transport/history — **active**; #54 final end-to-end/security verification — pending.
+
+Exit: end-to-end minimal messaging is durable, bounded, identity-bound, restart/reconnect safe, reviewed across Android/server boundaries, and exact-main green with no unresolved Critical/High M4 finding.
+
+## M4.5 — Closed Messaging Alpha `0.1.0-alpha.1`
+
+Status: **Planned**; release gate tracked by #59. It starts only after M4 is complete and exact `main` is green.
+
+This is a small messaging-only pre-voice cohort, not the formal M9 Private Alpha:
+
+- signed Android APK built from the exact reviewed `main` commit;
+- direct distribution to a small trusted cohort (initially roughly 2–10 testers; public store publication is not required);
+- at least two physical Android devices;
+- clean install and identity persistence;
+- invite/contact establishment and M3 session bootstrap;
+- online E2EE text and offline mailbox/reconnect delivery;
+- duplicate/retry/ACK behavior without duplicate visible history;
+- process death, relaunch and device reboot recovery;
+- APK update preserving identity/session/history;
+- Wi-Fi/mobile-network loss and recovery;
+- no third-party analytics/crash SDK or plaintext diagnostics added merely for the alpha.
+
+Exit: alpha blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.** The broader call-quality/OEM/TURN/battery Private Alpha remains M9.
 
 ## M5 — Voice Core
 
