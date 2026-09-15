@@ -3,6 +3,7 @@ package com.sl.kenato.messaging
 import com.sl.kenato.identity.LocalIdentityRepository
 import java.net.URI
 import java.time.Instant
+import java.util.Base64
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -31,11 +32,34 @@ internal interface MessagingIdentityAuthenticator {
 internal class LocalMessagingIdentityAuthenticator(
     private val repository: LocalIdentityRepository,
 ) : MessagingIdentityAuthenticator {
-    override fun identityId(): ByteArray = repository.current()?.identityId?.copyOf()
-        ?: throw MessagingWssException("Local identity is not initialized")
+    override fun identityId(): ByteArray {
+        val encoded = repository.current()?.identityId
+            ?: throw MessagingWssException("Local identity is not initialized")
+        if (encoded.isEmpty() || '=' in encoded || !BASE64_URL.matches(encoded)) {
+            throw MessagingWssException("Local identity id encoding is invalid")
+        }
+        val decoded = try {
+            BASE64_DECODER.decode(encoded)
+        } catch (error: IllegalArgumentException) {
+            throw MessagingWssException("Local identity id encoding is invalid", error)
+        }
+        if (
+            decoded.size != MESSAGING_IDENTITY_BYTES ||
+            BASE64_ENCODER.encodeToString(decoded) != encoded
+        ) {
+            throw MessagingWssException("Local identity id encoding is invalid")
+        }
+        return decoded
+    }
 
     override fun signProtocolPayload(payload: ByteArray): ByteArray =
         repository.signIdentityProtocolPayload(payload)
+
+    private companion object {
+        val BASE64_ENCODER: Base64.Encoder = Base64.getUrlEncoder().withoutPadding()
+        val BASE64_DECODER: Base64.Decoder = Base64.getUrlDecoder()
+        val BASE64_URL = Regex("^[A-Za-z0-9_-]+$")
+    }
 }
 
 internal interface MessagingRecoveryDriver {
