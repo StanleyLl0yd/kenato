@@ -19,12 +19,22 @@ class ConversationHistoryRepositoryTest {
 
         assertEquals(1, fixture.store.writeCount)
         assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK, imported.deliveryState)
-        assertTrue(fixture.repository.containsAuthenticatedInbound(OWNER, PEER, handoff.messageId))
+        assertTrue(
+            fixture.repository.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                handoff.encodedEnvelope,
+            ),
+        )
         val restarted = fixture.newRepository()
         val pending = restarted.pendingInboundAcks(OWNER).single()
         assertArrayEquals(handoff.messageId, pending.messageId)
         assertArrayEquals(handoff.encodedPlaintext, pending.encodedPlaintext)
-        assertTrue(restarted.containsAuthenticatedInbound(OWNER, PEER, handoff.messageId))
+        assertTrue(
+            restarted.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                handoff.encodedEnvelope,
+            ),
+        )
     }
 
     @Test
@@ -59,6 +69,32 @@ class ConversationHistoryRepositoryTest {
         }
         assertEquals(1, fixture.store.writeCount)
         assertEquals(1, fixture.newRepository().currentState(OWNER)!!.messages.size)
+    }
+
+    @Test
+    fun authenticatedDuplicateMatchRequiresExactCanonicalEnvelope() {
+        val fixture = Fixture()
+        val original = handoff(1)
+        fixture.repository.importInboundPendingAck(OWNER, original)
+
+        assertTrue(
+            fixture.repository.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                original.encodedEnvelope,
+            ),
+        )
+        assertFalse(
+            fixture.repository.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                handoff(1, ciphertext = "different-ciphertext".toByteArray()).encodedEnvelope,
+            ),
+        )
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                original.encodedEnvelope + byteArrayOf(0x78, 0x01),
+            )
+        }
     }
 
     @Test
@@ -107,14 +143,20 @@ class ConversationHistoryRepositoryTest {
     fun failedHistoryWriteDoesNotPublishPendingAck() {
         val fixture = Fixture()
         fixture.store.failWrites = true
+        val handoff = handoff(1)
 
         assertThrows(ConversationHistoryException::class.java) {
-            fixture.repository.importInboundPendingAck(OWNER, handoff(1))
+            fixture.repository.importInboundPendingAck(OWNER, handoff)
         }
 
         assertEquals(0, fixture.store.writeCount)
         assertEquals(null, fixture.repository.currentState(OWNER))
-        assertFalse(fixture.repository.containsAuthenticatedInbound(OWNER, PEER, messageId(1)))
+        assertFalse(
+            fixture.repository.matchesAuthenticatedInboundEnvelope(
+                OWNER,
+                handoff.encodedEnvelope,
+            ),
+        )
     }
 
     @Test

@@ -56,18 +56,21 @@ internal class ConversationHistoryRepository(
     }
 
     @Synchronized
-    fun containsAuthenticatedInbound(
+    fun matchesAuthenticatedInboundEnvelope(
         ownerIdentityId: ByteArray,
-        peerIdentityId: ByteArray,
-        messageId: ByteArray,
+        encodedEnvelope: ByteArray,
     ): Boolean {
         requireIdentity(ownerIdentityId, "owner identity id")
-        requireIdentity(peerIdentityId, "peer identity id")
-        requireMessageId(messageId)
+        val envelope = decodeCanonicalEnvelope(encodedEnvelope)
+        if (!envelope.recipientIdentityId.contentEquals(ownerIdentityId)) {
+            throw ConversationHistoryException("Inbound history envelope recipient does not match local identity")
+        }
+        val envelopeDigest = MessageDigest.getInstance("SHA-256").digest(encodedEnvelope)
         return loadState(ownerIdentityId)?.messages?.any {
             it.direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND &&
-                it.peerIdentityId.contentEquals(peerIdentityId) &&
-                it.messageId.contentEquals(messageId)
+                it.peerIdentityId.contentEquals(envelope.senderIdentityId) &&
+                it.messageId.contentEquals(envelope.messageId) &&
+                MessageDigest.isEqual(it.envelopeDigest, envelopeDigest)
         } == true
     }
 
