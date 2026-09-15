@@ -8,6 +8,7 @@ import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -120,11 +121,11 @@ class MessagingOutboundSendTest {
     }
 
     @Test
-    fun historyCapacityFailureOccursBeforeRatchetEncryption() {
+    fun nonPrunableHistoryCapacityFailureOccursBeforeRatchetEncryption() {
         val fullState = ConversationHistoryState(
             ownerIdentityId = OWNER.copyOf(),
             messages = List(ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION) { index ->
-                acceptedHistoryRecord(index + 1)
+                historyRecord(index + 1, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE)
             },
         )
         val fixture = Fixture(
@@ -142,12 +143,36 @@ class MessagingOutboundSendTest {
         assertEquals(0, fixture.historyStore.writeCount)
     }
 
+    @Test
+    fun acceptedHistoryIsDurablyPrunedBeforeRatchetEncryption() {
+        val fullState = ConversationHistoryState(
+            ownerIdentityId = OWNER.copyOf(),
+            messages = List(ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION) { index ->
+                historyRecord(index + 1, ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED)
+            },
+        )
+        val fixture = Fixture(
+            messageIds = SequenceMessageIds(messageId(2_000)),
+            initialHistory = ConversationHistoryStateCodec.encode(fullState),
+        )
+
+        val record = fixture.sender.stageText(OWNER, PEER, "new-after-prune", 60)
+
+        assertEquals(1, fixture.sessions.stageCount)
+        assertEquals(2, fixture.historyStore.writeCount)
+        val persisted = fixture.history.currentState(OWNER)!!
+        assertEquals(ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION, persisted.messages.size)
+        assertFalse(persisted.messages.any { it.messageId.contentEquals(messageId(1)) })
+        assertTrue(persisted.messages.any { it.messageId.contentEquals(record.messageId) })
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, record.deliveryState)
+    }
+
     private class Fixture(
         messageIds: MessagingMessageIdGenerator,
         initialHistory: ByteArray? = null,
     ) {
         val historyStore = FakeHistoryStore(initialHistory)
-        val history = ConversationHistoryRepository(historyStore)
+        val history = ConversationHistoryRepository(historyStore, ConversationHistoryClock { 100 })
         val sessions = FakeOutboundSessions()
         val recovery = FakeRecovery()
         val sender = DurableMessagingOutboundSender(
@@ -245,14 +270,14 @@ class MessagingOutboundSendTest {
         private val CONTACT = bytes(0x33, SessionStateCodec.LOCAL_CONTACT_ID_BYTES)
         private val NATIVE_CIPHERTEXT = byteArrayOf(9, 8, 7, 6)
 
-        private fun acceptedHistoryRecord(index: Int): ConversationHistoryRecord {
+        private fun historyRecord(index: Int, deliveryState: Int): ConversationHistoryRecord {
             val id = messageId(index)
             val plaintext = MessagingPlaintext(
                 senderIdentityId = OWNER.copyOf(),
                 recipientIdentityId = PEER.copyOf(),
                 messageId = id.copyOf(),
-                sentAtEpochSeconds = 100,
-                expiresAtEpochSeconds = 200,
+                sentAtEpochSeconds = index.toLong(),
+                expiresAtEpochSeconds = 10_000,
                 text = "m$index",
             )
             return ConversationHistoryRecord(
@@ -260,7 +285,7 @@ class MessagingOutboundSendTest {
                 peerIdentityId = PEER.copyOf(),
                 messageId = id,
                 direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
-                deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+                deliveryState = deliveryState,
                 encodedPlaintext = MessagingWire.encodePlaintext(plaintext),
                 envelopeDigest = ByteArray(ConversationHistoryStateCodec.ENVELOPE_DIGEST_BYTES) { 0x44.toByte() },
             )

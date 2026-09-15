@@ -45,6 +45,12 @@ internal object ConversationHistoryStateCodec {
             4 +
             4 +
             ENVELOPE_DIGEST_BYTES
+    private const val STATE_FIXED_BYTES =
+        4 +
+            4 +
+            MESSAGING_IDENTITY_BYTES +
+            4 +
+            DIGEST_BYTES
     private val magic = byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'H'.code.toByte(), '4'.code.toByte())
 
     fun encode(state: ConversationHistoryState): ByteArray {
@@ -104,6 +110,12 @@ internal object ConversationHistoryStateCodec {
         }
     }
 
+    internal fun retainedBytesForBounds(record: ConversationHistoryRecord): Long =
+        RECORD_FIXED_BYTES.toLong() + record.encodedPlaintext.size.toLong()
+
+    internal fun encodedBytesForBounds(messages: List<ConversationHistoryRecord>): Long =
+        STATE_FIXED_BYTES.toLong() + messages.sumOf(::retainedBytesForBounds)
+
     private fun validate(state: ConversationHistoryState) {
         if (state.ownerIdentityId.size != MESSAGING_IDENTITY_BYTES) {
             throw ConversationHistoryException("Conversation history owner identity id is invalid")
@@ -127,7 +139,7 @@ internal object ConversationHistoryStateCodec {
                 throw ConversationHistoryException("Conversation history exceeds the per-conversation message bound")
             }
             conversationCounts[peerKey] = count
-            val retainedBytes = (conversationBytes[peerKey] ?: 0L) + retainedBytes(record)
+            val retainedBytes = (conversationBytes[peerKey] ?: 0L) + retainedBytesForBounds(record)
             if (retainedBytes > MAX_CONVERSATION_BYTES) {
                 throw ConversationHistoryException("Conversation history exceeds the per-conversation byte bound")
             }
@@ -213,9 +225,6 @@ internal object ConversationHistoryStateCodec {
         }
         return value
     }
-
-    private fun retainedBytes(record: ConversationHistoryRecord): Long =
-        RECORD_FIXED_BYTES.toLong() + record.encodedPlaintext.size.toLong()
 
     private fun DataOutputStream.writeRecord(record: ConversationHistoryRecord) {
         write(record.localContactId)

@@ -3,9 +3,19 @@ package com.sl.kenato.messaging
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
 import java.security.MessageDigest
+import java.time.Instant
+
+internal fun interface ConversationHistoryClock {
+    fun nowEpochSeconds(): Long
+}
+
+private object SystemConversationHistoryClock : ConversationHistoryClock {
+    override fun nowEpochSeconds(): Long = Instant.now().epochSecond
+}
 
 internal class ConversationHistoryRepository(
     private val stateStore: ConversationHistoryStore,
+    private val clock: ConversationHistoryClock = SystemConversationHistoryClock,
 ) {
     @Synchronized
     fun currentState(ownerIdentityId: ByteArray): ConversationHistoryState? {
@@ -14,9 +24,9 @@ internal class ConversationHistoryRepository(
     }
 
     /**
-     * Validates that a new outbound plaintext can fit the exact retained-history bounds before the
-     * M3 ratchet is advanced. The placeholder digest is never persisted; retained history stores a
-     * fixed-size digest, so this is an exact capacity check for the eventual record.
+     * Makes room for a new outbound record before M3 advances the ratchet. Only records that are
+     * already safe to forget may be pruned. Any pruning required by this preflight is itself made
+     * durable before encryption starts, so the subsequent handoff import has a real history slot.
      */
     @Synchronized
     fun requireCanAppendOutbound(
@@ -57,7 +67,11 @@ internal class ConversationHistoryRepository(
         if (state.messages.any { sameIdempotencyKey(it, candidate) }) {
             throw ConversationHistoryException("Outbound history preflight message id already exists")
         }
-        ConversationHistoryStateCodec.encode(state.copy(messages = state.messages + candidate))
+
+        val admission = admitCandidate(state, candidate)
+        if (admission.prunedState.messages.size != state.messages.size) {
+            persist(admission.prunedState)
+        }
     }
 
     @Synchronized
@@ -79,7 +93,7 @@ internal class ConversationHistoryRepository(
             return existing.copyForCaller()
         }
 
-        persist(state.copy(messages = state.messages + candidate))
+        persist(admitCandidate(state, candidate).withCandidate)
         return candidate.copyForCaller()
     }
 
@@ -105,7 +119,7 @@ internal class ConversationHistoryRepository(
             return existing.copyForCaller()
         }
 
-        persist(state.copy(messages = state.messages + candidate))
+        persist(admitCandidate(state, candidate).withCandidate)
         return candidate.copyForCaller()
     }
 
@@ -182,6 +196,113 @@ internal class ConversationHistoryRepository(
                 it.messageId.contentEquals(envelope.messageId) &&
                 MessageDigest.isEqual(it.envelopeDigest, envelopeDigest)
         } == true
+    }
+
+    private fun admitCandidate(
+        state: ConversationHistoryState,
+        candidate: ConversationHistoryRecord,
+    ): HistoryAdmission {
+        // Validate the candidate in isolation before deleting any retained state. Existing state was
+        // already validated on decode, so later admission failures can only be bounded-capacity
+        // failures and never malformed candidate data.
+        ConversationHistoryStateCodec.encode(state.copy(messages = listOf(candidate)))
+
+        val working = state.messages.toMutableList()
+        var pruningNow: Long? = null
+        fun nowForPruning(): Long {
+            pruningNow?.let { return it }
+            val value = clock.nowEpochSeconds()
+            if (value < 0) throw ConversationHistoryException("Conversation history clock returned an invalid timestamp")
+            pruningNow = value
+            return value
+        }
+
+        while (!conversationFits(working, candidate)) {
+            val index = oldestSafelyPrunableIndex(
+                messages = working,
+                peerIdentityId = candidate.peerIdentityId,
+                nowEpochSeconds = nowForPruning(),
+            ) ?: throw ConversationHistoryException(
+                "Conversation history conversation capacity is exhausted by non-prunable messages",
+            )
+            working.removeAt(index)
+        }
+
+        while (!globalFits(working, candidate)) {
+            val index = oldestSafelyPrunableIndex(
+                messages = working,
+                peerIdentityId = null,
+                nowEpochSeconds = nowForPruning(),
+            ) ?: throw ConversationHistoryException(
+                "Conversation history global capacity is exhausted by non-prunable messages",
+            )
+            working.removeAt(index)
+        }
+
+        val prunedState = state.copy(messages = working.toList())
+        val withCandidate = state.copy(messages = working + candidate)
+        // Defensive exact validation keeps the pruning calculation mechanically tied to the codec.
+        ConversationHistoryStateCodec.encode(withCandidate)
+        return HistoryAdmission(prunedState, withCandidate)
+    }
+
+    private fun conversationFits(
+        messages: List<ConversationHistoryRecord>,
+        candidate: ConversationHistoryRecord,
+    ): Boolean {
+        var count = 1
+        var retainedBytes = ConversationHistoryStateCodec.retainedBytesForBounds(candidate)
+        messages.forEach { record ->
+            if (record.peerIdentityId.contentEquals(candidate.peerIdentityId)) {
+                count++
+                if (count > ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION) return false
+                retainedBytes += ConversationHistoryStateCodec.retainedBytesForBounds(record)
+                if (retainedBytes > ConversationHistoryStateCodec.MAX_CONVERSATION_BYTES) return false
+            }
+        }
+        return retainedBytes <= ConversationHistoryStateCodec.MAX_CONVERSATION_BYTES
+    }
+
+    private fun globalFits(
+        messages: List<ConversationHistoryRecord>,
+        candidate: ConversationHistoryRecord,
+    ): Boolean {
+        if (messages.size >= ConversationHistoryStateCodec.MAX_MESSAGES) return false
+        val stateBytes = ConversationHistoryStateCodec.encodedBytesForBounds(messages)
+        return stateBytes + ConversationHistoryStateCodec.retainedBytesForBounds(candidate) <=
+            ConversationHistoryStateCodec.MAX_STATE_BYTES
+    }
+
+    private fun oldestSafelyPrunableIndex(
+        messages: List<ConversationHistoryRecord>,
+        peerIdentityId: ByteArray?,
+        nowEpochSeconds: Long,
+    ): Int? {
+        var selectedIndex = -1
+        var selectedSentAt = Long.MAX_VALUE
+        messages.forEachIndexed { index, record ->
+            if (peerIdentityId != null && !record.peerIdentityId.contentEquals(peerIdentityId)) return@forEachIndexed
+            val plaintext = decodeCanonicalPlaintext(record.encodedPlaintext)
+            if (!isSafelyPrunable(record, plaintext, nowEpochSeconds)) return@forEachIndexed
+            if (selectedIndex < 0 || plaintext.sentAtEpochSeconds < selectedSentAt) {
+                selectedIndex = index
+                selectedSentAt = plaintext.sentAtEpochSeconds
+            }
+        }
+        return selectedIndex.takeIf { it >= 0 }
+    }
+
+    private fun isSafelyPrunable(
+        record: ConversationHistoryRecord,
+        plaintext: MessagingPlaintext,
+        nowEpochSeconds: Long,
+    ): Boolean = when (record.direction) {
+        SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND ->
+            record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED
+        SessionStateCodec.HANDOFF_DIRECTION_INBOUND ->
+            record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK &&
+                plaintext.expiresAtEpochSeconds <= nowEpochSeconds
+        else -> false
     }
 
     private fun loadState(ownerIdentityId: ByteArray): ConversationHistoryState? {
@@ -353,4 +474,9 @@ internal class ConversationHistoryRepository(
             first.direction == second.direction &&
             first.encodedPlaintext.contentEquals(second.encodedPlaintext) &&
             MessageDigest.isEqual(first.envelopeDigest, second.envelopeDigest)
+
+    private data class HistoryAdmission(
+        val prunedState: ConversationHistoryState,
+        val withCandidate: ConversationHistoryState,
+    )
 }
