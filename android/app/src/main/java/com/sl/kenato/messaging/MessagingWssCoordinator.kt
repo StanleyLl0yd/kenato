@@ -154,6 +154,19 @@ internal class MessagingWssCoordinator(
     fun currentState(): MessagingWssState = state
 
     @Synchronized
+    fun flushDurableWork() {
+        val socket = activeSocket ?: return
+        if (!running || state != MessagingWssState.AUTHENTICATED) return
+        try {
+            pumpRecovery(socket)
+        } catch (_: MessagingWssRetryException) {
+            retryConnection(socket)
+        } catch (_: Exception) {
+            failClosed(socket)
+        }
+    }
+
+    @Synchronized
     fun start() {
         if (running) return
         running = true
