@@ -48,6 +48,10 @@ internal class LocalMessagingOutboundSessionDriver(
     )
 }
 
+/**
+ * Sender admission needs only durable outbound work. Implementations must not recover or complete
+ * inbound handoffs as a side effect of a foreground send attempt.
+ */
 internal fun interface MessagingOutboundRecovery {
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan
 }
@@ -55,7 +59,10 @@ internal fun interface MessagingOutboundRecovery {
 internal class CoordinatorMessagingOutboundRecovery(
     private val coordinator: MessagingRecoveryCoordinator,
 ) : MessagingOutboundRecovery {
-    override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = coordinator.recover(ownerIdentityId)
+    override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = MessagingRecoveryPlan(
+        outboundSends = coordinator.recoverOutbound(ownerIdentityId),
+        inboundAcks = emptyList(),
+    )
 }
 
 /**
@@ -153,10 +160,11 @@ internal class DurableMessagingOutboundSender(
 
         val now = nowEpochSeconds()
 
-        // Reconcile every older crypto handoff first. Expired work may leave the lower 32-send
-        // admission bound only when the transport admission boundary proves terminalization cannot
-        // race an authenticated in-flight send. Otherwise it remains active until transport owns
-        // the next safe transition.
+        // Reconcile every older outbound crypto handoff first. Inbound recovery remains owned by
+        // the WSS lifecycle, so a foreground send cannot import/complete an inbound delivery as a
+        // side effect. Expired outbound work may leave the lower 32-send admission bound only when
+        // the transport admission boundary proves terminalization cannot race an authenticated
+        // in-flight send. Otherwise it remains active until transport owns the next safe transition.
         val plan = recovery.recover(ownerIdentityId.copyOf())
         var activeStagedSends = 0
         plan.outboundSends.forEach { recovered ->

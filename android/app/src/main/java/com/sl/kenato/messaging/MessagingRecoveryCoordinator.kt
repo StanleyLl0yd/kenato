@@ -65,44 +65,11 @@ internal class MessagingRecoveryCoordinator(
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
         requireIdentity(ownerIdentityId)
         val handoffs = sessions.pendingMessageHandoffs(ownerIdentityId)
-        val recoveredSends = ArrayList<MessagingRecoveredSend>()
-        val pendingSendKeys = HashSet<MessageKey>()
-
-        handoffs.forEach { handoff ->
-            when (handoff.direction) {
-                SessionStateCodec.HANDOFF_DIRECTION_INBOUND -> recoverInbound(ownerIdentityId, handoff)
-                SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
-                    val record = history.importOutboundPendingAcceptance(ownerIdentityId, handoff)
-                    when (record.deliveryState) {
-                        ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> {
-                            val key = MessageKey(record.peerIdentityId, record.messageId)
-                            if (!pendingSendKeys.add(key)) {
-                                throw MessagingRecoveryException("Duplicate outbound recovery handoff")
-                            }
-                            recoveredSends += MessagingRecoveredSend(
-                                peerIdentityId = handoff.peerIdentityId.copyOf(),
-                                messageId = handoff.messageId.copyOf(),
-                                encodedEnvelope = handoff.encodedEnvelope.copyOf(),
-                            )
-                        }
-                        ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
-                        ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
-                        -> completeRequired(ownerIdentityId, handoff)
-                        else -> throw MessagingRecoveryException("Outbound recovery history state is invalid")
-                    }
-                }
-                else -> throw MessagingRecoveryException("Recovery handoff direction is invalid")
-            }
-        }
-
-        history.pendingOutboundAcceptances(ownerIdentityId).forEach { record ->
-            if (!pendingSendKeys.contains(MessageKey(record.peerIdentityId, record.messageId))) {
-                throw MessagingRecoveryException(
-                    "Pending outbound history is missing its recoverable staged envelope",
-                )
-            }
-        }
-
+        val recoveredSends = reconcileHandoffs(
+            ownerIdentityId = ownerIdentityId,
+            handoffs = handoffs,
+            includeInbound = true,
+        )
         val recoveredAcks = history.pendingInboundAcks(ownerIdentityId).map { record ->
             MessagingRecoveredAck(
                 peerIdentityId = record.peerIdentityId.copyOf(),
@@ -110,6 +77,21 @@ internal class MessagingRecoveryCoordinator(
             )
         }
         return MessagingRecoveryPlan(recoveredSends, recoveredAcks)
+    }
+
+    /**
+     * Reconciles only durable outbound work for sender admission. Inbound handoffs are deliberately
+     * left untouched so a foreground send cannot race the WSS-owned inbound delivery/ACK path or
+     * make inbound plaintext durable without the transport being responsible for the resulting ACK.
+     */
+    @Synchronized
+    fun recoverOutbound(ownerIdentityId: ByteArray): List<MessagingRecoveredSend> {
+        requireIdentity(ownerIdentityId)
+        return reconcileHandoffs(
+            ownerIdentityId = ownerIdentityId,
+            handoffs = sessions.pendingMessageHandoffs(ownerIdentityId),
+            includeInbound = false,
+        )
     }
 
     /**
@@ -202,6 +184,53 @@ internal class MessagingRecoveryCoordinator(
         if (!removed && !wasAccepted) {
             throw MessagingRecoveryException("Accepted outbound message lost its staged handoff")
         }
+    }
+
+    private fun reconcileHandoffs(
+        ownerIdentityId: ByteArray,
+        handoffs: List<SessionMessageHandoff>,
+        includeInbound: Boolean,
+    ): List<MessagingRecoveredSend> {
+        val recoveredSends = ArrayList<MessagingRecoveredSend>()
+        val pendingSendKeys = HashSet<MessageKey>()
+
+        handoffs.forEach { handoff ->
+            when (handoff.direction) {
+                SessionStateCodec.HANDOFF_DIRECTION_INBOUND -> {
+                    if (includeInbound) recoverInbound(ownerIdentityId, handoff)
+                }
+                SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
+                    val record = history.importOutboundPendingAcceptance(ownerIdentityId, handoff)
+                    when (record.deliveryState) {
+                        ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> {
+                            val key = MessageKey(record.peerIdentityId, record.messageId)
+                            if (!pendingSendKeys.add(key)) {
+                                throw MessagingRecoveryException("Duplicate outbound recovery handoff")
+                            }
+                            recoveredSends += MessagingRecoveredSend(
+                                peerIdentityId = handoff.peerIdentityId.copyOf(),
+                                messageId = handoff.messageId.copyOf(),
+                                encodedEnvelope = handoff.encodedEnvelope.copyOf(),
+                            )
+                        }
+                        ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+                        ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+                        -> completeRequired(ownerIdentityId, handoff)
+                        else -> throw MessagingRecoveryException("Outbound recovery history state is invalid")
+                    }
+                }
+                else -> throw MessagingRecoveryException("Recovery handoff direction is invalid")
+            }
+        }
+
+        history.pendingOutboundAcceptances(ownerIdentityId).forEach { record ->
+            if (!pendingSendKeys.contains(MessageKey(record.peerIdentityId, record.messageId))) {
+                throw MessagingRecoveryException(
+                    "Pending outbound history is missing its recoverable staged envelope",
+                )
+            }
+        }
+        return recoveredSends
     }
 
     private fun recoverInbound(ownerIdentityId: ByteArray, handoff: SessionMessageHandoff) {
