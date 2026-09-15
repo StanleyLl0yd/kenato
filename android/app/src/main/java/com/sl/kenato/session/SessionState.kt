@@ -48,10 +48,20 @@ internal data class PersistedSession(
     val pendingInit: PendingSessionInit? = null,
 )
 
+internal data class SessionMessageHandoff(
+    val localContactId: ByteArray,
+    val peerIdentityId: ByteArray,
+    val messageId: ByteArray,
+    val direction: Int,
+    val encodedPlaintext: ByteArray,
+    val encodedEnvelope: ByteArray,
+)
+
 internal data class SessionState(
     val ownerIdentityId: ByteArray,
     val account: SessionAccountState,
     val sessions: List<PersistedSession>,
+    val messageHandoffs: List<SessionMessageHandoff> = emptyList(),
 )
 
 internal class SessionStateException(message: String, cause: Throwable? = null) :
@@ -63,6 +73,7 @@ internal object SessionStateCodec {
     const val MAX_TRACKED_ONE_TIME_KEYS = SESSION_MAX_ONE_TIME_KEYS
     const val IDENTITY_ID_BYTES = 32
     const val LOCAL_CONTACT_ID_BYTES = 16
+    const val MESSAGE_ID_BYTES = 16
     const val OLM_PUBLIC_KEY_BYTES = 32
     const val INVITE_TOKEN_HASH_BYTES = 32
     const val MAX_ACCOUNT_SNAPSHOT_BYTES = 256 * 1024
@@ -70,8 +81,15 @@ internal object SessionStateCodec {
     const val MAX_WRAPPED_PICKLE_KEY_BYTES = 256
     const val MAX_SESSION_ID_BYTES = 128
     const val MAX_OLM_MESSAGE_BYTES = 96 * 1024
+    const val MAX_MESSAGE_HANDOFFS = 64
+    const val MAX_HANDOFF_PAYLOAD_BYTES = 4 * 1024 * 1024
+    const val MAX_HANDOFF_PLAINTEXT_BYTES = 32 * 1024
+    const val MAX_HANDOFF_ENVELOPE_BYTES = 96 * 1024
+    const val HANDOFF_DIRECTION_OUTBOUND = 1
+    const val HANDOFF_DIRECTION_INBOUND = 2
 
-    private const val FORMAT_VERSION = 1
+    private const val LEGACY_FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
     private const val DIGEST_BYTES = 32
     private val magic = byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'S'.code.toByte(), '3'.code.toByte())
 
@@ -85,6 +103,8 @@ internal object SessionStateCodec {
                 output.writeAccount(state.account)
                 output.writeInt(state.sessions.size)
                 state.sessions.forEach { output.writeSession(it) }
+                output.writeInt(state.messageHandoffs.size)
+                state.messageHandoffs.forEach { output.writeMessageHandoff(it) }
             }
             bytes.toByteArray()
         }
@@ -112,7 +132,11 @@ internal object SessionStateCodec {
         try {
             DataInputStream(ByteArrayInputStream(encoded, 0, payloadSize)).use { input ->
                 val actualMagic = ByteArray(magic.size).also(input::readFully)
-                if (!actualMagic.contentEquals(magic) || input.readInt() != FORMAT_VERSION) {
+                if (!actualMagic.contentEquals(magic)) {
+                    throw SessionStateException("Session state format is unsupported")
+                }
+                val formatVersion = input.readInt()
+                if (formatVersion != LEGACY_FORMAT_VERSION && formatVersion != FORMAT_VERSION) {
                     throw SessionStateException("Session state format is unsupported")
                 }
                 val owner = ByteArray(IDENTITY_ID_BYTES).also(input::readFully)
@@ -122,10 +146,19 @@ internal object SessionStateCodec {
                     throw SessionStateException("Session count is invalid")
                 }
                 val sessions = List(sessionCount) { input.readSession() }
+                val messageHandoffs = if (formatVersion == FORMAT_VERSION) {
+                    val handoffCount = input.readInt()
+                    if (handoffCount !in 0..MAX_MESSAGE_HANDOFFS) {
+                        throw SessionStateException("M4 handoff count is invalid")
+                    }
+                    List(handoffCount) { input.readMessageHandoff() }
+                } else {
+                    emptyList()
+                }
                 if (input.available() != 0) {
                     throw SessionStateException("Session state contains trailing data")
                 }
-                return SessionState(owner, account, sessions).also(::validate)
+                return SessionState(owner, account, sessions, messageHandoffs).also(::validate)
             }
         } catch (error: SessionStateException) {
             throw error
@@ -151,6 +184,7 @@ internal object SessionStateCodec {
                 throw SessionStateException("Session state contains duplicate active sessions")
             }
         }
+        validateMessageHandoffs(state)
     }
 
     private fun validateAccount(account: SessionAccountState) {
@@ -220,6 +254,49 @@ internal object SessionStateCodec {
                 pending.olmMessage.size > MAX_OLM_MESSAGE_BYTES
             ) {
                 throw SessionStateException("Pending M3 session init metadata is invalid")
+            }
+        }
+    }
+
+    private fun validateMessageHandoffs(state: SessionState) {
+        if (state.messageHandoffs.size > MAX_MESSAGE_HANDOFFS) {
+            throw SessionStateException("Too many M4 message handoffs")
+        }
+        var payloadBytes = 0L
+        state.messageHandoffs.forEachIndexed { index, handoff ->
+            requireSize(handoff.localContactId, LOCAL_CONTACT_ID_BYTES, "M4 handoff contact id")
+            requireSize(handoff.peerIdentityId, IDENTITY_ID_BYTES, "M4 handoff peer identity id")
+            requireSize(handoff.messageId, MESSAGE_ID_BYTES, "M4 handoff message id")
+            if (handoff.messageId.all { it == 0.toByte() }) {
+                throw SessionStateException("M4 handoff message id is invalid")
+            }
+            if (handoff.direction !in HANDOFF_DIRECTION_OUTBOUND..HANDOFF_DIRECTION_INBOUND) {
+                throw SessionStateException("M4 handoff direction is invalid")
+            }
+            if (handoff.encodedPlaintext.isEmpty() || handoff.encodedPlaintext.size > MAX_HANDOFF_PLAINTEXT_BYTES) {
+                throw SessionStateException("M4 handoff plaintext size is invalid")
+            }
+            if (handoff.encodedEnvelope.isEmpty() || handoff.encodedEnvelope.size > MAX_HANDOFF_ENVELOPE_BYTES) {
+                throw SessionStateException("M4 handoff envelope size is invalid")
+            }
+            val session = state.sessions.singleOrNull {
+                it.localContactId.contentEquals(handoff.localContactId)
+            } ?: throw SessionStateException("M4 handoff does not belong to an active session")
+            if (!session.peerIdentityId.contentEquals(handoff.peerIdentityId) || session.pendingInit != null) {
+                throw SessionStateException("M4 handoff session provenance is invalid")
+            }
+            if (
+                state.messageHandoffs.take(index).any {
+                    it.direction == handoff.direction &&
+                        it.peerIdentityId.contentEquals(handoff.peerIdentityId) &&
+                        it.messageId.contentEquals(handoff.messageId)
+                }
+            ) {
+                throw SessionStateException("Session state contains duplicate M4 handoffs")
+            }
+            payloadBytes += handoff.encodedPlaintext.size.toLong() + handoff.encodedEnvelope.size.toLong()
+            if (payloadBytes > MAX_HANDOFF_PAYLOAD_BYTES) {
+                throw SessionStateException("M4 handoff payload state exceeds its bound")
             }
         }
     }
@@ -346,6 +423,24 @@ internal object SessionStateCodec {
             pending,
         )
     }
+
+    private fun DataOutputStream.writeMessageHandoff(handoff: SessionMessageHandoff) {
+        write(handoff.localContactId)
+        write(handoff.peerIdentityId)
+        write(handoff.messageId)
+        writeByte(handoff.direction)
+        writeSized(handoff.encodedPlaintext)
+        writeSized(handoff.encodedEnvelope)
+    }
+
+    private fun DataInputStream.readMessageHandoff(): SessionMessageHandoff = SessionMessageHandoff(
+        localContactId = ByteArray(LOCAL_CONTACT_ID_BYTES).also(::readFully),
+        peerIdentityId = ByteArray(IDENTITY_ID_BYTES).also(::readFully),
+        messageId = ByteArray(MESSAGE_ID_BYTES).also(::readFully),
+        direction = readUnsignedByte(),
+        encodedPlaintext = readSized(MAX_HANDOFF_PLAINTEXT_BYTES),
+        encodedEnvelope = readSized(MAX_HANDOFF_ENVELOPE_BYTES),
+    )
 
     private fun DataOutputStream.writeSized(value: ByteArray) {
         writeInt(value.size)
