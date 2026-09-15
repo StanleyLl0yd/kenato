@@ -167,14 +167,16 @@ internal object MessagingWire {
         if (clientPayloadCount(value) != 1) malformed("M4 client frame must contain exactly one payload")
         val nested: ByteArray
         val field: Int
+        val authResponse = value.authResponse
+        val send = value.send
         when {
-            value.authResponse != null -> {
+            authResponse != null -> {
                 field = 2
-                nested = encodeAuthResponse(value.authResponse)
+                nested = encodeAuthResponse(authResponse)
             }
-            value.send != null -> {
+            send != null -> {
                 field = 3
-                nested = encodeEnvelope(value.send)
+                nested = encodeEnvelope(send)
             }
             else -> {
                 field = 4
@@ -226,22 +228,25 @@ internal object MessagingWire {
         if (serverPayloadCount(value) != 1) malformed("M4 server frame must contain exactly one payload")
         val nested: ByteArray
         val field: Int
+        val authChallenge = value.authChallenge
+        val delivery = value.delivery
+        val sendAccepted = value.sendAccepted
         when {
-            value.authChallenge != null -> {
+            authChallenge != null -> {
                 field = 2
-                nested = encodeAuthChallenge(value.authChallenge)
+                nested = encodeAuthChallenge(authChallenge)
             }
             value.authenticated -> {
                 field = 3
                 nested = ByteArray(0)
             }
-            value.delivery != null -> {
+            delivery != null -> {
                 field = 4
-                nested = encodeEnvelope(value.delivery)
+                nested = encodeEnvelope(delivery)
             }
-            value.sendAccepted != null -> {
+            sendAccepted != null -> {
                 field = 5
-                nested = encodeSendAccepted(value.sendAccepted)
+                nested = encodeSendAccepted(sendAccepted)
             }
             else -> {
                 field = 6
