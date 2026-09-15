@@ -22,7 +22,7 @@ internal object SessionCiphertextWire {
 
     fun encode(value: SessionCiphertext): ByteArray {
         validate(value)
-        return Writer(MAX_ENCODED_BYTES).apply {
+        return CiphertextWriter(MAX_ENCODED_BYTES).apply {
             uint(1, value.protocolVersion.toLong())
             bytes(2, value.senderIdentityId)
             bytes(3, value.recipientIdentityId)
@@ -34,7 +34,7 @@ internal object SessionCiphertextWire {
     }
 
     fun decode(data: ByteArray): SessionCiphertext {
-        val reader = Reader(data, MAX_ENCODED_BYTES)
+        val reader = CiphertextReader(data, MAX_ENCODED_BYTES)
         var version: Long? = null
         var sender: ByteArray? = null
         var recipient: ByteArray? = null
@@ -122,7 +122,7 @@ internal object SessionCiphertextWire {
     private fun malformed(message: String): Nothing = throw SessionStateException(message)
 }
 
-private class Writer(private val maximum: Int) {
+private class CiphertextWriter(private val maximum: Int) {
     private val output = ByteArrayOutputStream()
 
     fun uint(field: Int, value: Long) {
@@ -166,7 +166,7 @@ private class Writer(private val maximum: Int) {
     }
 }
 
-private class Reader(data: ByteArray, private val maximum: Int) {
+private class CiphertextReader(data: ByteArray, private val maximum: Int) {
     private val data = data.copyOf()
     private var position = 0
 
