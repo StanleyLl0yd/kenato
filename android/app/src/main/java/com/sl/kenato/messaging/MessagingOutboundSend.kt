@@ -50,35 +50,55 @@ internal class LocalMessagingOutboundSessionDriver(
 
 internal fun interface MessagingOutboundRecovery {
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan
-
-    /**
-     * Returns true when a recovered key is terminal and must not count as active staged work.
-     * Implementations that do not own terminal persistence may conservatively return false.
-     */
-    fun expireOutboundIfDue(
-        ownerIdentityId: ByteArray,
-        peerIdentityId: ByteArray,
-        messageId: ByteArray,
-        nowEpochSeconds: Long,
-    ): Boolean = false
 }
 
 internal class CoordinatorMessagingOutboundRecovery(
     private val coordinator: MessagingRecoveryCoordinator,
 ) : MessagingOutboundRecovery {
     override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = coordinator.recover(ownerIdentityId)
+}
 
-    override fun expireOutboundIfDue(
+/**
+ * Admission-time terminalization must serialize with the WSS lifecycle. While the socket is
+ * authenticated, transport owns the per-key in-flight decision and sender-side expiry is deferred.
+ */
+internal fun interface MessagingOutboundAdmission {
+    fun terminalizeIfSafe(
         ownerIdentityId: ByteArray,
         peerIdentityId: ByteArray,
         messageId: ByteArray,
         nowEpochSeconds: Long,
-    ): Boolean = coordinator.expireOutboundIfDue(
-        ownerIdentityId = ownerIdentityId,
-        peerIdentityId = peerIdentityId,
-        messageId = messageId,
-        nowEpochSeconds = nowEpochSeconds,
-    )
+    ): Boolean
+}
+
+/**
+ * Uses the WSS monitor as the ordering boundary. WSS callbacks/flushes are synchronized on the same
+ * coordinator, so an outbound key cannot race from "not in flight" to socket-queued between this
+ * state decision and durable expiry. Any authenticated socket conservatively retains transport
+ * authority; after stop/failure/retry/pre-auth, no application envelope can be newly queued and
+ * expiry can be reconciled safely.
+ */
+internal class WssMessagingOutboundAdmission(
+    private val wss: MessagingWssCoordinator,
+    private val recovery: MessagingRecoveryCoordinator,
+) : MessagingOutboundAdmission {
+    override fun terminalizeIfSafe(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean = synchronized(wss) {
+        if (wss.currentState() == MessagingWssState.AUTHENTICATED) {
+            false
+        } else {
+            recovery.expireOutboundIfDue(
+                ownerIdentityId = ownerIdentityId,
+                peerIdentityId = peerIdentityId,
+                messageId = messageId,
+                nowEpochSeconds = nowEpochSeconds,
+            )
+        }
+    }
 }
 
 internal fun interface MessagingMessageIdGenerator {
@@ -107,6 +127,7 @@ internal class DurableMessagingOutboundSender(
     private val sessions: MessagingOutboundSessionDriver,
     private val history: ConversationHistoryRepository,
     private val recovery: MessagingOutboundRecovery,
+    private val admission: MessagingOutboundAdmission,
     private val messageIds: MessagingMessageIdGenerator = SecureMessagingMessageIdGenerator(),
     private val clock: MessagingOutboundClock = SystemMessagingOutboundClock,
 ) {
@@ -132,13 +153,14 @@ internal class DurableMessagingOutboundSender(
 
         val now = nowEpochSeconds()
 
-        // Reconcile every older crypto handoff first. Expired/otherwise terminal recovered work must
-        // not consume the lower 32-send admission bound while offline; otherwise a device that was
-        // disconnected past TTL could be unable to stage any fresh work until WSS authentication.
+        // Reconcile every older crypto handoff first. Expired work may leave the lower 32-send
+        // admission bound only when the transport admission boundary proves terminalization cannot
+        // race an authenticated in-flight send. Otherwise it remains active until transport owns
+        // the next safe transition.
         val plan = recovery.recover(ownerIdentityId.copyOf())
         var activeStagedSends = 0
         plan.outboundSends.forEach { recovered ->
-            val terminal = recovery.expireOutboundIfDue(
+            val terminal = admission.terminalizeIfSafe(
                 ownerIdentityId = ownerIdentityId,
                 peerIdentityId = recovered.peerIdentityId,
                 messageId = recovered.messageId,

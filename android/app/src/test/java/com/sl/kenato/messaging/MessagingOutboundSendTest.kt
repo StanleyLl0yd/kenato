@@ -179,6 +179,7 @@ class MessagingOutboundSendTest {
             sessions = sessions,
             history = history,
             recovery = recovery,
+            admission = MessagingOutboundAdmission { _, _, _, _ -> false },
             messageIds = messageIds,
             clock = MessagingOutboundClock { 100 },
         )

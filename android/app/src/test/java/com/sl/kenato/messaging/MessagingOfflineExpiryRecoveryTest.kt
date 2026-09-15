@@ -5,34 +5,32 @@ import com.sl.kenato.session.SESSION_OLM_MESSAGE_NORMAL
 import com.sl.kenato.session.SessionMessageCryptoContext
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
+import java.net.URI
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MessagingOfflineExpiryRecoveryTest {
     @Test
-    fun expiredRecoveredQueueDoesNotBlockFreshOfflineStage() {
+    fun expiredRecoveredQueueIsTerminalizedOfflineBeforeFreshAdmission() {
         val historyStore = MemoryHistoryStore()
-        val history = ConversationHistoryRepository(historyStore, ConversationHistoryClock { 100 })
-        val sessions = FakeOutboundSessions()
-        val recovery = FakeOutboundRecovery()
-        recovery.plan = MessagingRecoveryPlan(
-            outboundSends = List(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS) { index ->
-                MessagingRecoveredSend(
-                    peerIdentityId = PEER.copyOf(),
-                    messageId = messageId(index + 1),
-                    encodedEnvelope = byteArrayOf(1),
-                )
-            },
-            inboundAcks = emptyList(),
-        )
-        recovery.terminalIds += recovery.plan.outboundSends.map { it.messageId.copyOf() }
-        val clock = SingleUseClock(100)
+        val history = ConversationHistoryRepository(historyStore, ConversationHistoryClock { 200 })
+        val recoverySessions = FakeSessionHandoffs().also { sessions ->
+            repeat(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS) { index ->
+                sessions.handoffs += outboundHandoff(index + 1)
+            }
+        }
+        val recoveryCoordinator = MessagingRecoveryCoordinator(recoverySessions, history)
+        val wss = stoppedWss(recoveryCoordinator)
+        val outboundSessions = FakeOutboundSessions()
+        val clock = SingleUseClock(200)
         val sender = DurableMessagingOutboundSender(
-            sessions = sessions,
+            sessions = outboundSessions,
             history = history,
-            recovery = recovery,
+            recovery = CoordinatorMessagingOutboundRecovery(recoveryCoordinator),
+            admission = WssMessagingOutboundAdmission(wss, recoveryCoordinator),
             messageIds = MessagingMessageIdGenerator { messageId(10_000) },
             clock = clock,
         )
@@ -40,21 +38,38 @@ class MessagingOfflineExpiryRecoveryTest {
         val staged = sender.stageText(OWNER, PEER, "fresh", ttlSeconds = 60)
 
         assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, staged.deliveryState)
-        assertEquals(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS, recovery.expiryChecks.size)
-        assertTrue(recovery.expiryChecks.all { it.nowEpochSeconds == 100L })
-        assertEquals(1, sessions.stageCount)
+        assertEquals(1, outboundSessions.stageCount)
         assertEquals(1, clock.calls)
+        assertTrue(recoverySessions.handoffs.isEmpty())
+        val persisted = history.currentState(OWNER)!!
+        assertEquals(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS + 1, persisted.messages.size)
+        assertEquals(
+            MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS,
+            persisted.messages.count {
+                it.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED
+            },
+        )
+        assertEquals(
+            1,
+            persisted.messages.count {
+                it.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE
+            },
+        )
     }
 
     @Test
     fun outboundStageUsesOneClockSnapshotAcrossNativeEncryption() {
         val history = ConversationHistoryRepository(MemoryHistoryStore(), ConversationHistoryClock { 100 })
+        val recoverySessions = FakeSessionHandoffs()
+        val recoveryCoordinator = MessagingRecoveryCoordinator(recoverySessions, history)
+        val wss = stoppedWss(recoveryCoordinator)
         val sessions = FakeOutboundSessions()
         val clock = SingleUseClock(100)
         val sender = DurableMessagingOutboundSender(
             sessions = sessions,
             history = history,
-            recovery = MessagingOutboundRecovery { MessagingRecoveryPlan(emptyList(), emptyList()) },
+            recovery = CoordinatorMessagingOutboundRecovery(recoveryCoordinator),
+            admission = WssMessagingOutboundAdmission(wss, recoveryCoordinator),
             messageIds = MessagingMessageIdGenerator { messageId(20_000) },
             clock = clock,
         )
@@ -69,6 +84,25 @@ class MessagingOfflineExpiryRecoveryTest {
         assertEquals(160L, plaintext.expiresAtEpochSeconds)
         assertEquals(160L, envelope.expiresAtEpochSeconds)
         assertArrayEquals(record.messageId, envelope.messageId)
+    }
+
+    @Test
+    fun authenticatedAdmissionDefersTerminalizationToTransport() {
+        val history = ConversationHistoryRepository(MemoryHistoryStore(), ConversationHistoryClock { 100 })
+        val recoveryCoordinator = MessagingRecoveryCoordinator(FakeSessionHandoffs(), history)
+        val harness = authenticatedWss(recoveryCoordinator)
+        val admission = WssMessagingOutboundAdmission(harness.coordinator, recoveryCoordinator)
+
+        val terminal = admission.terminalizeIfSafe(
+            ownerIdentityId = OWNER,
+            peerIdentityId = PEER,
+            messageId = messageId(30_000),
+            nowEpochSeconds = 200,
+        )
+
+        assertFalse(terminal)
+        assertEquals(MessagingWssState.AUTHENTICATED, harness.coordinator.currentState())
+        assertTrue(history.currentState(OWNER) == null)
     }
 
     @Test
@@ -132,32 +166,88 @@ class MessagingOfflineExpiryRecoveryTest {
         )
     }
 
-    private data class ExpiryCheck(
-        val peerIdentityId: ByteArray,
-        val messageId: ByteArray,
-        val nowEpochSeconds: Long,
+    private fun stoppedWss(recoveryCoordinator: MessagingRecoveryCoordinator): MessagingWssCoordinator =
+        MessagingWssCoordinator(
+            serviceOrigin = URI("https://example.test/"),
+            sockets = MessagingSocketFactory { _, _ -> throw AssertionError("stopped WSS must not create a socket") },
+            identity = FakeIdentity(),
+            recovery = DurableMessagingRecoveryDriver(recoveryCoordinator),
+            inbound = MessagingInboundDeliveryHandler { _, _ -> null },
+            scheduler = MessagingRetryScheduler { _, _ -> throw AssertionError("stopped WSS must not schedule") },
+            clock = MessagingWssClock { 200 },
+        )
+
+    private fun authenticatedWss(recoveryCoordinator: MessagingRecoveryCoordinator): AuthHarness {
+        val sockets = FakeSocketFactory()
+        val coordinator = MessagingWssCoordinator(
+            serviceOrigin = URI("https://example.test/"),
+            sockets = sockets,
+            identity = FakeIdentity(),
+            recovery = DurableMessagingRecoveryDriver(recoveryCoordinator),
+            inbound = MessagingInboundDeliveryHandler { _, _ -> null },
+            scheduler = FakeScheduler(),
+            clock = MessagingWssClock { 100 },
+        )
+        coordinator.start()
+        val socket = sockets.latest
+        socket.open()
+        socket.serverFrame(
+            MessagingServerFrame(
+                authChallenge = MessagingAuthChallenge(CHALLENGE.copyOf(), 120),
+            ),
+        )
+        socket.serverFrame(MessagingServerFrame(authenticated = true))
+        return AuthHarness(coordinator, socket)
+    }
+
+    private data class AuthHarness(
+        val coordinator: MessagingWssCoordinator,
+        val socket: FakeSocket,
     )
 
-    private class FakeOutboundRecovery : MessagingOutboundRecovery {
-        var plan = MessagingRecoveryPlan(emptyList(), emptyList())
-        val terminalIds = ArrayList<ByteArray>()
-        val expiryChecks = ArrayList<ExpiryCheck>()
+    private class FakeIdentity : MessagingIdentityAuthenticator {
+        override fun identityId(): ByteArray = OWNER.copyOf()
 
-        override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
-            assertArrayEquals(OWNER, ownerIdentityId)
-            return plan
+        override fun signProtocolPayload(payload: ByteArray): ByteArray = SIGNATURE.copyOf()
+    }
+
+    private class FakeSocketFactory : MessagingSocketFactory {
+        private val sockets = ArrayList<FakeSocket>()
+        val latest: FakeSocket get() = sockets.last()
+
+        override fun create(url: String, listener: MessagingSocketListener): MessagingSocket =
+            FakeSocket(listener).also(sockets::add)
+    }
+
+    private class FakeSocket(
+        private val listener: MessagingSocketListener,
+    ) : MessagingSocket {
+        val sent = ArrayList<ByteArray>()
+        var cancelled = false
+
+        override fun connect() = Unit
+
+        override fun sendBinary(value: ByteArray): Boolean {
+            if (cancelled) return false
+            sent += value.copyOf()
+            return true
         }
 
-        override fun expireOutboundIfDue(
-            ownerIdentityId: ByteArray,
-            peerIdentityId: ByteArray,
-            messageId: ByteArray,
-            nowEpochSeconds: Long,
-        ): Boolean {
-            assertArrayEquals(OWNER, ownerIdentityId)
-            expiryChecks += ExpiryCheck(peerIdentityId.copyOf(), messageId.copyOf(), nowEpochSeconds)
-            return terminalIds.any { it.contentEquals(messageId) }
+        override fun cancel() {
+            cancelled = true
         }
+
+        fun open() = listener.onOpen(this)
+
+        fun serverFrame(frame: MessagingServerFrame) =
+            listener.onBinaryMessage(this, MessagingWire.encodeServerFrame(frame))
+    }
+
+    private class FakeScheduler : MessagingRetryScheduler {
+        override fun schedule(delayMillis: Long, task: () -> Unit): MessagingScheduledTask =
+            object : MessagingScheduledTask {
+                override fun cancel() = Unit
+            }
     }
 
     private class FakeOutboundSessions : MessagingOutboundSessionDriver {
@@ -256,6 +346,8 @@ class MessagingOfflineExpiryRecoveryTest {
         private val OWNER = ByteArray(MESSAGING_IDENTITY_BYTES) { 0x11.toByte() }
         private val PEER = ByteArray(MESSAGING_IDENTITY_BYTES) { 0x22.toByte() }
         private val CONTACT = ByteArray(SessionStateCodec.LOCAL_CONTACT_ID_BYTES) { 0x33.toByte() }
+        private val CHALLENGE = ByteArray(MESSAGING_AUTH_CHALLENGE_BYTES) { 0x44.toByte() }
+        private val SIGNATURE = byteArrayOf(0x30, 0x01, 0x01)
 
         private fun outboundHandoff(index: Int): SessionMessageHandoff {
             val id = messageId(index)
