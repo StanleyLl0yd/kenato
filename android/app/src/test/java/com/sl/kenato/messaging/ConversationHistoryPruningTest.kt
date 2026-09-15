@@ -77,11 +77,11 @@ class ConversationHistoryPruningTest {
                     direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
                     deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK,
                     sentAt = index.toLong(),
-                    expiresAt = 500,
+                    expiresAt = 2_000,
                 )
             },
         )
-        val fixture = Fixture(initial, now = 499)
+        val fixture = Fixture(initial, now = 1_999)
 
         assertThrows(ConversationHistoryException::class.java) {
             fixture.preflight(PEER_A, 2_000)
@@ -102,11 +102,11 @@ class ConversationHistoryPruningTest {
                     direction = SessionStateCodec.HANDOFF_DIRECTION_INBOUND,
                     deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK,
                     sentAt = index.toLong(),
-                    expiresAt = 500,
+                    expiresAt = 2_000,
                 )
             },
         )
-        val fixture = Fixture(initial, now = 500)
+        val fixture = Fixture(initial, now = 2_000)
 
         fixture.preflight(PEER_A, 2_000)
 
@@ -127,7 +127,7 @@ class ConversationHistoryPruningTest {
                     direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
                     deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
                     sentAt = index.toLong(),
-                    expiresAt = 500,
+                    expiresAt = 2_000,
                 )
             },
         )
