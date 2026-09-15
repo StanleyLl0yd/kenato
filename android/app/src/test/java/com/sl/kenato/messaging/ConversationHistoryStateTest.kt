@@ -1,6 +1,11 @@
 package com.sl.kenato.messaging
 
 import com.sl.kenato.session.SessionStateCodec
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.security.MessageDigest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -28,26 +33,62 @@ class ConversationHistoryStateTest {
     }
 
     @Test
-    fun outboundPendingAndAcceptedHistoryRoundTrip() {
+    fun outboundPendingAcceptedAndExpiredHistoryRoundTrip() {
         val pending = outboundRecord(1, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE)
         val accepted = outboundRecord(2, ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED)
+        val expired = outboundRecord(3, ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED)
         val decoded = ConversationHistoryStateCodec.decode(
             ConversationHistoryStateCodec.encode(
-                ConversationHistoryState(OWNER.copyOf(), listOf(pending, accepted)),
+                ConversationHistoryState(OWNER.copyOf(), listOf(pending, accepted, expired)),
             ),
         )
 
-        assertEquals(2, decoded.messages.size)
+        assertEquals(3, decoded.messages.size)
         assertEquals(
             ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
             decoded.messages[0].deliveryState,
         )
         assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, decoded.messages[1].deliveryState)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED, decoded.messages[2].deliveryState)
         decoded.messages.forEach { actual ->
             assertEquals(SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, actual.direction)
             val plaintext = MessagingWire.decodePlaintext(actual.encodedPlaintext)
             assertArrayEquals(OWNER, plaintext.senderIdentityId)
             assertArrayEquals(PEER, plaintext.recipientIdentityId)
+        }
+    }
+
+    @Test
+    fun legacyV1HistoryDecodesAndReencodesAsV2() {
+        val legacy = ConversationHistoryState(
+            OWNER.copyOf(),
+            listOf(
+                record(1),
+                outboundRecord(2, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE),
+                outboundRecord(3, ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED),
+            ),
+        )
+
+        val decoded = ConversationHistoryStateCodec.decode(legacyV1Encode(legacy))
+        val reencoded = ConversationHistoryStateCodec.encode(decoded)
+        val version = DataInputStream(ByteArrayInputStream(reencoded)).use { input ->
+            ByteArray(4).also(input::readFully)
+            input.readInt()
+        }
+
+        assertEquals(3, decoded.messages.size)
+        assertEquals(2, version)
+    }
+
+    @Test
+    fun legacyV1CannotContainExpiredOutboundState() {
+        val legacy = ConversationHistoryState(
+            OWNER.copyOf(),
+            listOf(outboundRecord(1, ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED)),
+        )
+
+        assertThrows(ConversationHistoryException::class.java) {
+            ConversationHistoryStateCodec.decode(legacyV1Encode(legacy))
         }
     }
 
@@ -129,6 +170,29 @@ class ConversationHistoryStateTest {
         assertThrows(ConversationHistoryException::class.java) {
             ConversationHistoryStateCodec.encode(ConversationHistoryState(OWNER.copyOf(), records))
         }
+    }
+
+    private fun legacyV1Encode(state: ConversationHistoryState): ByteArray {
+        val payload = ByteArrayOutputStream().use { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.write(byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'H'.code.toByte(), '4'.code.toByte()))
+                output.writeInt(1)
+                output.write(state.ownerIdentityId)
+                output.writeInt(state.messages.size)
+                state.messages.forEach { record ->
+                    output.write(record.localContactId)
+                    output.write(record.peerIdentityId)
+                    output.write(record.messageId)
+                    output.writeInt(record.direction)
+                    output.writeInt(record.deliveryState)
+                    output.writeInt(record.encodedPlaintext.size)
+                    output.write(record.encodedPlaintext)
+                    output.write(record.envelopeDigest)
+                }
+            }
+            bytes.toByteArray()
+        }
+        return payload + MessageDigest.getInstance("SHA-256").digest(payload)
     }
 
     private fun record(index: Int, text: String = "message-$index"): ConversationHistoryRecord =

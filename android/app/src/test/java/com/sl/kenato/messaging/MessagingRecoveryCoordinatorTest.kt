@@ -74,6 +74,101 @@ class MessagingRecoveryCoordinatorTest {
     }
 
     @Test
+    fun expiredOutboundIsPersistedBeforeStagedHandoffRemoval() {
+        val fixture = Fixture()
+        val outbound = outboundHandoff(2)
+        fixture.sessions.handoffs += outbound
+        val plan = fixture.coordinator.recover(OWNER)
+        assertEquals(1, plan.outboundSends.size)
+        fixture.sessions.beforeComplete = {
+            assertEquals(
+                ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+                fixture.history.currentState(OWNER)!!.messages.single().deliveryState,
+            )
+        }
+
+        val expired = fixture.coordinator.expireOutboundIfDue(
+            OWNER,
+            PEER,
+            outbound.messageId,
+            nowEpochSeconds = 200,
+        )
+
+        assertTrue(expired)
+        assertTrue(fixture.sessions.handoffs.isEmpty())
+        assertEquals(2, fixture.historyStore.writeCount)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+            fixture.history.currentState(OWNER)!!.messages.single().deliveryState,
+        )
+    }
+
+    @Test
+    fun failedExpiryWriteRetainsStagedHandoffAndPendingHistory() {
+        val fixture = Fixture()
+        val outbound = outboundHandoff(2)
+        fixture.sessions.handoffs += outbound
+        fixture.coordinator.recover(OWNER)
+        fixture.historyStore.failWrites = true
+
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.coordinator.expireOutboundIfDue(
+                OWNER,
+                PEER,
+                outbound.messageId,
+                nowEpochSeconds = 200,
+            )
+        }
+
+        fixture.historyStore.failWrites = false
+        assertEquals(1, fixture.sessions.handoffs.size)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            fixture.history.currentState(OWNER)!!.messages.single().deliveryState,
+        )
+    }
+
+    @Test
+    fun crashAfterExpiredHistoryIsRecoveredWithoutResend() {
+        val fixture = Fixture()
+        val outbound = outboundHandoff(2)
+        fixture.sessions.handoffs += outbound
+        fixture.coordinator.recover(OWNER)
+        fixture.history.expireOutboundIfDue(OWNER, PEER, outbound.messageId, nowEpochSeconds = 200)
+
+        val recovered = fixture.coordinator.recover(OWNER)
+
+        assertTrue(recovered.outboundSends.isEmpty())
+        assertTrue(fixture.sessions.handoffs.isEmpty())
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+            fixture.history.currentState(OWNER)!!.messages.single().deliveryState,
+        )
+    }
+
+    @Test
+    fun unexpiredOutboundRemainsRecoverableForExactSend() {
+        val fixture = Fixture()
+        val outbound = outboundHandoff(2)
+        fixture.sessions.handoffs += outbound
+        fixture.coordinator.recover(OWNER)
+
+        val expired = fixture.coordinator.expireOutboundIfDue(
+            OWNER,
+            PEER,
+            outbound.messageId,
+            nowEpochSeconds = 199,
+        )
+
+        assertFalse(expired)
+        assertEquals(1, fixture.sessions.handoffs.size)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            fixture.history.currentState(OWNER)!!.messages.single().deliveryState,
+        )
+    }
+
+    @Test
     fun acceptedHistoryWithLeftoverHandoffIsCleanedWithoutResend() {
         val fixture = Fixture()
         val outbound = outboundHandoff(2)

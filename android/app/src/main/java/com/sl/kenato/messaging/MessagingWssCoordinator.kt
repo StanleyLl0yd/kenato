@@ -64,6 +64,15 @@ internal class LocalMessagingIdentityAuthenticator(
 
 internal interface MessagingRecoveryDriver {
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan
+
+    /** Returns true when the unsent durable outbound key was terminalized as EXPIRED. */
+    fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean
+
     fun recordSendAccepted(ownerIdentityId: ByteArray, accepted: MessagingSendAccepted)
 }
 
@@ -71,6 +80,18 @@ internal class DurableMessagingRecoveryDriver(
     private val coordinator: MessagingRecoveryCoordinator,
 ) : MessagingRecoveryDriver {
     override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = coordinator.recover(ownerIdentityId)
+
+    override fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean = coordinator.expireOutboundIfDue(
+        ownerIdentityId = ownerIdentityId,
+        peerIdentityId = peerIdentityId,
+        messageId = messageId,
+        nowEpochSeconds = nowEpochSeconds,
+    )
 
     override fun recordSendAccepted(ownerIdentityId: ByteArray, accepted: MessagingSendAccepted) =
         coordinator.recordSendAccepted(ownerIdentityId, accepted)
@@ -342,13 +363,32 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket || state != MessagingWssState.AUTHENTICATED) return
         val owner = requireAuthenticatedIdentity()
         val plan = recovery.recover(owner)
-        if (plan.outboundSends.size > MAX_QUEUED_STAGED_SENDS) {
-            throw MessagingWssException("M4 staged send count exceeds the transport bound")
-        }
+        val sendable = ArrayList<Triple<MessageKey, MessagingRecoveredSend, Long>>()
+        var activeStagedSends = 0
         plan.outboundSends.forEach { recovered ->
             val key = MessageKey(recovered.peerIdentityId, recovered.messageId)
+            if (sentThisConnection.contains(key)) {
+                activeStagedSends++
+            } else {
+                val now = nowEpochSeconds()
+                val expired = recovery.expireOutboundIfDue(
+                    ownerIdentityId = owner,
+                    peerIdentityId = recovered.peerIdentityId,
+                    messageId = recovered.messageId,
+                    nowEpochSeconds = now,
+                )
+                if (!expired) {
+                    activeStagedSends++
+                    sendable += Triple(key, recovered, now)
+                }
+            }
+            if (activeStagedSends > MAX_QUEUED_STAGED_SENDS) {
+                throw MessagingWssException("M4 staged send count exceeds the transport bound")
+            }
+        }
+        sendable.forEach { (key, recovered, now) ->
+            val envelope = decodeExactRecoveredEnvelope(recovered, owner, now)
             if (sentThisConnection.add(key)) {
-                val envelope = decodeExactRecoveredEnvelope(recovered, owner)
                 sendFrame(socket, MessagingClientFrame(send = envelope))
             }
         }
@@ -371,6 +411,7 @@ internal class MessagingWssCoordinator(
     private fun decodeExactRecoveredEnvelope(
         recovered: MessagingRecoveredSend,
         ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
     ): MessagingEnvelope {
         val envelope = MessagingWire.decodeEnvelope(recovered.encodedEnvelope)
         val canonical = MessagingWire.encodeEnvelope(envelope)
@@ -384,7 +425,7 @@ internal class MessagingWssCoordinator(
         ) {
             throw MessagingWssException("Recovered M4 envelope provenance is invalid")
         }
-        MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds())
+        MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds)
         return envelope
     }
 

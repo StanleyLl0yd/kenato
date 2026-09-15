@@ -85,9 +85,9 @@ internal class MessagingRecoveryCoordinator(
                                 encodedEnvelope = handoff.encodedEnvelope.copyOf(),
                             )
                         }
-                        ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED -> {
-                            completeRequired(ownerIdentityId, handoff)
-                        }
+                        ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+                        ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+                        -> completeRequired(ownerIdentityId, handoff)
                         else -> throw MessagingRecoveryException("Outbound recovery history state is invalid")
                     }
                 }
@@ -110,6 +110,45 @@ internal class MessagingRecoveryCoordinator(
             )
         }
         return MessagingRecoveryPlan(recoveredSends, recoveredAcks)
+    }
+
+    /**
+     * Called only for a durable outbound key that has not yet been sent on the active WSS
+     * connection. If the exact plaintext/envelope expiry is due, history is transitioned first and
+     * the staged ciphertext is removed second. A crash between those writes is recovered by
+     * [recover] from the durable EXPIRED state without another send.
+     */
+    @Synchronized
+    fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): Boolean {
+        requireIdentity(ownerIdentityId)
+        val record = history.expireOutboundIfDue(
+            ownerIdentityId = ownerIdentityId,
+            peerIdentityId = peerIdentityId,
+            messageId = messageId,
+            nowEpochSeconds = nowEpochSeconds,
+        )
+        return when (record.deliveryState) {
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> false
+            ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED -> {
+                if (
+                    !sessions.completeMessageHandoff(
+                        ownerIdentityId = ownerIdentityId,
+                        peerIdentityId = peerIdentityId,
+                        messageId = messageId,
+                        direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                    )
+                ) {
+                    throw MessagingRecoveryException("Expired outbound message lost its staged handoff")
+                }
+                true
+            }
+            else -> throw MessagingRecoveryException("Outbound expiry history state is invalid")
+        }
     }
 
     /**

@@ -37,6 +37,31 @@ class ConversationHistoryPruningTest {
     }
 
     @Test
+    fun expiredOutboundIsSafelyPrunableAfterTerminalTransition() {
+        val initial = ConversationHistoryState(
+            OWNER.copyOf(),
+            (1..ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION).map { index ->
+                record(
+                    index = index,
+                    peer = PEER_A,
+                    direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                    deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+                    sentAt = index.toLong(),
+                    expiresAt = 2_000,
+                )
+            },
+        )
+        val fixture = Fixture(initial, now = 10_000)
+
+        fixture.preflight(PEER_A, 2_000)
+
+        assertEquals(1, fixture.store.writeCount)
+        val persisted = fixture.repository.currentState(OWNER)!!
+        assertEquals(ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION - 1, persisted.messages.size)
+        assertFalse(persisted.messages.any { it.messageId.contentEquals(messageId(1)) })
+    }
+
+    @Test
     fun sameConversationPruningPrecedesOlderUnrelatedHistory() {
         val samePeer = (1..ConversationHistoryStateCodec.MAX_MESSAGES_PER_CONVERSATION).map { index ->
             record(

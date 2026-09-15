@@ -109,7 +109,8 @@ internal class ConversationHistoryRepository(
         if (existing != null) {
             if (
                 existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE &&
-                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED
+                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED &&
+                existing.deliveryState != ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED
             ) {
                 throw ConversationHistoryException("Conflicting conversation history record for authenticated message id")
             }
@@ -147,6 +148,57 @@ internal class ConversationHistoryRepository(
             }
             ?.map(ConversationHistoryRecord::copyForCaller)
             .orEmpty()
+    }
+
+    /**
+     * Transitions a still-pending outbound message to durable EXPIRED at the exact protocol expiry
+     * boundary. The caller supplies the transport clock snapshot so persistence and envelope
+     * validation make the same decision.
+     */
+    @Synchronized
+    fun expireOutboundIfDue(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): ConversationHistoryRecord {
+        requireIdentity(ownerIdentityId, "owner identity id")
+        requireIdentity(peerIdentityId, "outbound expiry peer identity id")
+        if (peerIdentityId.contentEquals(ownerIdentityId)) {
+            throw ConversationHistoryException("Outbound expiry peer cannot be the local identity")
+        }
+        requireMessageId(messageId)
+        if (nowEpochSeconds < 0) {
+            throw ConversationHistoryException("Conversation history clock returned an invalid timestamp")
+        }
+
+        val state = loadState(ownerIdentityId)
+            ?: throw ConversationHistoryException("Expiring outbound message is not represented in conversation history")
+        val index = state.messages.indexOfFirst {
+            it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                it.peerIdentityId.contentEquals(peerIdentityId) &&
+                it.messageId.contentEquals(messageId)
+        }
+        if (index < 0) {
+            throw ConversationHistoryException("Expiring outbound message is not represented in conversation history")
+        }
+        val existing = state.messages[index]
+        when (existing.deliveryState) {
+            ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+            ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+            -> return existing.copyForCaller()
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> Unit
+            else -> throw ConversationHistoryException("Outbound conversation history cannot transition to expired")
+        }
+
+        val plaintext = decodeCanonicalPlaintext(existing.encodedPlaintext)
+        if (plaintext.expiresAtEpochSeconds > nowEpochSeconds) {
+            return existing.copyForCaller()
+        }
+        val updatedRecord = existing.copy(deliveryState = ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED)
+        val messages = state.messages.toMutableList().also { it[index] = updatedRecord }
+        persist(state.copy(messages = messages))
+        return updatedRecord.copyForCaller()
     }
 
     @Synchronized
@@ -202,17 +254,13 @@ internal class ConversationHistoryRepository(
         state: ConversationHistoryState,
         candidate: ConversationHistoryRecord,
     ): HistoryAdmission {
-        // Validate the candidate in isolation before deleting any retained state. Existing state was
-        // already validated on decode, so later admission failures can only be bounded-capacity
-        // failures and never malformed candidate data.
         ConversationHistoryStateCodec.encode(state.copy(messages = listOf(candidate)))
 
         val working = state.messages.toMutableList()
         var pruningNow: Long? = null
         fun nowForPruning(): Long {
             pruningNow?.let { return it }
-            val value = clock.nowEpochSeconds()
-            if (value < 0) throw ConversationHistoryException("Conversation history clock returned an invalid timestamp")
+            val value = currentTime()
             pruningNow = value
             return value
         }
@@ -241,7 +289,6 @@ internal class ConversationHistoryRepository(
 
         val prunedState = state.copy(messages = working.toList())
         val withCandidate = state.copy(messages = working + candidate)
-        // Defensive exact validation keeps the pruning calculation mechanically tied to the codec.
         ConversationHistoryStateCodec.encode(withCandidate)
         return HistoryAdmission(prunedState, withCandidate)
     }
@@ -298,7 +345,8 @@ internal class ConversationHistoryRepository(
         nowEpochSeconds: Long,
     ): Boolean = when (record.direction) {
         SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND ->
-            record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED
+            record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED ||
+                record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED
         SessionStateCodec.HANDOFF_DIRECTION_INBOUND ->
             record.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK &&
                 plaintext.expiresAtEpochSeconds <= nowEpochSeconds
@@ -454,6 +502,10 @@ internal class ConversationHistoryRepository(
         if (value.size != MESSAGING_MESSAGE_ID_BYTES || value.all { it == 0.toByte() }) {
             throw ConversationHistoryException("Conversation history message id is invalid")
         }
+    }
+
+    private fun currentTime(): Long = clock.nowEpochSeconds().also {
+        if (it < 0) throw ConversationHistoryException("Conversation history clock returned an invalid timestamp")
     }
 
     private fun sameIdempotencyKey(

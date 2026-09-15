@@ -28,8 +28,34 @@ class MessagingWssLiveFlushTest {
 
         assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
         assertEquals(2, socket.sent.size)
+        assertEquals(1, fixture.recovery.expiryChecks.size)
         val sent = MessagingWire.decodeClientFrame(socket.sent[1]).send!!
         assertArrayEquals(MessagingWire.encodeEnvelope(envelope), MessagingWire.encodeEnvelope(sent))
+    }
+
+    @Test
+    fun expiredNewlyStagedWorkIsTerminalizedWithoutFailingLiveSocket() {
+        val fixture = Fixture()
+        val socket = fixture.authenticate()
+        val envelope = outboundEnvelope(10)
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            outboundSends = listOf(
+                MessagingRecoveredSend(
+                    peerIdentityId = PEER.copyOf(),
+                    messageId = envelope.messageId.copyOf(),
+                    encodedEnvelope = MessagingWire.encodeEnvelope(envelope),
+                ),
+            ),
+            inboundAcks = emptyList(),
+        )
+        fixture.recovery.expiredMessageIds += envelope.messageId.copyOf()
+
+        fixture.coordinator.flushDurableWork()
+
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size)
+        assertEquals(1, fixture.recovery.expiryChecks.size)
+        assertTrue(fixture.recovery.plan.outboundSends.isEmpty())
     }
 
     @Test
@@ -152,8 +178,29 @@ class MessagingWssLiveFlushTest {
 
     private class FakeRecovery : MessagingRecoveryDriver {
         var plan = MessagingRecoveryPlan(emptyList(), emptyList())
+        val expiredMessageIds = ArrayList<ByteArray>()
+        val expiryChecks = ArrayList<ByteArray>()
 
         override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = plan
+
+        override fun expireOutboundIfDue(
+            ownerIdentityId: ByteArray,
+            peerIdentityId: ByteArray,
+            messageId: ByteArray,
+            nowEpochSeconds: Long,
+        ): Boolean {
+            expiryChecks += messageId.copyOf()
+            val expired = expiredMessageIds.any { it.contentEquals(messageId) }
+            if (expired) {
+                plan = plan.copy(
+                    outboundSends = plan.outboundSends.filterNot {
+                        it.peerIdentityId.contentEquals(peerIdentityId) &&
+                            it.messageId.contentEquals(messageId)
+                    },
+                )
+            }
+            return expired
+        }
 
         override fun recordSendAccepted(ownerIdentityId: ByteArray, accepted: MessagingSendAccepted) = Unit
     }

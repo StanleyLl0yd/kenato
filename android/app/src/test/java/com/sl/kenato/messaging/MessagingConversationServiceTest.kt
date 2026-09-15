@@ -73,7 +73,8 @@ class MessagingConversationServiceTest {
                 record(1, PEER_A, SessionStateCodec.HANDOFF_DIRECTION_INBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK, "received", 90, 190),
                 record(2, PEER_A, SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, "pending", 100, 200),
                 record(3, PEER_A, SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, "sent", 110, 210),
-                record(4, PEER_B, SessionStateCodec.HANDOFF_DIRECTION_INBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK, "other", 120, 220),
+                record(4, PEER_A, SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED, "expired", 120, 220),
+                record(5, PEER_B, SessionStateCodec.HANDOFF_DIRECTION_INBOUND, ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACK, "other", 130, 230),
             ),
         )
         val history = ConversationHistoryRepository(
@@ -97,11 +98,12 @@ class MessagingConversationServiceTest {
         val conversation = service.conversation(OWNER, PEER_A)
 
         assertEquals(base64(PEER_A), conversation.peerIdentityId)
-        assertEquals(3, conversation.messages.size)
-        assertEquals(listOf("received", "pending", "sent"), conversation.messages.map { it.text })
+        assertEquals(4, conversation.messages.size)
+        assertEquals(listOf("received", "pending", "sent", "expired"), conversation.messages.map { it.text })
         assertEquals(
             listOf(
                 MessagingConversationDirection.INBOUND,
+                MessagingConversationDirection.OUTBOUND,
                 MessagingConversationDirection.OUTBOUND,
                 MessagingConversationDirection.OUTBOUND,
             ),
@@ -112,11 +114,12 @@ class MessagingConversationServiceTest {
                 MessagingConversationDeliveryState.RECEIVED,
                 MessagingConversationDeliveryState.PENDING_SEND,
                 MessagingConversationDeliveryState.SENT,
+                MessagingConversationDeliveryState.EXPIRED_UNCONFIRMED,
             ),
             conversation.messages.map { it.deliveryState },
         )
-        assertEquals(listOf(90L, 100L, 110L), conversation.messages.map { it.sentAtEpochSeconds })
-        assertEquals(listOf(190L, 200L, 210L), conversation.messages.map { it.expiresAtEpochSeconds })
+        assertEquals(listOf(90L, 100L, 110L, 120L), conversation.messages.map { it.sentAtEpochSeconds })
+        assertEquals(listOf(190L, 200L, 210L, 220L), conversation.messages.map { it.expiresAtEpochSeconds })
         assertEquals(0, flushCount)
     }
 

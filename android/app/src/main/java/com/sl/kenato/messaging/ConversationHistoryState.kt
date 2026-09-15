@@ -33,9 +33,11 @@ internal object ConversationHistoryStateCodec {
     const val DELIVERY_STATE_PENDING_ACK = 1
     const val DELIVERY_STATE_PENDING_ACCEPTANCE = 2
     const val DELIVERY_STATE_ACCEPTED = 3
+    const val DELIVERY_STATE_EXPIRED = 4
     const val ENVELOPE_DIGEST_BYTES = 32
 
-    private const val FORMAT_VERSION = 1
+    private const val LEGACY_FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
     private const val DIGEST_BYTES = 32
     private const val RECORD_FIXED_BYTES =
         SessionStateCodec.LOCAL_CONTACT_ID_BYTES +
@@ -54,7 +56,7 @@ internal object ConversationHistoryStateCodec {
     private val magic = byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'H'.code.toByte(), '4'.code.toByte())
 
     fun encode(state: ConversationHistoryState): ByteArray {
-        validate(state)
+        validate(state, allowExpired = true)
         val payload = ByteArrayOutputStream().use { bytes ->
             DataOutputStream(bytes).use { output ->
                 output.write(magic)
@@ -89,7 +91,11 @@ internal object ConversationHistoryStateCodec {
         try {
             DataInputStream(ByteArrayInputStream(encoded, 0, payloadSize)).use { input ->
                 val actualMagic = ByteArray(magic.size).also(input::readFully)
-                if (!actualMagic.contentEquals(magic) || input.readInt() != FORMAT_VERSION) {
+                if (!actualMagic.contentEquals(magic)) {
+                    throw ConversationHistoryException("Conversation history format is unsupported")
+                }
+                val formatVersion = input.readInt()
+                if (formatVersion != LEGACY_FORMAT_VERSION && formatVersion != FORMAT_VERSION) {
                     throw ConversationHistoryException("Conversation history format is unsupported")
                 }
                 val ownerIdentityId = ByteArray(MESSAGING_IDENTITY_BYTES).also(input::readFully)
@@ -101,7 +107,9 @@ internal object ConversationHistoryStateCodec {
                 if (input.available() != 0) {
                     throw ConversationHistoryException("Conversation history contains trailing data")
                 }
-                return ConversationHistoryState(ownerIdentityId, messages).also(::validate)
+                return ConversationHistoryState(ownerIdentityId, messages).also {
+                    validate(it, allowExpired = formatVersion >= FORMAT_VERSION)
+                }
             }
         } catch (error: ConversationHistoryException) {
             throw error
@@ -116,7 +124,7 @@ internal object ConversationHistoryStateCodec {
     internal fun encodedBytesForBounds(messages: List<ConversationHistoryRecord>): Long =
         STATE_FIXED_BYTES.toLong() + messages.sumOf(::retainedBytesForBounds)
 
-    private fun validate(state: ConversationHistoryState) {
+    private fun validate(state: ConversationHistoryState, allowExpired: Boolean) {
         if (state.ownerIdentityId.size != MESSAGING_IDENTITY_BYTES) {
             throw ConversationHistoryException("Conversation history owner identity id is invalid")
         }
@@ -128,7 +136,7 @@ internal object ConversationHistoryStateCodec {
         val conversationCounts = HashMap<ByteArrayKey, Int>()
         val conversationBytes = HashMap<ByteArrayKey, Long>()
         state.messages.forEach { record ->
-            validateRecord(state.ownerIdentityId, record)
+            validateRecord(state.ownerIdentityId, record, allowExpired)
             val peerKey = ByteArrayKey(record.peerIdentityId)
             val historyKey = HistoryKey(peerKey, ByteArrayKey(record.messageId), record.direction)
             if (!seen.add(historyKey)) {
@@ -147,7 +155,11 @@ internal object ConversationHistoryStateCodec {
         }
     }
 
-    private fun validateRecord(ownerIdentityId: ByteArray, record: ConversationHistoryRecord) {
+    private fun validateRecord(
+        ownerIdentityId: ByteArray,
+        record: ConversationHistoryRecord,
+        allowExpired: Boolean,
+    ) {
         if (record.localContactId.size != SessionStateCodec.LOCAL_CONTACT_ID_BYTES) {
             throw ConversationHistoryException("Conversation history contact id is invalid")
         }
@@ -170,10 +182,11 @@ internal object ConversationHistoryStateCodec {
                 }
             }
             SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
-                if (
-                    record.deliveryState != DELIVERY_STATE_PENDING_ACCEPTANCE &&
-                    record.deliveryState != DELIVERY_STATE_ACCEPTED
-                ) {
+                val supported =
+                    record.deliveryState == DELIVERY_STATE_PENDING_ACCEPTANCE ||
+                        record.deliveryState == DELIVERY_STATE_ACCEPTED ||
+                        (allowExpired && record.deliveryState == DELIVERY_STATE_EXPIRED)
+                if (!supported) {
                     throw ConversationHistoryException("Outbound conversation history delivery state is unsupported")
                 }
             }

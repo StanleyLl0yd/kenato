@@ -146,6 +146,84 @@ class ConversationHistoryRepositoryTest {
     }
 
     @Test
+    fun outboundExpiresAtExactBoundaryAndReimportPreservesTerminalState() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+
+        fixture.now = 199
+        val before = fixture.repository.expireOutboundIfDue(
+            OWNER,
+            PEER,
+            handoff.messageId,
+            nowEpochSeconds = fixture.now,
+        )
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE, before.deliveryState)
+        assertEquals(1, fixture.store.writeCount)
+
+        fixture.now = 200
+        val expired = fixture.repository.expireOutboundIfDue(
+            OWNER,
+            PEER,
+            handoff.messageId,
+            nowEpochSeconds = fixture.now,
+        )
+        val recovered = fixture.newRepository().importOutboundPendingAcceptance(OWNER, handoff)
+
+        assertEquals(2, fixture.store.writeCount)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED, expired.deliveryState)
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED, recovered.deliveryState)
+        assertTrue(fixture.newRepository().pendingOutboundAcceptances(OWNER).isEmpty())
+    }
+
+    @Test
+    fun failedExpiryWriteLeavesOutboundPending() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        fixture.now = 200
+        fixture.store.failWrites = true
+
+        assertThrows(ConversationHistoryException::class.java) {
+            fixture.repository.expireOutboundIfDue(
+                OWNER,
+                PEER,
+                handoff.messageId,
+                nowEpochSeconds = fixture.now,
+            )
+        }
+
+        fixture.store.failWrites = false
+        assertEquals(1, fixture.store.writeCount)
+        assertEquals(
+            ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE,
+            fixture.newRepository().pendingOutboundAcceptances(OWNER).single().deliveryState,
+        )
+    }
+
+    @Test
+    fun acceptedOutboundNeverTransitionsToExpired() {
+        val fixture = Fixture()
+        val handoff = outboundHandoff(2)
+        fixture.repository.importOutboundPendingAcceptance(OWNER, handoff)
+        fixture.repository.markOutboundAccepted(
+            OWNER,
+            MessagingSendAccepted(PEER.copyOf(), handoff.messageId.copyOf()),
+        )
+        fixture.now = 10_000
+
+        val record = fixture.repository.expireOutboundIfDue(
+            OWNER,
+            PEER,
+            handoff.messageId,
+            nowEpochSeconds = fixture.now,
+        )
+
+        assertEquals(ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED, record.deliveryState)
+        assertEquals(2, fixture.store.writeCount)
+    }
+
+    @Test
     fun sendAcceptedIsDurableAndIdempotentBeforeStagedEnvelopeRemoval() {
         val fixture = Fixture()
         val handoff = outboundHandoff(2)
@@ -312,9 +390,11 @@ class ConversationHistoryRepositoryTest {
 
     private class Fixture {
         val store = FakeHistoryStore()
+        var now = 100L
         val repository = newRepository()
 
-        fun newRepository(): ConversationHistoryRepository = ConversationHistoryRepository(store)
+        fun newRepository(): ConversationHistoryRepository =
+            ConversationHistoryRepository(store, ConversationHistoryClock { now })
     }
 
     private class FakeHistoryStore : ConversationHistoryStore {

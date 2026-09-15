@@ -15,6 +15,7 @@ internal enum class MessagingConversationDeliveryState {
     RECEIVED,
     PENDING_SEND,
     SENT,
+    EXPIRED_UNCONFIRMED,
 }
 
 internal data class MessagingConversationMessage(
@@ -95,8 +96,6 @@ internal class MessagingConversationService(
             ttlSeconds = ttlSeconds,
         )
         val visible = applicationMessage(ownerIdentityId, peerIdentityId, record)
-        // stageText returns only after the history record is durable. A live transport may now
-        // consume the staged exact envelope; offline/pre-auth coordinators simply leave it queued.
         durableWork.flushDurableWork()
         return visible
     }
@@ -163,6 +162,10 @@ internal class MessagingConversationService(
                         MessagingConversationDeliveryState.PENDING_SEND
                     ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED ->
                         MessagingConversationDeliveryState.SENT
+                    // TTL elapsed without a durable SendAccepted. A previous socket enqueue may
+                    // have succeeded, so this state deliberately does not claim non-delivery.
+                    ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED ->
+                        MessagingConversationDeliveryState.EXPIRED_UNCONFIRMED
                     else -> throw MessagingConversationException("M4 outbound conversation delivery state is invalid")
                 }
                 expectedSender = ownerIdentityId
