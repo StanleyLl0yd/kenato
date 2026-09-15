@@ -27,15 +27,24 @@ internal fun interface MessagingSocketFactory {
 }
 
 /**
- * Thin OkHttp 5 WebSocket adapter. TLS, redirects and certificate validation remain OkHttp/platform
- * defaults; Kenato adds no logging interceptor, trust override, hostname override or parallel HTTP
- * stack here.
+ * Thin OkHttp 5 WebSocket adapter with a factory-owned client. TLS and certificate/hostname
+ * validation remain OkHttp/platform defaults. Redirects are disabled so the reviewed WSS origin
+ * cannot be replaced by a server-directed follow-up, and no logging/custom TLS policy is installed.
  */
-internal class OkHttpMessagingSocketFactory(
+internal class OkHttpMessagingSocketFactory private constructor(
     private val client: OkHttpClient,
 ) : MessagingSocketFactory {
+    constructor() : this(buildMessagingClient())
+
     override fun create(url: String, listener: MessagingSocketListener): MessagingSocket =
         OkHttpMessagingSocket(client, Request.Builder().url(url).build(), listener)
+
+    internal companion object {
+        fun buildMessagingClient(): OkHttpClient = OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+    }
 }
 
 private class OkHttpMessagingSocket(
