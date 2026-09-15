@@ -103,12 +103,21 @@ internal class DurableMessagingInboundDeliveryHandler(
             )
         }
 
-        // Parse and bind the opaque M3 wrapper before consulting local session state. Malformed or
-        // relay-rewritten ciphertext therefore cannot trigger a session lookup or native decrypt.
+        // Parse and bind the opaque M3 wrapper before consulting local session state. Malformed,
+        // non-canonical or relay-rewritten ciphertext therefore cannot trigger a session lookup or
+        // native decrypt.
         val ciphertext = try {
             SessionCiphertextWire.decode(envelope.ciphertext)
         } catch (error: Exception) {
             throw MessagingInboundDeliveryException("M4 inbound SessionCiphertext is invalid", error)
+        }
+        val canonicalCiphertext = try {
+            SessionCiphertextWire.encode(ciphertext)
+        } catch (error: Exception) {
+            throw MessagingInboundDeliveryException("M4 inbound SessionCiphertext is invalid", error)
+        }
+        if (!canonicalCiphertext.contentEquals(envelope.ciphertext)) {
+            throw MessagingInboundDeliveryException("M4 inbound SessionCiphertext is not canonical")
         }
         if (
             !ciphertext.senderIdentityId.contentEquals(envelope.senderIdentityId) ||
