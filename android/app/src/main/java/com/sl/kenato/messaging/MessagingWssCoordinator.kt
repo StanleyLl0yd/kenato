@@ -169,11 +169,14 @@ internal class MessagingWssCoordinator(
     private var scheduledReconnect: MessagingScheduledTask? = null
     private var authenticationTimeout: MessagingScheduledTask? = null
     private var sendAcceptanceTimeout: MessagingScheduledTask? = null
+    private var ackRetryTask: MessagingScheduledTask? = null
     private var reconnectAttempts = 0
     private var durableRetryAttempts = 0
+    private var ackRetryAttempts = 0
     private var authenticatedIdentityId: ByteArray? = null
     private val sentThisConnection = HashSet<MessageKey>()
     private val recoveredAcksSentThisConnection = HashSet<MessageKey>()
+    private val pendingAckRetryMessageIds = HashSet<MessageIdKey>()
 
     @Synchronized
     fun currentState(): MessagingWssState = state
@@ -185,7 +188,7 @@ internal class MessagingWssCoordinator(
         try {
             pumpRecovery(socket)
         } catch (_: MessagingWssRetryException) {
-            retryDurableWork(socket)
+            retryAfterSendFailure(socket)
         } catch (_: Exception) {
             failClosed(socket)
         }
@@ -197,6 +200,7 @@ internal class MessagingWssCoordinator(
         running = true
         reconnectAttempts = 0
         durableRetryAttempts = 0
+        ackRetryAttempts = 0
         connectNow()
     }
 
@@ -209,8 +213,10 @@ internal class MessagingWssCoordinator(
         authenticatedIdentityId = null
         reconnectAttempts = 0
         durableRetryAttempts = 0
+        ackRetryAttempts = 0
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
+        pendingAckRetryMessageIds.clear()
         state = MessagingWssState.STOPPED
     }
 
@@ -256,11 +262,7 @@ internal class MessagingWssCoordinator(
                 else -> throw MessagingWssException("Unexpected M4 frame for current socket state")
             }
         } catch (_: MessagingWssRetryException) {
-            if (state == MessagingWssState.AUTHENTICATED) {
-                retryDurableWork(socket)
-            } else {
-                retryConnection(socket)
-            }
+            retryAfterSendFailure(socket)
         } catch (_: Exception) {
             failClosed(socket)
         }
@@ -329,7 +331,9 @@ internal class MessagingWssCoordinator(
         authenticationTimeout?.cancel()
         authenticationTimeout = null
         cancelSendAcceptanceTimeout()
+        cancelAckRetry()
         reconnectAttempts = 0
+        ackRetryAttempts = 0
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
         state = MessagingWssState.AUTHENTICATED
@@ -366,20 +370,40 @@ internal class MessagingWssCoordinator(
         ) {
             throw MessagingWssException("M4 delivery handler returned a mismatched ACK")
         }
-        // ACK is idempotent server-side. A repeated delivery is deliberately re-ACKed after the
-        // durable handler has revalidated it, avoiding loss if an earlier queued ACK never arrived.
+        // ACK is idempotent server-side. Track the key for RETRY_LATER correlation but still re-ACK
+        // an authenticated duplicate delivery so an earlier queued ACK cannot strand server state.
+        recoveredAcksSentThisConnection.add(MessageKey(ack.senderIdentityId, ack.messageId))
         sendFrame(socket, MessagingClientFrame(ack = ack))
     }
 
     private fun handleServerError(socket: MessagingSocket, error: MessagingWireError) {
         when (error.code) {
-            MESSAGING_ERROR_RETRY_LATER -> retryDurableWork(socket)
+            MESSAGING_ERROR_RETRY_LATER -> handleRetryLater(socket, error)
             MESSAGING_ERROR_MALFORMED,
             MESSAGING_ERROR_AUTHENTICATION_FAILED,
             MESSAGING_ERROR_SEND_REJECTED,
             -> failClosed(socket)
             else -> failClosed(socket)
         }
+    }
+
+    private fun handleRetryLater(socket: MessagingSocket, error: MessagingWireError) {
+        val messageId = error.messageId
+        if (messageId == null) {
+            // Authenticated generic pressure is reconnectable, but it is not correlated with one
+            // durable application key and therefore must not consume the outbound-message budget.
+            retryConnection(socket)
+            return
+        }
+        if (sentThisConnection.any { it.matchesMessageId(messageId) }) {
+            retryDurableWork(socket)
+            return
+        }
+        if (recoveredAcksSentThisConnection.any { it.matchesMessageId(messageId) }) {
+            scheduleAckRetry(socket, messageId)
+            return
+        }
+        throw MessagingWssException("M4 RETRY_LATER does not match in-flight durable work")
     }
 
     private fun pumpRecovery(socket: MessagingSocket) {
@@ -463,6 +487,14 @@ internal class MessagingWssCoordinator(
         }
     }
 
+    private fun retryAfterSendFailure(socket: MessagingSocket) {
+        if (state == MessagingWssState.AUTHENTICATED && hasDurableWorkInFlight()) {
+            retryDurableWork(socket)
+        } else {
+            retryConnection(socket)
+        }
+    }
+
     private fun ensureSendAcceptanceTimeout(socket: MessagingSocket) {
         if (sendAcceptanceTimeout != null || sentThisConnection.isEmpty()) return
         sendAcceptanceTimeout = scheduler.schedule(SEND_ACCEPTANCE_TIMEOUT_MILLIS) {
@@ -483,6 +515,44 @@ internal class MessagingWssCoordinator(
     private fun cancelSendAcceptanceTimeout() {
         sendAcceptanceTimeout?.cancel()
         sendAcceptanceTimeout = null
+    }
+
+    private fun scheduleAckRetry(socket: MessagingSocket, messageId: ByteArray) {
+        pendingAckRetryMessageIds.add(MessageIdKey(messageId))
+        if (ackRetryTask != null) return
+        if (ackRetryAttempts >= MAX_ACK_RETRY_ATTEMPTS) {
+            pendingAckRetryMessageIds.clear()
+            return
+        }
+        val delay = retryDelayMillis(ackRetryAttempts)
+        ackRetryAttempts++
+        ackRetryTask = scheduler.schedule(delay) {
+            synchronized(this) {
+                ackRetryTask = null
+                if (!running || socket !== activeSocket || state != MessagingWssState.AUTHENTICATED) {
+                    pendingAckRetryMessageIds.clear()
+                    return@synchronized
+                }
+                val retryIds = pendingAckRetryMessageIds.toList()
+                pendingAckRetryMessageIds.clear()
+                recoveredAcksSentThisConnection.removeAll { key ->
+                    retryIds.any { id -> key.matchesMessageId(id.bytes()) }
+                }
+                try {
+                    pumpRecovery(socket)
+                } catch (_: MessagingWssRetryException) {
+                    retryAfterSendFailure(socket)
+                } catch (_: Exception) {
+                    failClosed(socket)
+                }
+            }
+        }
+    }
+
+    private fun cancelAckRetry() {
+        ackRetryTask?.cancel()
+        ackRetryTask = null
+        pendingAckRetryMessageIds.clear()
     }
 
     private fun hasDurableWorkInFlight(): Boolean =
@@ -524,6 +594,7 @@ internal class MessagingWssCoordinator(
         authenticationTimeout?.cancel()
         authenticationTimeout = null
         cancelSendAcceptanceTimeout()
+        cancelAckRetry()
         socket.cancel()
         activeSocket = null
         authenticatedIdentityId = null
@@ -591,6 +662,7 @@ internal class MessagingWssCoordinator(
         authenticationTimeout?.cancel()
         authenticationTimeout = null
         cancelSendAcceptanceTimeout()
+        cancelAckRetry()
     }
 
     private fun requireAuthenticatedIdentity(): ByteArray =
@@ -611,16 +683,30 @@ internal class MessagingWssCoordinator(
         private val peer = peerIdentityId.copyOf()
         private val message = messageId.copyOf()
 
+        fun matchesMessageId(value: ByteArray): Boolean = message.contentEquals(value)
+
         override fun equals(other: Any?): Boolean =
             other is MessageKey && peer.contentEquals(other.peer) && message.contentEquals(other.message)
 
         override fun hashCode(): Int = 31 * peer.contentHashCode() + message.contentHashCode()
     }
 
+    private class MessageIdKey(messageId: ByteArray) {
+        private val message = messageId.copyOf()
+
+        fun bytes(): ByteArray = message.copyOf()
+
+        override fun equals(other: Any?): Boolean =
+            other is MessageIdKey && message.contentEquals(other.message)
+
+        override fun hashCode(): Int = message.contentHashCode()
+    }
+
     companion object {
         const val MAX_QUEUED_STAGED_SENDS = 32
         const val MAX_RECONNECT_ATTEMPTS = 8
         const val MAX_DURABLE_RETRY_ATTEMPTS = 8
+        const val MAX_ACK_RETRY_ATTEMPTS = 8
         const val INITIAL_RECONNECT_DELAY_MILLIS = 1_000L
         const val MAX_RECONNECT_DELAY_MILLIS = 30_000L
         const val AUTHENTICATION_TIMEOUT_MILLIS = 15_000L
