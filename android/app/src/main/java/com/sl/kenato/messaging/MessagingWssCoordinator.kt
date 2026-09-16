@@ -170,6 +170,7 @@ internal class MessagingWssCoordinator(
     private var authenticationTimeout: MessagingScheduledTask? = null
     private var sendAcceptanceTimeout: MessagingScheduledTask? = null
     private var reconnectAttempts = 0
+    private var durableRetryAttempts = 0
     private var authenticatedIdentityId: ByteArray? = null
     private val sentThisConnection = HashSet<MessageKey>()
     private val recoveredAcksSentThisConnection = HashSet<MessageKey>()
@@ -184,7 +185,7 @@ internal class MessagingWssCoordinator(
         try {
             pumpRecovery(socket)
         } catch (_: MessagingWssRetryException) {
-            retryConnection(socket)
+            retryDurableWork(socket)
         } catch (_: Exception) {
             failClosed(socket)
         }
@@ -195,6 +196,7 @@ internal class MessagingWssCoordinator(
         if (running) return
         running = true
         reconnectAttempts = 0
+        durableRetryAttempts = 0
         connectNow()
     }
 
@@ -205,6 +207,8 @@ internal class MessagingWssCoordinator(
         activeSocket?.cancel()
         activeSocket = null
         authenticatedIdentityId = null
+        reconnectAttempts = 0
+        durableRetryAttempts = 0
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
         state = MessagingWssState.STOPPED
@@ -252,7 +256,11 @@ internal class MessagingWssCoordinator(
                 else -> throw MessagingWssException("Unexpected M4 frame for current socket state")
             }
         } catch (_: MessagingWssRetryException) {
-            retryConnection(socket)
+            if (state == MessagingWssState.AUTHENTICATED) {
+                retryDurableWork(socket)
+            } else {
+                retryConnection(socket)
+            }
         } catch (_: Exception) {
             failClosed(socket)
         }
@@ -331,6 +339,7 @@ internal class MessagingWssCoordinator(
             frame.sendAccepted != null -> {
                 val owner = requireAuthenticatedIdentity()
                 recovery.recordSendAccepted(owner, frame.sendAccepted)
+                durableRetryAttempts = 0
                 sentThisConnection.remove(MessageKey(frame.sendAccepted.recipientIdentityId, frame.sendAccepted.messageId))
                 if (sentThisConnection.isEmpty()) cancelSendAcceptanceTimeout()
                 pumpRecovery(socket)
@@ -361,7 +370,7 @@ internal class MessagingWssCoordinator(
 
     private fun handleServerError(socket: MessagingSocket, error: MessagingWireError) {
         when (error.code) {
-            MESSAGING_ERROR_RETRY_LATER -> retryConnection(socket)
+            MESSAGING_ERROR_RETRY_LATER -> retryDurableWork(socket)
             MESSAGING_ERROR_MALFORMED,
             MESSAGING_ERROR_AUTHENTICATION_FAILED,
             MESSAGING_ERROR_SEND_REJECTED,
@@ -459,7 +468,7 @@ internal class MessagingWssCoordinator(
                     state == MessagingWssState.AUTHENTICATED &&
                     sentThisConnection.isNotEmpty()
                 ) {
-                    retryConnection(socket)
+                    retryDurableWork(socket)
                 }
             }
         }
@@ -492,6 +501,17 @@ internal class MessagingWssCoordinator(
 
     private fun retryConnection(socket: MessagingSocket) {
         if (socket !== activeSocket) return
+        disconnectActiveSocket(socket)
+        if (running) scheduleReconnect() else state = MessagingWssState.STOPPED
+    }
+
+    private fun retryDurableWork(socket: MessagingSocket) {
+        if (socket !== activeSocket) return
+        disconnectActiveSocket(socket)
+        if (running) scheduleDurableReconnect() else state = MessagingWssState.STOPPED
+    }
+
+    private fun disconnectActiveSocket(socket: MessagingSocket) {
         authenticationTimeout?.cancel()
         authenticationTimeout = null
         cancelSendAcceptanceTimeout()
@@ -500,7 +520,6 @@ internal class MessagingWssCoordinator(
         authenticatedIdentityId = null
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
-        if (running) scheduleReconnect() else state = MessagingWssState.STOPPED
     }
 
     private fun scheduleReconnect() {
@@ -511,12 +530,33 @@ internal class MessagingWssCoordinator(
             state = MessagingWssState.FAILED
             return
         }
-        val shift = min(reconnectAttempts, 30)
-        val exponential = INITIAL_RECONNECT_DELAY_MILLIS * (1L shl shift)
-        val delay = min(exponential, MAX_RECONNECT_DELAY_MILLIS)
+        val delay = retryDelayMillis(reconnectAttempts)
         reconnectAttempts++
+        scheduleReconnectAfter(delay)
+    }
+
+    private fun scheduleDurableReconnect() {
+        if (!running) return
+        scheduledReconnect?.cancel()
+        if (durableRetryAttempts >= MAX_DURABLE_RETRY_ATTEMPTS) {
+            running = false
+            state = MessagingWssState.FAILED
+            return
+        }
+        val delay = retryDelayMillis(durableRetryAttempts)
+        durableRetryAttempts++
+        scheduleReconnectAfter(delay)
+    }
+
+    private fun retryDelayMillis(attempt: Int): Long {
+        val shift = min(attempt, 30)
+        val exponential = INITIAL_RECONNECT_DELAY_MILLIS * (1L shl shift)
+        return min(exponential, MAX_RECONNECT_DELAY_MILLIS)
+    }
+
+    private fun scheduleReconnectAfter(delayMillis: Long) {
         state = MessagingWssState.RETRY_WAIT
-        scheduledReconnect = scheduler.schedule(delay) {
+        scheduledReconnect = scheduler.schedule(delayMillis) {
             synchronized(this) {
                 scheduledReconnect = null
                 if (running && activeSocket == null) connectNow()
@@ -571,6 +611,7 @@ internal class MessagingWssCoordinator(
     companion object {
         const val MAX_QUEUED_STAGED_SENDS = 32
         const val MAX_RECONNECT_ATTEMPTS = 8
+        const val MAX_DURABLE_RETRY_ATTEMPTS = 8
         const val INITIAL_RECONNECT_DELAY_MILLIS = 1_000L
         const val MAX_RECONNECT_DELAY_MILLIS = 30_000L
         const val AUTHENTICATION_TIMEOUT_MILLIS = 15_000L
