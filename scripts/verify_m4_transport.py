@@ -134,6 +134,15 @@ for fragment in (
 ):
     require("server/internal/httpapi/messaging_ws_test.go", integration_tests, fragment)
 
+authorization_tests_path = "server/internal/httpapi/messaging_ws_authorization_test.go"
+authorization_tests = read(authorization_tests_path)
+for fragment in (
+    "TestMessagingWSSRejectsAuthenticationProofReplayAcrossConnections",
+    "TestMessagingWSSRejectsAuthenticatedSenderSubstitution",
+    "TestMessagingWSSUnauthorizedAckCannotResolveDirectDelivery",
+):
+    require(authorization_tests_path, authorization_tests, fragment)
+
 liveness_tests = read("server/internal/httpapi/messaging_routing_liveness_test.go")
 for fragment in (
     "TestMessagingMailboxStoreWakesCurrentRecipientPeer",
