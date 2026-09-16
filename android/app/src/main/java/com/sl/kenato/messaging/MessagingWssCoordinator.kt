@@ -168,6 +168,7 @@ internal class MessagingWssCoordinator(
     private var activeSocket: MessagingSocket? = null
     private var scheduledReconnect: MessagingScheduledTask? = null
     private var authenticationTimeout: MessagingScheduledTask? = null
+    private var sendAcceptanceTimeout: MessagingScheduledTask? = null
     private var reconnectAttempts = 0
     private var authenticatedIdentityId: ByteArray? = null
     private val sentThisConnection = HashSet<MessageKey>()
@@ -316,6 +317,7 @@ internal class MessagingWssCoordinator(
         }
         authenticationTimeout?.cancel()
         authenticationTimeout = null
+        cancelSendAcceptanceTimeout()
         reconnectAttempts = 0
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
@@ -330,6 +332,7 @@ internal class MessagingWssCoordinator(
                 val owner = requireAuthenticatedIdentity()
                 recovery.recordSendAccepted(owner, frame.sendAccepted)
                 sentThisConnection.remove(MessageKey(frame.sendAccepted.recipientIdentityId, frame.sendAccepted.messageId))
+                if (sentThisConnection.isEmpty()) cancelSendAcceptanceTimeout()
                 pumpRecovery(socket)
             }
             frame.error != null -> handleServerError(socket, frame.error)
@@ -398,6 +401,7 @@ internal class MessagingWssCoordinator(
             val envelope = decodeExactRecoveredEnvelope(recovered, owner, now)
             if (sentThisConnection.add(key)) {
                 sendFrame(socket, MessagingClientFrame(send = envelope))
+                ensureSendAcceptanceTimeout(socket)
             }
         }
         plan.inboundAcks.forEach { recovered ->
@@ -444,6 +448,28 @@ internal class MessagingWssCoordinator(
         }
     }
 
+    private fun ensureSendAcceptanceTimeout(socket: MessagingSocket) {
+        if (sendAcceptanceTimeout != null || sentThisConnection.isEmpty()) return
+        sendAcceptanceTimeout = scheduler.schedule(SEND_ACCEPTANCE_TIMEOUT_MILLIS) {
+            synchronized(this) {
+                sendAcceptanceTimeout = null
+                if (
+                    running &&
+                    socket === activeSocket &&
+                    state == MessagingWssState.AUTHENTICATED &&
+                    sentThisConnection.isNotEmpty()
+                ) {
+                    retryConnection(socket)
+                }
+            }
+        }
+    }
+
+    private fun cancelSendAcceptanceTimeout() {
+        sendAcceptanceTimeout?.cancel()
+        sendAcceptanceTimeout = null
+    }
+
     private fun connectNow() {
         if (!running || activeSocket != null) return
         state = MessagingWssState.CONNECTING
@@ -468,6 +494,7 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket) return
         authenticationTimeout?.cancel()
         authenticationTimeout = null
+        cancelSendAcceptanceTimeout()
         socket.cancel()
         activeSocket = null
         authenticatedIdentityId = null
@@ -514,6 +541,7 @@ internal class MessagingWssCoordinator(
         scheduledReconnect = null
         authenticationTimeout?.cancel()
         authenticationTimeout = null
+        cancelSendAcceptanceTimeout()
     }
 
     private fun requireAuthenticatedIdentity(): ByteArray =
@@ -546,6 +574,7 @@ internal class MessagingWssCoordinator(
         const val INITIAL_RECONNECT_DELAY_MILLIS = 1_000L
         const val MAX_RECONNECT_DELAY_MILLIS = 30_000L
         const val AUTHENTICATION_TIMEOUT_MILLIS = 15_000L
+        const val SEND_ACCEPTANCE_TIMEOUT_MILLIS = 30_000L
 
         private const val MESSAGING_PATH = "/v1/messaging/ws"
 
