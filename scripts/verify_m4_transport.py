@@ -84,6 +84,7 @@ for fragment in (
     "errors.Is(err, errMessagingConflict)",
     "errors.Is(err, messaging.ErrMailboxRejected)",
     "code = messaging.MessagingErrorSendRejected",
+    "code = messaging.MessagingErrorMalformed",
     "if err != nil || !peer.tryEnqueue(frame)",
     "peer.stop()",
 ):
@@ -160,6 +161,14 @@ for fragment in (
     "TestMessagingWSSClassifiesMessageIDConflictAsSendRejected",
 ):
     require(classification_tests_path, classification_tests, fragment)
+
+ack_classification_tests_path = "server/internal/httpapi/messaging_ack_error_classification_test.go"
+ack_classification_tests = read(ack_classification_tests_path)
+for fragment in (
+    "TestMessagingWSSClassifiesTransientAckFailureAsRetryLater",
+    "TestMessagingWSSClassifiesPermanentAckRejectionAsMalformed",
+):
+    require(ack_classification_tests_path, ack_classification_tests, fragment)
 
 security_review = read("docs/security/M4_TRANSPORT_REVIEW.md")
 for fragment in (
