@@ -115,6 +115,40 @@ for fragment in (
         fragment,
     )
 
+vector_hex = (
+    "080112202222222222222222222222222222222222222222222222222222222222222222"
+    "1a103333333333333333333333333333333322040102030428bca8d6b907"
+    "32201111111111111111111111111111111111111111111111111111111111111111"
+)
+vector_doc_path = "docs/security/M4_TEST_VECTORS.md"
+vector_doc = read(vector_doc_path)
+for fragment in (
+    "## Server-visible messaging wire",
+    vector_hex,
+    "MessagingClientFrame{send=Envelope}",
+    "MessagingServerFrame{delivery=Envelope}",
+):
+    require(vector_doc_path, vector_doc, fragment)
+
+shared_vector_tests = {
+    "server/internal/messaging/wire_vectors_m4_test.go": (
+        "TestM4ServerVisibleWireVectors",
+        vector_hex,
+        "m4ClientSendVectorHex",
+        "m4ServerDeliveryVectorHex",
+    ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWireVectorTest.kt": (
+        "serverVisibleWireMatchesSharedM4Vectors",
+        "ENVELOPE_HEX",
+        "CLIENT_SEND_HEX",
+        "SERVER_DELIVERY_HEX",
+    ),
+}
+for path, fragments in shared_vector_tests.items():
+    text = read(path)
+    for fragment in fragments:
+        require(path, text, fragment)
+
 for path in (
     "docs/adr/0011-m4-minimal-messaging.md",
     "docs/security/M4_TEST_VECTORS.md",
