@@ -54,6 +54,8 @@ The same rule applies when a send-result or ACK-error frame cannot enter the bou
 
 Send-route error classification is fail-safe for durable retries. Unknown/transient storage, identity-directory, timeout and server failures default to `RETRY_LATER`; mailbox capacity, server shutdown/capacity and per-peer/global send admission pressure are therefore retryable as well. Only explicitly permanent/invariant failures become `SEND_REJECTED`: `ErrMailboxRejected` (invalid envelope/sender or unknown recipient after authenticated lookup) and exact authenticated message-id conflict with different canonical envelope bytes. This distinction lets Android replay the existing durable ciphertext after a transient infrastructure fault without treating it as successful delivery, while conflicting or invalid sends still fail closed.
 
+ACK deletion follows the same transient/permanent split without inventing a success confirmation that the protocol does not have. A transient mailbox/storage failure returns `RETRY_LATER` for the authenticated ACK key so Android can perform its bounded durable ACK retry. An explicit `ErrMailboxRejected` means the ACK itself is invalid for the authenticated mailbox context and is returned as `MALFORMED`, not as retryable work.
+
 ## Offline reconnect
 
 After authentication the peer receives retained mailbox pages through the same bounded outbound queue. A mailbox row is never deleted merely because it was written to the socket. Deletion requires the authenticated recipient ACK. Disconnect therefore leaves retained state durable for retry.
@@ -86,6 +88,7 @@ The #52 baseline plus the #53 cross-boundary hardening require:
 - successful same-identity authentication must replace the old peer;
 - direct ACK, offline fallback, reconnect drain, backpressure and shutdown tests must pass;
 - sender response-queue exhaustion must disconnect instead of silently losing `SendAccepted`/error state;
-- transient storage and mailbox-capacity failures must produce `RETRY_LATER`, while explicit mailbox rejection and message-id conflict must produce `SEND_REJECTED`;
+- transient storage and mailbox-capacity send failures must produce `RETRY_LATER`, while explicit mailbox rejection and message-id conflict must produce `SEND_REJECTED`;
+- transient ACK deletion failure must produce `RETRY_LATER`, while explicit mailbox ACK rejection must produce `MALFORMED`;
 - `scripts/verify_m4_transport.py` must remain part of repository `make test`;
 - all protected-branch exact-head checks must be green.
