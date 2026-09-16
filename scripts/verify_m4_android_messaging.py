@@ -216,6 +216,7 @@ for fragment in (
     "private fun scheduleAckRetry(socket: MessagingSocket, messageId: ByteArray)",
     "pendingAckRetryMessageIds.add(MessageIdKey(messageId))",
     "ackRetryAttempts >= MAX_ACK_RETRY_ATTEMPTS",
+    "M4 RETRY_LATER message id is ambiguous across durable work",
     "M4 RETRY_LATER does not match in-flight durable work",
 ):
     require(wss_path, wss, fragment)
@@ -370,6 +371,9 @@ required_tests = {
         "ackRetryLaterStopsAutomaticRetriesAfterEightAttempts",
         "liveDeliveryAckRetryLaterReusesDurableRecoveredAck",
         "uncorrelatedRetryLaterFailsClosed",
+    ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssRetryCorrelationTest.kt": (
+        "retryLaterMatchingOutboundAndAckFailsClosed",
     ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSocketPolicyTest.kt": (
         "factoryOwnedClientDoesNotFollowRedirectsOrInstallInterceptors",
