@@ -36,7 +36,7 @@ docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-**M0 — Foundation**, **M1 — Local Identity**, **M2 — Invite + Contact Establishment**, and **M3 — E2EE Session** are complete. **M4 — Minimal Messaging** is active under tracker #49. Protocol/auth (#50), bounded mailbox persistence (#51), and authenticated WSS/direct routing (#52) are complete; Android messaging/history (#53) is the current slice and final M4 end-to-end/security verification (#54) follows it.
+**M0 — Foundation**, **M1 — Local Identity**, **M2 — Invite + Contact Establishment**, and **M3 — E2EE Session** are complete. **M4 — Minimal Messaging** is active under tracker #49. Protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), and Android messaging/history (#53) are complete; final repository-wide M4 end-to-end/security verification (#54) is the current slice.
 
 M4 builds minimal E2EE text messaging on the reviewed M3 Double Ratchet boundary: bounded authenticated WSS routing, offline mailbox behavior, exact retry/ACK semantics, crash-safe Android message handoffs, and app-private bounded conversation history. It does not start WebRTC/calling work. After M4 is complete and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 remains blocked until that gate is complete.
 
