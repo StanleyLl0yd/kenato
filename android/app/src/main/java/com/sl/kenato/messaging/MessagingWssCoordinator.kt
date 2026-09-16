@@ -268,7 +268,8 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     override fun onClosed(socket: MessagingSocket) {
-        if (socket === activeSocket) retryConnection(socket)
+        if (socket !== activeSocket) return
+        if (hasDurableWorkInFlight()) retryDurableWork(socket) else retryConnection(socket)
     }
 
     @Synchronized
@@ -276,6 +277,8 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket) return
         if (error is MessagingWssException) {
             failClosed(socket)
+        } else if (hasDurableWorkInFlight()) {
+            retryDurableWork(socket)
         } else {
             retryConnection(socket)
         }
@@ -478,6 +481,10 @@ internal class MessagingWssCoordinator(
         sendAcceptanceTimeout?.cancel()
         sendAcceptanceTimeout = null
     }
+
+    private fun hasDurableWorkInFlight(): Boolean =
+        state == MessagingWssState.AUTHENTICATED &&
+            (sentThisConnection.isNotEmpty() || recoveredAcksSentThisConnection.isNotEmpty())
 
     private fun connectNow() {
         if (!running || activeSocket != null) return
