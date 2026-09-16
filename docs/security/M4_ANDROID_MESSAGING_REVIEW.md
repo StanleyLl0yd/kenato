@@ -78,11 +78,13 @@ Ordinary connection establishment/loss uses bounded delays of 1, 2, 4, 8, 16, 30
 
 Durable outbound work has a separate **eight-attempt durable retry budget** with the same bounded 1/2/4/8/16/30/30/30-second backoff. A successful re-authentication does **not** reset that budget, because re-auth alone proves no progress for a staged message still awaiting durable `SendAccepted`. The budget resets when `SendAccepted` durably advances message state, when recovery proves that no staged outbound work remains (including after terminal expiry), or when the coordinator is explicitly stopped/started. An authenticated close or network failure consumes this durable budget only while a staged outbound send is actually in flight. Recovered inbound ACKs are idempotent but have no `SendAccepted`, so an ACK-only connection loss remains on the ordinary connection retry path rather than exhausting an unrelated outbound budget.
 
-Recovery after authentication is derived only from durable state. Same-connection sets suppress duplicate sends and recovered ACKs. A WebSocket queue failure causes reconnect so the exact durable work can be replayed on the next authenticated connection; it is not treated as successful delivery.
+A server `RETRY_LATER` carrying a message id is correlated against current durable work. If it names an in-flight outbound send, the outbound durable retry budget and exact-envelope reconnect path apply. If it names a recovered or just-produced delivery ACK, Android uses a separate **bounded ACK retry budget**: at most eight same-socket retries with the same 1/2/4/8/16/30/30/30-second backoff. ACK retry does not invent an acknowledgement-of-ACK that the protocol does not provide. After the local ACK retry budget is exhausted, the durable history record remains `PENDING_ACK`; no automatic reconnect loop is started merely for cleanup, and a later natural reconnect can replay the idempotent ACK again. An uncorrelated message-specific `RETRY_LATER` fails closed.
+
+Recovery after authentication is derived only from durable state. Same-connection sets suppress duplicate sends and recovered ACKs except when a correlated ACK retry explicitly re-enables the affected message id. A WebSocket queue failure causes reconnect so durable work can be replayed on the next authenticated connection; it is not treated as successful delivery.
 
 An authenticated connection also has a **30-second send-acceptance watchdog** while at least one staged outbound envelope has been queued but not durably acknowledged by `SendAccepted`. The watchdog is anchored when the first unresolved send is queued; additional sends cannot extend it indefinitely. If unresolved staged work remains when it fires, the socket is cancelled and the separate bounded durable retry path replays the exact durable envelope bytes after re-authentication. Once all same-connection sends have been accepted, the watchdog is cancelled. This bounds half-open connections and lost server-confirmation frames without re-encrypting or advancing the ratchet again.
 
-The server-side counterpart does not silently discard a success/error response when its bounded per-peer outbound queue is full: failure to enqueue a `SendAccepted` or send-result error closes that authenticated peer, allowing the Android durable replay path to recover. Transient mailbox-capacity refusal is classified as `RETRY_LATER`, while invariant/permanent send rejection remains `SEND_REJECTED` and fails closed on Android.
+The server-side counterpart does not silently discard a success/error response when its bounded per-peer outbound queue is full: failure to enqueue a `SendAccepted` or send-result error closes that authenticated peer, allowing the Android durable replay path to recover. Transient route/storage failures default to `RETRY_LATER`; explicit mailbox rejection and exact message-id conflict remain `SEND_REJECTED` and fail closed on Android.
 
 `flushDurableWork()` is only a best-effort wake-up for an already authenticated socket. It is a no-op before authentication/offline and does not own plaintext, sessions or encryption.
 
@@ -109,6 +111,7 @@ The Android layer fails closed for:
 - conflicting authenticated message-id reuse;
 - unsupported persisted format/state;
 - malformed/authentication-failed/send-rejected WSS frames;
+- uncorrelated message-specific retry errors;
 - impossible recovery state such as pending history without its recoverable staged envelope.
 
 Durability failures are not converted into ACK/send success. Recovery keeps the exact staged material until the next safe state transition.
@@ -129,8 +132,8 @@ Before #53 is complete:
 - offline/reconnect/live flush must reuse exact staged envelope bytes without re-encryption;
 - a missing `SendAccepted` must trigger the bounded acceptance watchdog, durable reconnect and exact-envelope replay without re-auth resetting the durable retry budget;
 - authenticated close/network failure with staged work in flight must consume the same bounded durable retry budget across re-authentication;
-- ACK-only disconnects must remain on the ordinary connection retry path, and terminalized outbound work must not reduce the retry budget available to a later message;
-- server response-queue backpressure must disconnect rather than silently lose `SendAccepted`, and transient mailbox capacity must remain retryable;
+- ACK-only disconnects must remain on the ordinary connection retry path, terminalized outbound work must not reduce the retry budget available to a later message, and correlated ACK `RETRY_LATER` handling must stay within the separate bounded ACK retry budget without forced reconnect;
+- server response-queue backpressure must disconnect rather than silently lose `SendAccepted`, transient route/storage failures must remain retryable, and permanent message-id conflicts/rejections must remain terminal;
 - duplicate/conflicting envelope and canonical-ciphertext tests must pass;
 - expiry-before-send, offline-expiry admission, authenticated in-flight deferral, terminal-idempotence and receive-time-boundary tests must pass;
 - the dedicated WSS OkHttp client must keep redirects disabled and contain no application interceptors;
