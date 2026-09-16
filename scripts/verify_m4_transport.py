@@ -65,7 +65,8 @@ for fragment in (
 ):
     forbid("server/internal/httpapi/messaging_ws.go", ws, fragment)
 
-routing = read("server/internal/httpapi/messaging_routing.go")
+routing_path = "server/internal/httpapi/messaging_routing.go"
+routing = read(routing_path)
 for fragment in (
     "bytes.Equal(peer.identityID, envelope.SenderIdentityID)",
     "messaging.ValidateEnvelopeAt(envelope, now)",
@@ -79,8 +80,11 @@ for fragment in (
     "s.mailbox.Deliveries(ctx, peer.identityID, messaging.MaxMailboxDeliveryPage)",
     "recipientPeer := s.peers[string(envelope.RecipientIdentityID)]",
     "recipientPeer.signalDrain()",
+    "errors.Is(err, messaging.ErrMailboxCapacity)",
+    "if err != nil || !peer.tryEnqueue(frame)",
+    "peer.stop()",
 ):
-    require("server/internal/httpapi/messaging_routing.go", routing, fragment)
+    require(routing_path, routing, fragment)
 
 auth = read("server/internal/contact/identity_auth.go")
 for fragment in (
@@ -133,6 +137,17 @@ for fragment in (
 ):
     require("server/internal/httpapi/messaging_routing_liveness_test.go", liveness_tests, fragment)
 
+response_backpressure_tests = read("server/internal/httpapi/messaging_response_backpressure_test.go")
+for fragment in (
+    "TestMessagingWSSSendAcceptedBackpressureDisconnectsSender",
+    "TestMessagingWSSMailboxCapacityIsRetryable",
+):
+    require(
+        "server/internal/httpapi/messaging_response_backpressure_test.go",
+        response_backpressure_tests,
+        fragment,
+    )
+
 security_review = read("docs/security/M4_TRANSPORT_REVIEW.md")
 for fragment in (
     "128 authenticated",
@@ -143,6 +158,9 @@ for fragment in (
     "5 seconds",
     "presence",
     "replacement",
+    "Sender response backpressure and retry classification",
+    "SendAccepted",
+    "RETRY_LATER",
 ):
     require("docs/security/M4_TRANSPORT_REVIEW.md", security_review, fragment)
 
