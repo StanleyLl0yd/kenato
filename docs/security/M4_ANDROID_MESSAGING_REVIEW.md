@@ -76,7 +76,7 @@ Connection authentication reuses the long-lived Kenato P-256 identity. The clien
 
 Ordinary connection establishment/loss uses bounded delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds, with at most eight automatic retries per connection-failure episode. Authentication has a 15-second client timeout. Successful authentication resets only this ordinary connection retry budget.
 
-Durable outbound work has a separate **eight-attempt durable retry budget** with the same bounded 1/2/4/8/16/30/30/30-second backoff. A successful re-authentication does **not** reset that budget, because re-auth alone proves no progress for a staged message still awaiting durable `SendAccepted`. The budget is reset when `SendAccepted` durably advances message state, or when the coordinator is explicitly stopped/started. An authenticated close or network failure while a staged send is in flight consumes this durable budget rather than silently returning to a fresh ordinary retry cycle.
+Durable outbound work has a separate **eight-attempt durable retry budget** with the same bounded 1/2/4/8/16/30/30/30-second backoff. A successful re-authentication does **not** reset that budget, because re-auth alone proves no progress for a staged message still awaiting durable `SendAccepted`. The budget resets when `SendAccepted` durably advances message state, when recovery proves that no staged outbound work remains (including after terminal expiry), or when the coordinator is explicitly stopped/started. An authenticated close or network failure consumes this durable budget only while a staged outbound send is actually in flight. Recovered inbound ACKs are idempotent but have no `SendAccepted`, so an ACK-only connection loss remains on the ordinary connection retry path rather than exhausting an unrelated outbound budget.
 
 Recovery after authentication is derived only from durable state. Same-connection sets suppress duplicate sends and recovered ACKs. A WebSocket queue failure causes reconnect so the exact durable work can be replayed on the next authenticated connection; it is not treated as successful delivery.
 
@@ -129,6 +129,7 @@ Before #53 is complete:
 - offline/reconnect/live flush must reuse exact staged envelope bytes without re-encryption;
 - a missing `SendAccepted` must trigger the bounded acceptance watchdog, durable reconnect and exact-envelope replay without re-auth resetting the durable retry budget;
 - authenticated close/network failure with staged work in flight must consume the same bounded durable retry budget across re-authentication;
+- ACK-only disconnects must remain on the ordinary connection retry path, and terminalized outbound work must not reduce the retry budget available to a later message;
 - server response-queue backpressure must disconnect rather than silently lose `SendAccepted`, and transient mailbox capacity must remain retryable;
 - duplicate/conflicting envelope and canonical-ciphertext tests must pass;
 - expiry-before-send, offline-expiry admission, authenticated in-flight deferral, terminal-idempotence and receive-time-boundary tests must pass;
