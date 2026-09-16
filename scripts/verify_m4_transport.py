@@ -80,7 +80,10 @@ for fragment in (
     "s.mailbox.Deliveries(ctx, peer.identityID, messaging.MaxMailboxDeliveryPage)",
     "recipientPeer := s.peers[string(envelope.RecipientIdentityID)]",
     "recipientPeer.signalDrain()",
-    "errors.Is(err, messaging.ErrMailboxCapacity)",
+    "code := messaging.MessagingErrorRetryLater",
+    "errors.Is(err, errMessagingConflict)",
+    "errors.Is(err, messaging.ErrMailboxRejected)",
+    "code = messaging.MessagingErrorSendRejected",
     "if err != nil || !peer.tryEnqueue(frame)",
     "peer.stop()",
 ):
@@ -148,6 +151,16 @@ for fragment in (
         fragment,
     )
 
+classification_tests_path = "server/internal/httpapi/messaging_send_error_classification_test.go"
+classification_tests = read(classification_tests_path)
+for fragment in (
+    "TestMessagingWSSClassifiesTransientMailboxFailureAsRetryLater",
+    "TestMessagingWSSClassifiesMailboxCapacityAsRetryLater",
+    "TestMessagingWSSClassifiesExplicitMailboxRejectionAsSendRejected",
+    "TestMessagingWSSClassifiesMessageIDConflictAsSendRejected",
+):
+    require(classification_tests_path, classification_tests, fragment)
+
 security_review = read("docs/security/M4_TRANSPORT_REVIEW.md")
 for fragment in (
     "128 authenticated",
@@ -161,6 +174,8 @@ for fragment in (
     "Sender response backpressure and retry classification",
     "SendAccepted",
     "RETRY_LATER",
+    "transient storage",
+    "message-id conflict",
 ):
     require("docs/security/M4_TRANSPORT_REVIEW.md", security_review, fragment)
 
