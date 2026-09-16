@@ -38,11 +38,12 @@ func (s *MessagingWebSocketServer) handleSend(peer *messagingPeer, envelope mess
 
 		err := s.routeEnvelope(envelope)
 		if err != nil {
-			code := messaging.MessagingErrorSendRejected
-			if errors.Is(err, errMessagingServerClosed) ||
-				errors.Is(err, errMessagingCapacity) ||
-				errors.Is(err, messaging.ErrMailboxCapacity) {
-				code = messaging.MessagingErrorRetryLater
+			// Storage/directory/server failures are potentially transient. Only exact
+			// authenticated message-id conflict or an explicit mailbox rejection is
+			// permanent enough to tell the client to fail this staged send closed.
+			code := messaging.MessagingErrorRetryLater
+			if errors.Is(err, errMessagingConflict) || errors.Is(err, messaging.ErrMailboxRejected) {
+				code = messaging.MessagingErrorSendRejected
 			}
 			if !s.enqueueError(peer, code, envelope.MessageID) {
 				peer.stop()
