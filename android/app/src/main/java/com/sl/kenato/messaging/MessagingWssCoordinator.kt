@@ -395,11 +395,16 @@ internal class MessagingWssCoordinator(
             retryConnection(socket)
             return
         }
-        if (sentThisConnection.any { it.matchesMessageId(messageId) }) {
+        val matchesOutbound = sentThisConnection.any { it.matchesMessageId(messageId) }
+        val matchesAck = recoveredAcksSentThisConnection.any { it.matchesMessageId(messageId) }
+        if (matchesOutbound && matchesAck) {
+            throw MessagingWssException("M4 RETRY_LATER message id is ambiguous across durable work")
+        }
+        if (matchesOutbound) {
             retryDurableWork(socket)
             return
         }
-        if (recoveredAcksSentThisConnection.any { it.matchesMessageId(messageId) }) {
+        if (matchesAck) {
             scheduleAckRetry(socket, messageId)
             return
         }
