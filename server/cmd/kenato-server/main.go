@@ -111,7 +111,10 @@ running:
 			if !errors.Is(err, http.ErrServerClosed) {
 				logger.Printf("server failed")
 			}
-			return
+			// Use the same ordered shutdown path as signal handling. Upgraded
+			// WebSocket connections are not owned by net/http after hijack, so
+			// returning here could close SQLite stores while M4 workers still run.
+			break running
 		}
 	}
 
