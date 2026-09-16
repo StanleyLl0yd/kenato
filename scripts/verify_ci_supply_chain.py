@@ -9,6 +9,7 @@ FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 TOP_LEVEL_PERMISSIONS = re.compile(r"(?m)^permissions:\s*(.*?)\s*$")
 UNSAFE_DOWNLOAD_EXEC = re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash)\b")
+MUTATING_CARGO_LOCK = re.compile(r"\bcargo(?:\s+\+[^\s]+)?\s+(?:generate-lockfile|update)\b")
 
 errors: list[str] = []
 
@@ -30,6 +31,10 @@ for root in ROOTS:
             errors.append(f"{path}: checkout credentials must not persist")
         if UNSAFE_DOWNLOAD_EXEC.search(text):
             errors.append(f"{path}: downloaded content must not be piped directly to a shell")
+        if MUTATING_CARGO_LOCK.search(text):
+            errors.append(
+                f"{path}: verification workflows must use committed Cargo.lock files with --locked"
+            )
 
         if path.parent == Path(".github/workflows"):
             permission_matches = TOP_LEVEL_PERMISSIONS.findall(text)
