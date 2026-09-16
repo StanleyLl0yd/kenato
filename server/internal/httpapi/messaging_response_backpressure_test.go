@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StanleyLl0yd/kenato/server/internal/messaging"
 	"github.com/coder/websocket"
 )
 
@@ -31,6 +32,35 @@ func TestMessagingWSSSendAcceptedBackpressureDisconnectsSender(t *testing.T) {
 	}
 	if got := mailbox.storedCount(); got != 1 {
 		t.Fatalf("durable route stored %d rows, want 1", got)
+	}
+}
+
+func TestMessagingWSSMailboxCapacityIsRetryable(t *testing.T) {
+	mailbox := newFakeMessagingMailbox()
+	mailbox.storeErr = messaging.ErrMailboxCapacity
+	s := NewMessagingWebSocketServer(fakeMessagingAuthenticator{}, mailbox)
+	senderID := testIdentity(0x74)
+	peer := newDetachedMessagingPeer(t, senderID)
+
+	s.handleSend(peer, testEnvelope(senderID, testIdentity(0x75), 0x76))
+
+	select {
+	case encoded := <-peer.outbound:
+		frame, err := messaging.DecodeServerFrame(encoded)
+		if err != nil {
+			t.Fatalf("DecodeServerFrame: %v", err)
+		}
+		if frame.Error == nil || frame.Error.Code != messaging.MessagingErrorRetryLater {
+			t.Fatalf("mailbox capacity response = %#v, want RETRY_LATER", frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mailbox capacity did not produce a retryable response")
+	}
+
+	select {
+	case <-peer.done:
+		t.Fatal("retryable mailbox capacity unexpectedly disconnected the sender")
+	default:
 	}
 }
 
