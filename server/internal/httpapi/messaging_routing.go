@@ -81,7 +81,11 @@ func (s *MessagingWebSocketServer) handleAck(peer *messagingPeer, ack messaging.
 	err := s.mailbox.Ack(ctx, peer.identityID, ack)
 	cancel()
 	if err != nil {
-		if !s.enqueueError(peer, messaging.MessagingErrorRetryLater, ack.MessageID) {
+		code := messaging.MessagingErrorRetryLater
+		if errors.Is(err, messaging.ErrMailboxRejected) {
+			code = messaging.MessagingErrorMalformed
+		}
+		if !s.enqueueError(peer, code, ack.MessageID) {
 			peer.stop()
 		}
 		return
