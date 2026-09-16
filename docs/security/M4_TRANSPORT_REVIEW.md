@@ -52,7 +52,7 @@ The per-peer outbound queue is deliberately bounded, so sender result frames req
 
 The same rule applies when a send-result or ACK-error frame cannot enter the bounded response queue: the server closes the peer rather than silently dropping the only observable result. This preserves bounded memory without turning queue pressure into an ambiguous live connection.
 
-Temporary capacity is retryable. In particular, mailbox capacity (`ErrMailboxCapacity`), server shutdown/capacity and per-peer/global send admission pressure use `RETRY_LATER`. Permanent/invariant send failures such as authenticated message-id conflict or mailbox rejection remain `SEND_REJECTED`. This distinction lets the durable Android transport reconnect/replay transient failures while continuing to fail closed on conflicting or invalid sends.
+Send-route error classification is fail-safe for durable retries. Unknown/transient storage, identity-directory, timeout and server failures default to `RETRY_LATER`; mailbox capacity, server shutdown/capacity and per-peer/global send admission pressure are therefore retryable as well. Only explicitly permanent/invariant failures become `SEND_REJECTED`: `ErrMailboxRejected` (invalid envelope/sender or unknown recipient after authenticated lookup) and exact authenticated message-id conflict with different canonical envelope bytes. This distinction lets Android replay the existing durable ciphertext after a transient infrastructure fault without treating it as successful delivery, while conflicting or invalid sends still fail closed.
 
 ## Offline reconnect
 
@@ -86,6 +86,6 @@ The #52 baseline plus the #53 cross-boundary hardening require:
 - successful same-identity authentication must replace the old peer;
 - direct ACK, offline fallback, reconnect drain, backpressure and shutdown tests must pass;
 - sender response-queue exhaustion must disconnect instead of silently losing `SendAccepted`/error state;
-- transient mailbox capacity must produce `RETRY_LATER` rather than permanent `SEND_REJECTED`;
+- transient storage and mailbox-capacity failures must produce `RETRY_LATER`, while explicit mailbox rejection and message-id conflict must produce `SEND_REJECTED`;
 - `scripts/verify_m4_transport.py` must remain part of repository `make test`;
 - all protected-branch exact-head checks must be green.
