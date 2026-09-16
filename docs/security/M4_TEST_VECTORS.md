@@ -1,8 +1,8 @@
 # M4 deterministic canonical framing vectors
 
-Status: M4 protocol/authentication contract. These vectors cover Kenato-owned canonical identity-authentication framing. They do not make randomized ECDSA signatures or M3/Olm ciphertext deterministic.
+Status: M4 protocol/authentication contract. These vectors cover Kenato-owned canonical identity-authentication framing and the server-visible messaging wire. They do not make randomized ECDSA signatures or M3/Olm ciphertext deterministic.
 
-All integer fields are unsigned big-endian in canonical signed payloads. Identity ids and challenges below are raw bytes.
+All integer fields are unsigned big-endian in canonical signed payloads. Identity ids and challenges below are raw bytes. Protobuf wire values use the canonical field order emitted by the Kenato encoders.
 
 ## WSS identity authentication proof
 
@@ -29,6 +29,39 @@ Equivalent framing:
 
 The resulting bytes are signed with ECDSA P-256/SHA-256 through the existing Kenato identity key. Production signatures are not expected to be byte-for-byte deterministic.
 
+## Server-visible messaging wire
+
+This vector is intentionally independent of M3 ciphertext generation. The ciphertext is a fixed opaque four-byte value so Go and Android can prove identical canonical M4 protobuf bytes without exposing or standardizing Olm internals.
+
+Inputs:
+
+- protocol version: `1`
+- sender identity id: 32 bytes of `0x11`
+- recipient identity id: 32 bytes of `0x22`
+- message id: 16 bytes of `0x33`
+- ciphertext: `01020304`
+- expiry Unix seconds: `2000000060`
+
+Expected canonical `Envelope` hex:
+
+```text
+0801122022222222222222222222222222222222222222222222222222222222222222221a103333333333333333333333333333333322040102030428bca8d6b90732201111111111111111111111111111111111111111111111111111111111111111
+```
+
+Expected canonical client `MessagingClientFrame{send=Envelope}` hex:
+
+```text
+08011a640801122022222222222222222222222222222222222222222222222222222222222222221a103333333333333333333333333333333322040102030428bca8d6b90732201111111111111111111111111111111111111111111111111111111111111111
+```
+
+Expected canonical server `MessagingServerFrame{delivery=Envelope}` hex:
+
+```text
+080122640801122022222222222222222222222222222222222222222222222222222222222222221a103333333333333333333333333333333322040102030428bca8d6b90732201111111111111111111111111111111111111111111111111111111111111111
+```
+
+Both Go and Android tests must encode exactly these bytes and decode the same client/server golden frames back to the expected routing metadata. This catches cross-runtime field-order/tag/length drift even when each implementation remains internally self-consistent.
+
 ## Authenticated delivery-context invariant
 
 For every delivered `Envelope`, the recipient decrypts `Envelope.ciphertext` through the already-pinned M3 session and then decodes `MessagingPlaintext`. Before application-visible delivery or ACK, all of these must match exactly:
@@ -38,4 +71,4 @@ For every delivered `Envelope`, the recipient decrypts `Envelope.ciphertext` thr
 - `Envelope.message_id` == `MessagingPlaintext.message_id`;
 - `Envelope.expires_at_unix_seconds` == `MessagingPlaintext.expires_at_unix_seconds`.
 
-The Go and Android protocol tests use the same authentication vector and include negative tests for challenge substitution, exact-expiry rejection, overlong TTL/text and routing-context rewrite.
+The Go and Android protocol tests use the same authentication vector, the same server-visible wire vector, and include negative tests for challenge substitution, exact-expiry rejection, overlong TTL/text and routing-context rewrite.
