@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0–M3 complete. M4 is active under tracker #49; #50 protocol/authentication and #51 bounded mailbox are complete, #52 authenticated WSS/direct routing is active, and #53 Android history plus #54 final M4 verification remain.
+Status: M0–M3 complete. M4 is active under tracker #49; #50 protocol/authentication, #51 bounded mailbox, #52 authenticated WSS/direct routing, and #53 Android transport/history are complete; #54 final repository-wide M4 verification is active.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
@@ -50,7 +50,7 @@ Ratchet-state durability is part of the cryptographic boundary: outbound ciphert
 
 The Rust/JNI bridge treats controllable native copies of pickle keys and application/control plaintext as short-lived secrets. Java-to-Rust plaintext copies and engine-produced inbound/decrypted plaintext are held in zeroizing RAII buffers, including error paths, and the encoded native response buffer is zeroized after the JVM copy is attempted. This reduces avoidable native-heap remanence; it does not claim synchronous erasure of managed JVM copies outside native buffer control.
 
-M4 adds a second durability boundary after successful M3 decrypt: a client must not ACK merely because plaintext existed transiently. Because M3 has already durably advanced the ratchet before returning plaintext, #53 must establish a crash-safe durable delivery handoff/history record before network ACK so a process crash cannot lose the only recoverable plaintext while a redelivered ciphertext is correctly rejected as replay.
+M4 adds a second durability boundary after successful M3 decrypt: a client must not ACK merely because plaintext existed transiently. The implemented #53 Android layer atomically retains a recoverable inbound handoff with the advanced ratchet, imports validated plaintext/envelope identity into app-private no-backup conversation history, and only then makes the network ACK eligible. Exact durable duplicates are ACKed from authenticated history without a second decrypt; conflicting same-id envelope bytes fail closed.
 
 ### Kenato server
 
@@ -100,7 +100,7 @@ The M0 repository/release foundation establishes:
 - the protected `release` environment exists; production signing secrets and certificate trust material, when provisioned, are confined to it;
 - release artifacts are tied to a verified source revision and signing identity and receive artifact attestations.
 
-The completed post-M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. The engine's direct `rand` dependency is pinned to reviewed fixed `=0.8.6`. Both native crates have committed lockfiles, Cargo Dependabot coverage, and pinned cargo-audit scanning. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift. The post-M3 verification baseline includes protolint, repository-wide `make test`, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions. Dependency Review enforces both vulnerability policy and an explicit strong-copyleft AGPL/GPL deny policy so ADR 0006's pre-1.0 licensing decision cannot be silently constrained by a dependency update. M4 adds dedicated protocol, mailbox and transport policy verifiers to keep schema, Go/Kotlin bounds, canonical auth framing, storage/routing constraints, security reviews, and authoritative protocol/architecture documentation synchronized.
+The completed post-M3 native boundary is exact-pinned to vodozemac 0.10.0, Rust 1.85.0, Android NDK 28.2.13676358, cargo-ndk 4.1.2, API 26, and the reviewed `armeabi-v7a`/`arm64-v8a`/`x86_64` ABI set. The engine's direct `rand` dependency is pinned to reviewed fixed `=0.8.6`. Both native crates have committed lockfiles, Cargo Dependabot coverage, and pinned cargo-audit scanning. CI/release paths build and validate the native libraries before Gradle packaging, and repository security policy checks the same pin/ABI contract for drift. The committed Cargo lockfiles are the dependency-resolution authority: verification uses `--locked` and policy forbids `cargo generate-lockfile`/`cargo update` in verification workflows so a changing registry index cannot silently alter the graph between PR and exact-main checks. The verification baseline includes protolint, repository-wide `make test`, and CodeQL coverage for Go, Java/Kotlin, Rust, and GitHub Actions. Dependency Review enforces both vulnerability policy and an explicit strong-copyleft AGPL/GPL deny policy so ADR 0006's pre-1.0 licensing decision cannot be silently constrained by a dependency update. M4 adds dedicated protocol, mailbox, transport, Android messaging, and server-lifecycle policy verifiers to keep schema, Go/Kotlin bounds, canonical framing, storage/routing constraints, security reviews, lifecycle ordering, and authoritative documentation synchronized.
 
 ## Threats in scope
 
@@ -117,7 +117,7 @@ Mitigations:
 - full-SHA-pinned GitHub Actions and digest-pinned critical containers;
 - least-privilege workflow permissions and non-persistent checkout credentials;
 - Semgrep, Gitleaks, Dependency Review vulnerability/license policy, govulncheck, cargo-audit, protolint, Android lint, Qodana, repository-wide `make test`, and CodeQL for Go/Java-Kotlin/Rust/Actions;
-- exact native dependency/toolchain/NDK/cargo-ndk pins and committed Cargo locks;
+- exact native dependency/toolchain/NDK/cargo-ndk pins and committed Cargo locks used with `--locked`, without registry-dependent lock regeneration in verification;
 - Cargo Dependabot coverage for both native crates;
 - three-ABI native build/packaging verification before Android build/release;
 - release signing secrets isolated in the `release` environment;
@@ -129,7 +129,7 @@ Mitigations:
 
 A network observer may capture or modify traffic.
 
-Mitigations implemented through completed M3 and the active M4 implementation through #52:
+Mitigations implemented through completed M3 and implemented M4 messaging:
 
 - TLS for client-server transport at the reviewed deployment boundary;
 - identity-key signatures over M2 publication/invite/redemption/claim canonical payloads;
@@ -139,9 +139,11 @@ Mitigations implemented through completed M3 and the active M4 implementation th
 - authenticated vodozemac Olm/Double Ratchet encryption/decryption at the M3 client session primitive;
 - local durable ratchet advancement before application-visible ciphertext/plaintext is returned;
 - M4 WSS authentication using a 32-byte random, single-use, connection-scoped challenge with at most 30 seconds lifetime and a 10-second authentication deadline, signed by the existing Kenato P-256 identity;
+- exact fresh-challenge matching and regression coverage rejecting replay of an earlier valid authentication proof on another connection;
 - binary-only M4 application frames with WebSocket compression disabled and a 100 KiB read limit;
 - M4 outer sender/recipient/message-id/expiry routing fields duplicated inside M3 authenticated plaintext and compared after decrypt;
-- message semantic type/text remaining inside M3 ciphertext.
+- message semantic type/text remaining inside M3 ciphertext;
+- shared Go/Android golden vectors for the canonical server-visible envelope and send/delivery frame bytes.
 
 TLS protects invite bearer secrets and WSS transport from passive/active network attackers at the deployment boundary. Client-verifiable signatures make token-to-identity, redemption-to-identity, session-account-to-identity, initial-frame, and M4 connection-identity bindings independently verifiable. The M3 local crypto primitive provides authenticated ratcheted payload protection once a session is established. M4 does not treat its challenge proof as a TLS replacement.
 
@@ -164,7 +166,9 @@ Mitigations:
 - responder additionally checks the exact creator account generation and OTK id/public bytes against local state and checks the decrypted canonical control payload;
 - M2 and M3 publication revisions/generations are monotonic and signed;
 - M4 WSS identity requires proof of possession of the existing P-256 key; an identity id alone is never a credential;
-- failed same-identity authentication cannot evict the current authenticated connection; replacement occurs only after the new proof succeeds;
+- failed or replayed same-identity authentication cannot evict the current authenticated connection; replacement occurs only after a fresh valid proof succeeds;
+- M4 server send routing rejects authenticated sender substitution;
+- M4 direct and durable ACK authority is scoped to authenticated recipient state; another authenticated peer cannot resolve the intended recipient's pending delivery;
 - M4 receivers verify authenticated inner sender/recipient/message-id/expiry against the outer routing envelope before delivery or ACK;
 - M4 `SendAccepted` intentionally omits online/offline/delivery-mode state;
 - no public identity/session/mailbox/presence enumeration endpoint;
@@ -217,7 +221,7 @@ For established sessions, Kenato delegates authenticated Olm/Double Ratchet mess
 
 M4 transport is intentionally at-least-once until authenticated ACK. A sender generates a fresh 16-byte non-zero random message id. Sender, recipient, message id and expiry are duplicated inside the encrypted M4 plaintext and must match the outer `Envelope` after M3 decrypt. A mismatch fails closed before application-visible delivery or ACK. Duplicate/reconnect delivery is expected and recipients deduplicate by authenticated sender/message id after validating the encrypted context. Reordering remains permitted; correctness cannot depend on exactly-once transport or global arrival order.
 
-An ACK names sender identity id and message id, while recipient identity comes only from authenticated WSS connection state. A valid ACK may delete only that recipient's exact retained message. Cross-recipient or mismatched ACK deletion is prohibited. The Android implementation must durably preserve the successful delivery handoff/history before ACK because the M3 ratchet has already advanced.
+An ACK names sender identity id and message id, while recipient identity comes only from authenticated WSS connection state. A valid ACK may delete only that recipient's exact retained message. Cross-recipient or mismatched ACK deletion is prohibited and final WSS regressions verify unauthorized ACK isolation. The Android implementation durably preserves the successful delivery handoff/history before ACK because the M3 ratchet has already advanced. If direct ACK races durable fallback Store, the server rechecks ACK state after Store and performs an idempotent delete of the just-committed row.
 
 ### Identity and session-account substitution
 
@@ -256,7 +260,7 @@ Mitigations:
 - missing-identity failures at public HTTP boundaries use the same generic invalid-request category as malformed/unauthenticated requests rather than exposing a dedicated identity-existence response;
 - M4 unknown-identity and invalid-signature WSS authentication failures use the same coarse authentication result;
 - failed authentication cannot displace an already authenticated same-identity socket;
-- M4 send errors are coarse and must not distinguish unknown recipient, offline recipient, detailed quota state or mailbox contents;
+- M4 send errors are coarse and do not provide a dedicated unknown-recipient/offline/detailed-quota/mailbox-content response;
 - `MessagingSendAccepted` does not reveal whether direct delivery or durable mailbox custody was selected.
 
 The in-process rate gate is deliberately a coarse resource bound, not a full public-edge anti-abuse system. Source-aware/distributed rate limiting must be designed together with the reviewed TLS/reverse-proxy deployment boundary rather than trusting arbitrary forwarded-address headers inside the loopback service. M4 does not claim to hide all timing-based presence hints from an already established correspondent; it avoids creating an explicit protocol presence oracle.
@@ -265,7 +269,7 @@ The in-process rate gate is deliberately a coarse resource bound, not a full pub
 
 Malformed or excessive requests attempt to exhaust memory, CPU, storage, signature verification, SQLite locks, native/JNI allocations, prekeys, WebSocket/mailbox capacity, or TURN allocations.
 
-Mitigations through completed M3 and the current M4 implementation through #52:
+Mitigations through completed M3 and implemented M4 messaging:
 
 - 64 KiB M2 contact request/response limits and 128 KiB M3 bootstrap request/response limits;
 - 64 KiB M3 application plaintext bound;
@@ -290,9 +294,11 @@ Mitigations through completed M3 and the current M4 implementation through #52:
 - M4 active authenticated registry at most 128 peers and unauthenticated handshakes at most 32;
 - M4 per-peer outbound queue at most 4 frames and concurrent sends at most 4;
 - M4 global send workers at most 128 and pending direct deliveries at most 256;
-- M4 authentication deadline 10 seconds and direct ACK/write/mailbox-operation bounds 5 seconds.
+- M4 authentication deadline 10 seconds and direct ACK/write/mailbox-operation bounds 5 seconds;
+- Android M4 session-handoff journal at most 64 entries / 4 MiB, conversation history at most 1,000 messages / 4 MiB per conversation and 4,096 / 16 MiB globally, and active staged outbound work at most 32;
+- Android ordinary reconnect, durable-send retry and ACK retry loops have fixed attempt counts and delay caps rather than unbounded background work.
 
-The M1 persisted identity record has an explicit maximum serialized size and one-time prekey pool. M2 preserves those bounds for published prekey collections and Android contact state. M3 server bootstrap state is separately bounded and temporary reservation/init rows are tied to the bounded invite lifecycle. #51 bounds retained row/byte storage and cleanup; #52 bounds WebSocket authentication, connection ownership, direct-delivery queues/workers and retry timers. #53 must similarly bound local history, pending delivery-handoff state, reconnect/backoff and client-side queues before M4 can close. TURN allocation/credential-lifetime bounds remain a later milestone.
+The M1 persisted identity record has an explicit maximum serialized size and one-time prekey pool. M2 preserves those bounds for published prekey collections and Android contact state. M3 server bootstrap state is separately bounded and temporary reservation/init rows are tied to the bounded invite lifecycle. M4 bounds retained mailbox rows/bytes and cleanup, WebSocket authentication/connection ownership/queues/workers/timers, local history/handoff state, staged sends and retry cadence. TURN allocation/credential-lifetime bounds remain a later milestone.
 
 ### Local data leakage
 
@@ -307,12 +313,12 @@ Mitigations:
 - every M3 native account/session snapshot uses a fresh random 32-byte pickle key, protected by a non-exportable Android Keystore AES-GCM wrapping key with context AAD;
 - temporary native JNI copies of pickle keys and application/control/decrypted plaintext are stored in zeroizing buffers and erased when those buffers leave scope, including native error paths where the backing buffer is under Kenato's control;
 - M4 ordinary text remains inside M3 ciphertext on the network/server boundary;
-- M4 local delivery/history state must remain app-private and backup/device-transfer policy must be reviewed in #53/#54 before the milestone closes;
+- M4 conversation history uses bounded app-private `noBackupFilesDir` storage, and session/history corruption or owner/provenance mismatch fails closed;
 - cloud backup and Android device-to-device transfer are denied by manifest policy plus explicit all-domain rules for both legacy and Android 12+ backup formats;
 - cross-platform transfer is not configured; it requires a separate reviewed iOS app identity and transfer contract before use;
 - backup policy is enforced by repository checks and Android build/lint validation;
 - no raw invite tokens, private keys, pickle keys, secret-bearing signatures, Olm ciphertext, M4 ciphertext bodies, complete public bundles, or plaintext user content are intentionally written to logs;
-- secret-bearing state is not placed in UI state or `SavedStateHandle`;
+- M4 message text/history is not placed in `SavedStateHandle`, notifications, clipboard, shared preferences, or external storage;
 - minimum telemetry;
 - UI screenshot restrictions are considered only where they improve privacy without harming normal UX.
 
@@ -330,7 +336,7 @@ Kenato does not claim to provide:
 - server-side replay recovery after a successful creator claim whose response is lost before local commit;
 - proof that a malicious/compromised client generated fresh OTK private material merely because it used a fresh public bookkeeping id;
 - protection against a malicious server retaining M4 ciphertext/metadata longer than the implementation's intended retention policy;
-- full M4 product messaging behavior yet: #50 protocol/auth and #51 bounded mailbox are complete, #52 authenticated WSS/direct routing is active, and Android conversation history/durable handoff plus final end-to-end verification remain #53–#54;
+- background/push messaging, notification preview, multi-device messaging, or voice-call behavior as part of M4 minimal messaging; those belong to later reviewed milestones;
 - guaranteed recovery of identity/history after device loss when no secure backup exists.
 
 These limitations must not be obscured in marketing.
