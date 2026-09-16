@@ -184,13 +184,15 @@ for fragment in (
 ):
     forbid(socket_path, socket, fragment)
 
-wss = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssCoordinator.kt")
+wss_path = "android/app/src/main/java/com/sl/kenato/messaging/MessagingWssCoordinator.kt"
+wss = read(wss_path)
 for fragment in (
     "const val MAX_QUEUED_STAGED_SENDS = 32",
     "const val MAX_RECONNECT_ATTEMPTS = 8",
     "const val INITIAL_RECONNECT_DELAY_MILLIS = 1_000L",
     "const val MAX_RECONNECT_DELAY_MILLIS = 30_000L",
     "const val AUTHENTICATION_TIMEOUT_MILLIS = 15_000L",
+    "const val SEND_ACCEPTANCE_TIMEOUT_MILLIS = 30_000L",
     'private const val MESSAGING_PATH = "/v1/messaging/ws"',
     'serviceOrigin.scheme != "https"',
     "val receivedAt = nowEpochSeconds()",
@@ -198,8 +200,11 @@ for fragment in (
     "inbound.handle(envelope, receivedAt)",
     "recovery.expireOutboundIfDue(",
     "sentThisConnection.contains(key)",
+    "ensureSendAcceptanceTimeout(socket)",
+    "sentThisConnection.isNotEmpty()",
+    "retryConnection(socket)",
 ):
-    require("android/app/src/main/java/com/sl/kenato/messaging/MessagingWssCoordinator.kt", wss, fragment)
+    require(wss_path, wss, fragment)
 
 inbound = read("android/app/src/main/java/com/sl/kenato/messaging/MessagingInboundDelivery.kt")
 for fragment in (
@@ -333,6 +338,10 @@ required_tests = {
         "flushDurableWorkSendsNewlyStagedEnvelopeOnlyOncePerConnection",
         "expiredNewlyStagedWorkIsTerminalizedWithoutFailingLiveSocket",
     ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSendAcceptanceTimeoutTest.kt": (
+        "missingSendAcceptedReconnectsAndReplaysExactEnvelope",
+        "sendAcceptedCancelsOutstandingAcceptanceWatchdog",
+    ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSocketPolicyTest.kt": (
         "factoryOwnedClientDoesNotFollowRedirectsOrInstallInterceptors",
     ),
@@ -354,6 +363,8 @@ for fragment in (
     "outbound-only recovery path",
     "expired offline work",
     "authenticated WSS",
+    "30-second send-acceptance watchdog",
+    "server response-queue backpressure",
     "redirects",
     "EXPIRED_UNCONFIRMED",
     "one receive-time snapshot",
