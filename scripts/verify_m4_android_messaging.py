@@ -202,12 +202,13 @@ for fragment in (
     "recovery.expireOutboundIfDue(",
     "sentThisConnection.contains(key)",
     "ensureSendAcceptanceTimeout(socket)",
-    "sentThisConnection.isNotEmpty()",
     "private var durableRetryAttempts = 0",
     "if (hasDurableWorkInFlight()) retryDurableWork(socket) else retryConnection(socket)",
     "private fun retryDurableWork(socket: MessagingSocket)",
     "private fun scheduleDurableReconnect()",
     "durableRetryAttempts >= MAX_DURABLE_RETRY_ATTEMPTS",
+    "if (activeStagedSends == 0)",
+    "state == MessagingWssState.AUTHENTICATED && sentThisConnection.isNotEmpty()",
 ):
     require(wss_path, wss, fragment)
 
@@ -352,6 +353,10 @@ required_tests = {
         "authenticatedDisconnectWithInflightSendPreservesDurableBackoffAcrossReauth",
         "authenticatedNetworkFailureWithInflightSendUsesDurableRetryPath",
     ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssRetryBudgetIsolationTest.kt": (
+        "ackOnlyDisconnectUsesOrdinaryRetryBudgetAcrossSuccessfulReauth",
+        "terminalizedExpiredSendDoesNotConsumeRetryBudgetForNextMessage",
+    ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSocketPolicyTest.kt": (
         "factoryOwnedClientDoesNotFollowRedirectsOrInstallInterceptors",
     ),
@@ -375,7 +380,8 @@ for fragment in (
     "authenticated WSS",
     "30-second send-acceptance watchdog",
     "eight-attempt durable retry budget",
-    "authenticated close or network failure",
+    "ACK-only connection loss",
+    "terminal expiry",
     "server response-queue backpressure",
     "redirects",
     "EXPIRED_UNCONFIRMED",
