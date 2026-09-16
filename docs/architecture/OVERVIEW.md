@@ -34,7 +34,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, and #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback. The current #53 Android slice adds durable M3 message handoffs, authenticated WSS reconnect/recovery, bounded no-backup conversation history and the minimal application messaging boundary. #54 remains the final M4 end-to-end/security verification. TURN credentials and calling remain later milestones.
+M0–M3 are complete. M4 is active in final verification. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback, and #53 completed the Android durable M3 message handoff, authenticated WSS reconnect/recovery, bounded no-backup conversation history, and minimal application messaging boundary. #54 is the current final repository-wide M4 end-to-end/security verification. TURN credentials and calling remain later milestones.
 
 ## Client
 
@@ -45,7 +45,7 @@ Android stack in the current architecture:
 - vodozemac 0.10.0 Olm behind a Kenato-owned Rust/JNI boundary;
 - app-private atomic identity/contact/session persistence;
 - Coroutines / Flow where asynchronous application integration requires them;
-- M4 messaging transport/history layers as the milestone is implemented;
+- implemented M4 messaging transport/history layers;
 - later WebRTC / Opus media layers.
 
 Client architecture keeps UI separate from identity, contact, crypto/session, messaging transport/history, and media state. UI must not own private crypto state or directly manipulate later WebRTC `PeerConnection` objects.
@@ -101,11 +101,13 @@ Current server foundation:
 - loopback listener by default;
 - intended deployment behind a reviewed TLS-terminating reverse proxy.
 
-M4 WSS connections authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication. The server permits only bounded binary application frames, disables WebSocket compression and replaces an existing same-identity peer only after the new proof succeeds.
+M4 WSS connections authenticate ownership of an already-published Kenato identity using a random 32-byte, single-use, short-lived challenge signed by the existing P-256 identity. An identity id in a URL, query parameter, envelope, or first frame is never authentication. The server permits only bounded binary application frames, disables WebSocket compression and replaces an existing same-identity peer only after the new proof succeeds. Final #54 regressions also exercise replay of a previously valid proof against a fresh challenge, authenticated sender substitution, and an ACK from the wrong authenticated peer.
 
 The server never receives private P-256, prekey, Olm account/session, or ratchet keys and never decrypts ordinary message content. The #51 mailbox retains only bounded routing identifiers, random message ids, acceptance/expiry timing, ciphertext-size metadata and the canonical opaque encrypted envelope. Recipient existence is resolved only through an internal contact-store interface; no lookup endpoint is added.
 
 The mailbox has an independent schema/version lifecycle from the M2/M3 contact/bootstrap database. This prevents ACK/expiry retention behavior from coupling to destructive invite/bootstrap cleanup while preserving the same local durability posture: regular mode-0600 database files, WAL, synchronous `FULL`, bounded transactions, and fail-closed schema versions.
+
+Upgraded M4 WebSocket workers have an explicit lifecycle independent of `net/http` after upgrade. Normal signals and unexpected `ListenAndServe` termination both enter the same ordered shutdown path: the WSS server first cancels/waits its bounded handlers, drain/send workers and pending direct work, then the HTTP server shuts down, and only afterward do deferred SQLite closes run.
 
 No Redis, message broker, Kubernetes, or microservice split is planned for the initial architecture.
 
@@ -120,6 +122,8 @@ Transport-level metadata contains only fields required for routing and protocol 
 M4 intentionally duplicates sender identity, recipient identity, message id, and expiry inside the encrypted application plaintext. The receiver must compare those authenticated inner values with the outer routing envelope after decrypt. A malicious relay can still drop, delay, reorder, duplicate, or retain traffic, but cannot silently relabel a correctly validated message without causing a mismatch or M3 authentication failure.
 
 The mailbox does not trust caller-supplied raw protobuf bytes separately from validated routing fields. It canonically encodes the validated envelope before persistence. Readback decodes and canonically re-encodes the retained envelope and cross-checks its sender, recipient, message id, expiry and ciphertext length against indexed row metadata before a delivery is returned.
+
+`docs/security/M4_TEST_VECTORS.md` additionally pins shared Go/Android golden bytes for a canonical server-visible `Envelope`, client `send` frame, and server `delivery` frame. Both runtimes must encode exactly those bytes and decode the same frames, preventing unnoticed cross-language protobuf drift even if each implementation remains internally self-consistent.
 
 ## Identity and contact discovery
 
@@ -175,13 +179,13 @@ For an online recipient, #52 attempts direct opaque delivery without durable mai
 
 If direct delivery cannot complete under those bounds, the immutable canonical envelope may enter mailbox custody. `SendAccepted` intentionally does not reveal which path occurred, avoiding an explicit presence oracle. A failed same-identity authentication cannot affect the current authenticated peer; successful authentication replaces the old peer only after verification.
 
-Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. Exact mailbox retry is idempotent only for the same sender/message id and identical retained routing/envelope bytes; conflicting reuse fails closed. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry is enforced at `now >= expires_at` even before physical cleanup.
+Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. Exact mailbox retry is idempotent only for the same sender/message id and identical retained routing/envelope bytes; conflicting reuse fails closed. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry is enforced at `now >= expires_at` even before physical cleanup. If an ACK wins while direct delivery is concurrently falling back to mailbox Store, the fallback path rechecks ACK state after Store and performs an idempotent delete so the just-committed row is not stranded.
 
 The #53 Android client uses a dedicated exact-pinned OkHttp 5.5.0 WebSocket client and derives the single `wss://host[:port]/v1/messaging/ws` endpoint only from an HTTPS service origin. Redirects are disabled. It permits one active socket, binary frames only, a maximum of 32 staged outbound sends, a 15-second authentication timeout and bounded automatic reconnect delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds. Recovery sends and ACKs come only from durable local state; sender admission sees outbound recovery only, while the WSS lifecycle owns full inbound/outbound restart recovery. A failed socket enqueue reconnects rather than fabricating success or re-encrypting.
 
 Android conversation history is independently bounded to at most 1,000 messages / 4 MiB per conversation and 4,096 messages / 16 MiB globally. `PENDING_ACCEPTANCE` outbound state is never pruned for age/capacity. Accepted or terminal-expired outbound records are safe-prunable oldest-first; inbound `PENDING_ACK` becomes safe-prunable only once its authenticated expiry has passed.
 
-With #50–#52 complete, #53 supplies the Android transport/history/durable-handoff layer required by M4. #54 remains the final whole-system end-to-end/security verification before the M4 tracker can close.
+With #50–#53 complete, #54 is the final whole-system end-to-end/security verification before the M4 tracker can close.
 
 ## Calling
 
@@ -216,7 +220,9 @@ See the threat model for detail. Architecture changes must preserve:
 13. no plaintext user content or secrets in logs;
 14. local M4 plaintext history remains app-private and excluded from cloud backup/device transfer;
 15. foreground outbound admission must not consume or publish inbound recovery work;
-16. the Android WSS handshake must not follow a server-directed redirect away from its reviewed endpoint.
+16. the Android WSS handshake must not follow a server-directed redirect away from its reviewed endpoint;
+17. upgraded WSS workers must be shut down before HTTP/store teardown on every server exit path;
+18. CI verification must consume committed Cargo lockfiles with `--locked` and must not regenerate dependency resolution from the live registry.
 
 ## Deployment
 
@@ -224,6 +230,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete and M4 is active under tracker #49. #50–#52 are complete; #53 is the current Android messaging/history slice and #54 is the remaining final M4 verification. After M4 completes and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0–M3 are complete and M4 is active under tracker #49 with #50–#53 complete and #54 performing the final repository-wide verification. After M4 completes and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.
