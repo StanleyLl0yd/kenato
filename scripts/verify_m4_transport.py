@@ -143,6 +143,15 @@ for fragment in (
 ):
     require(authorization_tests_path, authorization_tests, fragment)
 
+ack_race_path = "server/internal/httpapi/messaging_ack_store_race_test.go"
+ack_race = read(ack_race_path)
+for fragment in (
+    "TestMessagingDirectAckRacingFallbackDeletesCommittedMailboxRow",
+    "s.ackDirect(recipientID, senderID, envelope.MessageID)",
+    "ACK/store race stranded",
+):
+    require(ack_race_path, ack_race, fragment)
+
 liveness_tests = read("server/internal/httpapi/messaging_routing_liveness_test.go")
 for fragment in (
     "TestMessagingMailboxStoreWakesCurrentRecipientPeer",
