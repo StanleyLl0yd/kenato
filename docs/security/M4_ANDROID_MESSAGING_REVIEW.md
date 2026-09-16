@@ -74,11 +74,13 @@ A service origin must be a bare HTTPS origin and the coordinator derives the exa
 
 Connection authentication reuses the long-lived Kenato P-256 identity. The client validates the server challenge, signs the canonical `KENATO-MESSAGING-AUTH-V1` payload and does not send/recover application work until the server confirms authentication.
 
-Automatic reconnect uses bounded delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds, with at most eight automatic retries. Authentication has a 15-second client timeout. Successful authentication resets the retry budget.
+Ordinary connection establishment/loss uses bounded delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds, with at most eight automatic retries per connection-failure episode. Authentication has a 15-second client timeout. Successful authentication resets only this ordinary connection retry budget.
+
+Durable outbound work has a separate **eight-attempt durable retry budget** with the same bounded 1/2/4/8/16/30/30/30-second backoff. A successful re-authentication does **not** reset that budget, because re-auth alone proves no progress for a staged message still awaiting durable `SendAccepted`. The budget is reset when `SendAccepted` durably advances message state, or when the coordinator is explicitly stopped/started. An authenticated close or network failure while a staged send is in flight consumes this durable budget rather than silently returning to a fresh ordinary retry cycle.
 
 Recovery after authentication is derived only from durable state. Same-connection sets suppress duplicate sends and recovered ACKs. A WebSocket queue failure causes reconnect so the exact durable work can be replayed on the next authenticated connection; it is not treated as successful delivery.
 
-An authenticated connection also has a **30-second send-acceptance watchdog** while at least one staged outbound envelope has been queued but not durably acknowledged by `SendAccepted`. The watchdog is anchored when the first unresolved send is queued; additional sends cannot extend it indefinitely. If unresolved staged work remains when it fires, the socket is cancelled and the existing bounded reconnect path replays the exact durable envelope bytes after re-authentication. Once all same-connection sends have been accepted, the watchdog is cancelled. This bounds half-open connections and lost server-confirmation frames without re-encrypting or advancing the ratchet again.
+An authenticated connection also has a **30-second send-acceptance watchdog** while at least one staged outbound envelope has been queued but not durably acknowledged by `SendAccepted`. The watchdog is anchored when the first unresolved send is queued; additional sends cannot extend it indefinitely. If unresolved staged work remains when it fires, the socket is cancelled and the separate bounded durable retry path replays the exact durable envelope bytes after re-authentication. Once all same-connection sends have been accepted, the watchdog is cancelled. This bounds half-open connections and lost server-confirmation frames without re-encrypting or advancing the ratchet again.
 
 The server-side counterpart does not silently discard a success/error response when its bounded per-peer outbound queue is full: failure to enqueue a `SendAccepted` or send-result error closes that authenticated peer, allowing the Android durable replay path to recover. Transient mailbox-capacity refusal is classified as `RETRY_LATER`, while invariant/permanent send rejection remains `SEND_REJECTED` and fails closed on Android.
 
@@ -125,7 +127,8 @@ Before #53 is complete:
 - outbound/inbound atomic handoff failure and restart windows must pass;
 - foreground outbound recovery must leave inbound handoffs/ACK state untouched;
 - offline/reconnect/live flush must reuse exact staged envelope bytes without re-encryption;
-- a missing `SendAccepted` must trigger the bounded acceptance watchdog, reconnect and exact-envelope replay;
+- a missing `SendAccepted` must trigger the bounded acceptance watchdog, durable reconnect and exact-envelope replay without re-auth resetting the durable retry budget;
+- authenticated close/network failure with staged work in flight must consume the same bounded durable retry budget across re-authentication;
 - server response-queue backpressure must disconnect rather than silently lose `SendAccepted`, and transient mailbox capacity must remain retryable;
 - duplicate/conflicting envelope and canonical-ciphertext tests must pass;
 - expiry-before-send, offline-expiry admission, authenticated in-flight deferral, terminal-idempotence and receive-time-boundary tests must pass;
