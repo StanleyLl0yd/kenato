@@ -34,7 +34,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds. #51 completed the bounded durable mailbox. The current #52 slice implements authenticated WSS connection ownership, direct delivery and bounded mailbox fallback; Android local history and final M4 verification remain #53–#54. TURN credentials and calling remain later milestones.
+M0–M3 are complete. M4 is active. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, and #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback. The current #53 Android slice adds durable M3 message handoffs, authenticated WSS reconnect/recovery, bounded no-backup conversation history and the minimal application messaging boundary. #54 remains the final M4 end-to-end/security verification. TURN credentials and calling remain later milestones.
 
 ## Client
 
@@ -74,7 +74,13 @@ Account/session snapshots use fresh per-mutation pickle keys whose wrapping keys
 
 M4 does not weaken or replace that boundary. User text is serialized into a bounded M4 plaintext record and then encrypted by the established M3 session. The recipient validates the decrypted inner sender/recipient/message-id/expiry against the outer routing envelope before accepting the message.
 
-A later M4 Android slice must add a crash-safe durable delivery handoff between successful M3 decrypt/ratchet commit and network ACK. ACKing immediately after decrypt is forbidden because a process crash before local history persistence could otherwise lose the plaintext while a redelivered ciphertext is correctly rejected by the already-advanced ratchet as a replay.
+The #53 Android implementation extends session-state persistence from format v1 to v2 with a bounded crash-recovery message-handoff journal while retaining strict v1 decode compatibility. Outbound ratchet advancement and the exact immutable envelope handoff are one M3 AtomicFile commit. Inbound ratchet advancement and the validated plaintext/envelope handoff are likewise one commit, so the client can recover after a process crash without re-encrypting a send or re-decrypting an already-advanced inbound ciphertext. This is the M4 crash-safe durable delivery handoff boundary required before transport ACK or retry behavior can safely proceed.
+
+A separate no-backup AtomicFile stores minimal one-to-one conversation history. Inbound plaintext becomes ACK-eligible only after this history record is durable. Outbound history records move from `PENDING_ACCEPTANCE` to `ACCEPTED` only after authenticated `SendAccepted`; a staged message whose TTL elapses without durable acceptance becomes terminal `EXPIRED`, exposed to application code as `EXPIRED_UNCONFIRMED` because a prior network enqueue may have succeeded even if the acceptance response was lost. The transport uses one receive-time snapshot for both outer-envelope and post-decrypt inner/outer TTL validation, avoiding a boundary change while a valid delivery is being processed.
+
+Foreground outbound admission uses an outbound-only recovery view: it may reconcile durable staged sends but cannot import or complete inbound handoffs. Full inbound recovery and the resulting ACK work remain owned by the WSS lifecycle. This keeps user-initiated sending from becoming a second inbound-delivery actor while preserving exact restart recovery.
+
+The Android WebSocket adapter owns a dedicated exact-pinned OkHttp client. Redirect follow-ups are disabled, so the derived `wss://host[:port]/v1/messaging/ws` endpoint cannot be replaced by an HTTP response. The client does not install custom trust managers, hostname overrides or logging interceptors; normal platform/OkHttp certificate and hostname validation remains authoritative.
 
 ## Server
 
@@ -140,6 +146,8 @@ M3 uses exact-pinned vodozemac 0.10.0 Olm/Double Ratchet through a minimal Rust/
 
 The M3 local hard maximum is 50 tracked OTKs, 256 persisted contact sessions, 64 KiB application plaintext, and 96 KiB Olm frames. Vodozemac's own fixed skipped-message-key/message-gap bounds are not widened by Kenato.
 
+M4 session-state v2 additionally bounds the crypto-coupled message handoff journal to 64 entries / 4 MiB total, with each retained plaintext limited to 32 KiB and envelope to 96 KiB. Normal Android outbound admission applies the stricter transport-facing maximum of 32 staged sends before performing another ratchet advancement.
+
 ## Messaging
 
 The M4 protocol uses one authenticated WSS identity context per connection. The server sends a 32-byte random challenge valid for at most 30 seconds; the client signs the canonical `KENATO-MESSAGING-AUTH-V1` payload with its existing P-256 identity key. Only after successful verification may the connection send envelopes or ACK deliveries. A newly authenticated connection may replace an older connection for the same identity only after the new authentication succeeds.
@@ -169,7 +177,11 @@ If direct delivery cannot complete under those bounds, the immutable canonical e
 
 Delivery is at-least-once until ACK. Duplicate/reconnect delivery is expected and must be idempotent by authenticated message identity. Exact mailbox retry is idempotent only for the same sender/message id and identical retained routing/envelope bytes; conflicting reuse fails closed. ACK is authorized by the recipient's authenticated connection and may delete only that recipient's exact retained `(sender_identity_id, message_id)` row. Expiry is enforced at `now >= expires_at` even before physical cleanup.
 
-The current #52 server slice supplies the routing layer required by M4. Remaining milestone work is #53 Android transport/history with crash-safe durable ACK handoff, followed by #54 end-to-end/security verification.
+The #53 Android client uses a dedicated exact-pinned OkHttp 5.5.0 WebSocket client and derives the single `wss://host[:port]/v1/messaging/ws` endpoint only from an HTTPS service origin. Redirects are disabled. It permits one active socket, binary frames only, a maximum of 32 staged outbound sends, a 15-second authentication timeout and bounded automatic reconnect delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds. Recovery sends and ACKs come only from durable local state; sender admission sees outbound recovery only, while the WSS lifecycle owns full inbound/outbound restart recovery. A failed socket enqueue reconnects rather than fabricating success or re-encrypting.
+
+Android conversation history is independently bounded to at most 1,000 messages / 4 MiB per conversation and 4,096 messages / 16 MiB globally. `PENDING_ACCEPTANCE` outbound state is never pruned for age/capacity. Accepted or terminal-expired outbound records are safe-prunable oldest-first; inbound `PENDING_ACK` becomes safe-prunable only once its authenticated expiry has passed.
+
+With #50–#52 complete, #53 supplies the Android transport/history/durable-handoff layer required by M4. #54 remains the final whole-system end-to-end/security verification before the M4 tracker can close.
 
 ## Calling
 
@@ -183,7 +195,7 @@ Planned media stack:
 - P2P when possible;
 - coturn relay when direct connectivity fails.
 
-TURN is a packet relay, not a media server. It must not require plaintext voice content. M5 calling work is out of scope for M4.
+TURN is a packet relay, not a media server. It must not require plaintext voice content. M5 calling work is out of scope for M4 and remains blocked by the post-M4 closed Messaging Alpha gate.
 
 ## Security invariants
 
@@ -195,13 +207,16 @@ See the threat model for detail. Architecture changes must preserve:
 4. remote contact identity cannot silently change;
 5. engine account/session replacement cannot silently bypass the pinned Kenato identity;
 6. ratchet state cannot be exposed to callers before required durable state advancement;
-7. M4 ACK cannot precede the required crash-safe local delivery handoff;
+7. M4 ACK cannot precede the required crash-safe local delivery handoff/history persistence;
 8. WSS routing identity requires cryptographic authentication, not an identity id alone;
 9. authenticated inner M4 routing context must match the outer envelope;
 10. retained mailbox bytes must match their indexed routing metadata and canonical envelope representation;
 11. untrusted inputs, queues, timers and retained state are bounded;
 12. no public user enumeration or intentional online-presence oracle;
-13. no plaintext user content or secrets in logs.
+13. no plaintext user content or secrets in logs;
+14. local M4 plaintext history remains app-private and excluded from cloud backup/device transfer;
+15. foreground outbound admission must not consume or publish inbound recovery work;
+16. the Android WSS handshake must not follow a server-directed redirect away from its reviewed endpoint.
 
 ## Deployment
 
@@ -209,6 +224,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete and M4 is active under tracker #49. #50 and #51 are complete; #52 is the current authenticated WSS routing slice; #53–#54 remain. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary. M5 has not started.
+M0–M3 are complete and M4 is active under tracker #49. #50–#52 are complete; #53 is the current Android messaging/history slice and #54 is the remaining final M4 verification. After M4 completes and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.

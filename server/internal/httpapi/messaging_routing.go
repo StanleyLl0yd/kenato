@@ -13,16 +13,22 @@ import (
 func (s *MessagingWebSocketServer) handleSend(peer *messagingPeer, envelope messaging.Envelope) {
 	now := s.clock().UTC().Unix()
 	if !bytes.Equal(peer.identityID, envelope.SenderIdentityID) || messaging.ValidateEnvelopeAt(envelope, now) != nil {
-		s.enqueueError(peer, messaging.MessagingErrorSendRejected, envelope.MessageID)
+		if !s.enqueueError(peer, messaging.MessagingErrorSendRejected, envelope.MessageID) {
+			peer.stop()
+		}
 		return
 	}
 	if !peer.acquireSendOp() {
-		s.enqueueError(peer, messaging.MessagingErrorRetryLater, envelope.MessageID)
+		if !s.enqueueError(peer, messaging.MessagingErrorRetryLater, envelope.MessageID) {
+			peer.stop()
+		}
 		return
 	}
 	if !s.beginSendWorker() {
 		peer.releaseSendOp()
-		s.enqueueError(peer, messaging.MessagingErrorRetryLater, envelope.MessageID)
+		if !s.enqueueError(peer, messaging.MessagingErrorRetryLater, envelope.MessageID) {
+			peer.stop()
+		}
 		return
 	}
 
@@ -32,11 +38,16 @@ func (s *MessagingWebSocketServer) handleSend(peer *messagingPeer, envelope mess
 
 		err := s.routeEnvelope(envelope)
 		if err != nil {
-			code := messaging.MessagingErrorSendRejected
-			if errors.Is(err, errMessagingServerClosed) || errors.Is(err, errMessagingCapacity) {
-				code = messaging.MessagingErrorRetryLater
+			// Storage/directory/server failures are potentially transient. Only exact
+			// authenticated message-id conflict or an explicit mailbox rejection is
+			// permanent enough to tell the client to fail this staged send closed.
+			code := messaging.MessagingErrorRetryLater
+			if errors.Is(err, errMessagingConflict) || errors.Is(err, messaging.ErrMailboxRejected) {
+				code = messaging.MessagingErrorSendRejected
 			}
-			s.enqueueError(peer, code, envelope.MessageID)
+			if !s.enqueueError(peer, code, envelope.MessageID) {
+				peer.stop()
+			}
 			return
 		}
 		frame, err := messaging.EncodeServerFrame(messaging.ServerFrame{
@@ -47,15 +58,17 @@ func (s *MessagingWebSocketServer) handleSend(peer *messagingPeer, envelope mess
 				MessageID:           bytes.Clone(envelope.MessageID),
 			},
 		})
-		if err == nil {
-			peer.tryEnqueue(frame)
+		if err != nil || !peer.tryEnqueue(frame) {
+			peer.stop()
 		}
 	}()
 }
 
 func (s *MessagingWebSocketServer) handleAck(peer *messagingPeer, ack messaging.DeliveryAck) {
 	if ack.ProtocolVersion != messaging.ProtocolVersion || len(ack.SenderIdentityID) != messaging.IdentityIDBytes || len(ack.MessageID) != messaging.MessageIDBytes {
-		s.enqueueError(peer, messaging.MessagingErrorMalformed, ack.MessageID)
+		if !s.enqueueError(peer, messaging.MessagingErrorMalformed, ack.MessageID) {
+			peer.stop()
+		}
 		return
 	}
 
@@ -68,7 +81,13 @@ func (s *MessagingWebSocketServer) handleAck(peer *messagingPeer, ack messaging.
 	err := s.mailbox.Ack(ctx, peer.identityID, ack)
 	cancel()
 	if err != nil {
-		s.enqueueError(peer, messaging.MessagingErrorRetryLater, ack.MessageID)
+		code := messaging.MessagingErrorRetryLater
+		if errors.Is(err, messaging.ErrMailboxRejected) {
+			code = messaging.MessagingErrorMalformed
+		}
+		if !s.enqueueError(peer, code, ack.MessageID) {
+			peer.stop()
+		}
 		return
 	}
 	peer.clearMailboxInflight(ack.SenderIdentityID, ack.MessageID)
