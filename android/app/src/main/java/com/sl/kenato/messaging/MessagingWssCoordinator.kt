@@ -430,6 +430,9 @@ internal class MessagingWssCoordinator(
                 )
             }
         }
+        if (activeStagedSends == 0) {
+            durableRetryAttempts = 0
+        }
     }
 
     private fun decodeExactRecoveredEnvelope(
@@ -483,8 +486,7 @@ internal class MessagingWssCoordinator(
     }
 
     private fun hasDurableWorkInFlight(): Boolean =
-        state == MessagingWssState.AUTHENTICATED &&
-            (sentThisConnection.isNotEmpty() || recoveredAcksSentThisConnection.isNotEmpty())
+        state == MessagingWssState.AUTHENTICATED && sentThisConnection.isNotEmpty()
 
     private fun connectNow() {
         if (!running || activeSocket != null) return
