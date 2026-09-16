@@ -189,6 +189,7 @@ wss = read(wss_path)
 for fragment in (
     "const val MAX_QUEUED_STAGED_SENDS = 32",
     "const val MAX_RECONNECT_ATTEMPTS = 8",
+    "const val MAX_DURABLE_RETRY_ATTEMPTS = 8",
     "const val INITIAL_RECONNECT_DELAY_MILLIS = 1_000L",
     "const val MAX_RECONNECT_DELAY_MILLIS = 30_000L",
     "const val AUTHENTICATION_TIMEOUT_MILLIS = 15_000L",
@@ -202,7 +203,11 @@ for fragment in (
     "sentThisConnection.contains(key)",
     "ensureSendAcceptanceTimeout(socket)",
     "sentThisConnection.isNotEmpty()",
-    "retryConnection(socket)",
+    "private var durableRetryAttempts = 0",
+    "if (hasDurableWorkInFlight()) retryDurableWork(socket) else retryConnection(socket)",
+    "private fun retryDurableWork(socket: MessagingSocket)",
+    "private fun scheduleDurableReconnect()",
+    "durableRetryAttempts >= MAX_DURABLE_RETRY_ATTEMPTS",
 ):
     require(wss_path, wss, fragment)
 
@@ -340,7 +345,12 @@ required_tests = {
     ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSendAcceptanceTimeoutTest.kt": (
         "missingSendAcceptedReconnectsAndReplaysExactEnvelope",
+        "missingAcceptanceRetryLoopIsBoundedAndBacksOffAcrossSuccessfulReauth",
         "sendAcceptedCancelsOutstandingAcceptanceWatchdog",
+    ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssDurableDisconnectRetryTest.kt": (
+        "authenticatedDisconnectWithInflightSendPreservesDurableBackoffAcrossReauth",
+        "authenticatedNetworkFailureWithInflightSendUsesDurableRetryPath",
     ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssSocketPolicyTest.kt": (
         "factoryOwnedClientDoesNotFollowRedirectsOrInstallInterceptors",
@@ -364,6 +374,8 @@ for fragment in (
     "expired offline work",
     "authenticated WSS",
     "30-second send-acceptance watchdog",
+    "eight-attempt durable retry budget",
+    "authenticated close or network failure",
     "server response-queue backpressure",
     "redirects",
     "EXPIRED_UNCONFIRMED",
