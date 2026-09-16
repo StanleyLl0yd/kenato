@@ -45,6 +45,44 @@ class MessagingWssSendAcceptanceTimeoutTest {
     }
 
     @Test
+    fun missingAcceptanceRetryLoopIsBoundedAndBacksOffAcrossSuccessfulReauth() {
+        val fixture = Fixture()
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            outboundSends = listOf(
+                MessagingRecoveredSend(
+                    PEER.copyOf(),
+                    MESSAGE_ID.copyOf(),
+                    MessagingWire.encodeEnvelope(outboundEnvelope()),
+                ),
+            ),
+            inboundAcks = emptyList(),
+        )
+        fixture.authenticateCurrentSocket()
+
+        val expectedBackoff = listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L, 30_000L, 30_000L)
+        assertEquals(MessagingWssCoordinator.MAX_DURABLE_RETRY_ATTEMPTS, expectedBackoff.size)
+        expectedBackoff.forEach { expectedDelay ->
+            assertEquals(
+                listOf(MessagingWssCoordinator.SEND_ACCEPTANCE_TIMEOUT_MILLIS),
+                fixture.scheduler.pendingDelays(),
+            )
+            fixture.scheduler.runNext()
+            assertEquals(MessagingWssState.RETRY_WAIT, fixture.coordinator.currentState())
+            assertEquals(listOf(expectedDelay), fixture.scheduler.pendingDelays())
+            fixture.scheduler.runNext()
+            fixture.authenticateCurrentSocket()
+            assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        }
+
+        val lastSocket = fixture.sockets.latest
+        fixture.scheduler.runNext()
+
+        assertTrue(lastSocket.cancelled)
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+    }
+
+    @Test
     fun sendAcceptedCancelsOutstandingAcceptanceWatchdog() {
         val fixture = Fixture()
         val envelope = outboundEnvelope()
