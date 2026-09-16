@@ -39,7 +39,9 @@ func (s *MessagingWebSocketServer) handleSend(peer *messagingPeer, envelope mess
 		err := s.routeEnvelope(envelope)
 		if err != nil {
 			code := messaging.MessagingErrorSendRejected
-			if errors.Is(err, errMessagingServerClosed) || errors.Is(err, errMessagingCapacity) {
+			if errors.Is(err, errMessagingServerClosed) ||
+				errors.Is(err, errMessagingCapacity) ||
+				errors.Is(err, messaging.ErrMailboxCapacity) {
 				code = messaging.MessagingErrorRetryLater
 			}
 			if !s.enqueueError(peer, code, envelope.MessageID) {
