@@ -264,7 +264,12 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     override fun onFailure(socket: MessagingSocket, error: Throwable) {
-        if (socket === activeSocket) retryConnection(socket)
+        if (socket !== activeSocket) return
+        if (error is MessagingWssException) {
+            failClosed(socket)
+        } else {
+            retryConnection(socket)
+        }
     }
 
     private fun handleChallenge(socket: MessagingSocket, frame: MessagingServerFrame) {
