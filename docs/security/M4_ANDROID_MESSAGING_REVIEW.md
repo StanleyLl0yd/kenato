@@ -78,6 +78,10 @@ Automatic reconnect uses bounded delays of 1, 2, 4, 8, 16, 30, 30 and 30 seconds
 
 Recovery after authentication is derived only from durable state. Same-connection sets suppress duplicate sends and recovered ACKs. A WebSocket queue failure causes reconnect so the exact durable work can be replayed on the next authenticated connection; it is not treated as successful delivery.
 
+An authenticated connection also has a **30-second send-acceptance watchdog** while at least one staged outbound envelope has been queued but not durably acknowledged by `SendAccepted`. The watchdog is anchored when the first unresolved send is queued; additional sends cannot extend it indefinitely. If unresolved staged work remains when it fires, the socket is cancelled and the existing bounded reconnect path replays the exact durable envelope bytes after re-authentication. Once all same-connection sends have been accepted, the watchdog is cancelled. This bounds half-open connections and lost server-confirmation frames without re-encrypting or advancing the ratchet again.
+
+The server-side counterpart does not silently discard a success/error response when its bounded per-peer outbound queue is full: failure to enqueue a `SendAccepted` or send-result error closes that authenticated peer, allowing the Android durable replay path to recover. Transient mailbox-capacity refusal is classified as `RETRY_LATER`, while invariant/permanent send rejection remains `SEND_REJECTED` and fails closed on Android.
+
 `flushDurableWork()` is only a best-effort wake-up for an already authenticated socket. It is a no-op before authentication/offline and does not own plaintext, sessions or encryption.
 
 ## Local data and backup policy
@@ -121,6 +125,8 @@ Before #53 is complete:
 - outbound/inbound atomic handoff failure and restart windows must pass;
 - foreground outbound recovery must leave inbound handoffs/ACK state untouched;
 - offline/reconnect/live flush must reuse exact staged envelope bytes without re-encryption;
+- a missing `SendAccepted` must trigger the bounded acceptance watchdog, reconnect and exact-envelope replay;
+- server response-queue backpressure must disconnect rather than silently lose `SendAccepted`, and transient mailbox capacity must remain retryable;
 - duplicate/conflicting envelope and canonical-ciphertext tests must pass;
 - expiry-before-send, offline-expiry admission, authenticated in-flight deferral, terminal-idempotence and receive-time-boundary tests must pass;
 - the dedicated WSS OkHttp client must keep redirects disabled and contain no application interceptors;
