@@ -53,6 +53,7 @@ if workflow:
                 f".github/workflows/release-android.yml: privileged release workflow must not use {forbidden_event}"
             )
 
+require("Makefile", "python3 scripts/verify_m4_5_release.py")
 require(
     ".github/workflows/release-android.yml",
     'tags:\n      - "v*"',
@@ -85,6 +86,14 @@ forbid(
 )
 
 require(
+    "ROADMAP.md",
+    "## M4.5 — Closed Messaging Release `0.0.1`",
+    "Status: **Active**; #59/M4.5 is the current release gate",
+    "source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
+    "Alpha, beta, rc, and other prerelease suffixes are not used",
+    "M5 must not start until #59 is complete",
+)
+require(
     "docs/release/RELEASES.md",
     "first release: `0.0.1`",
     "subsequent releases: `0.0.2`, `0.0.3`, and so on",
@@ -112,6 +121,7 @@ require(
 for path in (
     "README.md",
     "CONTRIBUTING.md",
+    "ROADMAP.md",
     "docs/release/RELEASES.md",
     "docs/release/ANDROID_SIGNING.md",
 ):
