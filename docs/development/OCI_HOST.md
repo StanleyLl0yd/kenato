@@ -43,3 +43,5 @@ Source-IP restriction for SSH and final production perimeter rules are deliberat
 ## Milestone boundary
 
 M0–M4 are complete. M4 Minimal Messaging completed implementation slices #50–#53 and final repository-wide verification #54 with exact-main green. The OCI host does not expand the current product or protocol milestone scope and must not be used as a reason to introduce M5 calling/WebRTC behavior. #59/M4.5 is the next permitted milestone and M5 remains blocked until that closed messaging-alpha gate is complete.
+
+Do not expose the server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
