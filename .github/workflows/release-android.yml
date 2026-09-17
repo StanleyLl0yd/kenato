@@ -26,7 +26,7 @@ jobs:
       - name: Validate tag format
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
       - name: Checkout tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,7 +60,7 @@ jobs:
           max_previous_tag=""
           while IFS= read -r tag; do
             [[ "$tag" == "$RELEASE_TAG" ]] && continue
-            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || continue
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
             previous_file="$(git show "${tag}:android/app/build.gradle.kts" 2>/dev/null || true)"
             [[ -n "$previous_file" ]] || continue
             previous_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' <<< "$previous_file" | head -1)"
@@ -291,3 +291,64 @@ jobs:
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/kenato-release.jks"
+
+  publish:
+    name: Publish GitHub release
+    needs: build-sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: kenato-${{ env.RELEASE_TAG }}-signed
+          path: release
+
+      - name: Refuse an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists." >&2
+            exit 1
+          fi
+
+      - name: Create draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --draft \
+            --title "Kenato ${RELEASE_TAG#v}" \
+            --generate-notes \
+            --repo "$GITHUB_REPOSITORY"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Attach verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          gh release upload "$RELEASE_TAG" \
+            "release/Kenato-$version.apk" \
+            "release/Kenato-$version.aab" \
+            "release/Kenato-$version.sha256" \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+      - name: Remove failed draft
+        if: failure() && steps.draft.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY"

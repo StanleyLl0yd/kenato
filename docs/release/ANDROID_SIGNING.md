@@ -8,9 +8,7 @@ Use the protected GitHub Actions environment named:
 
 `release`
 
-The environment exists. Production signing secrets and certificate trust material remain unprovisioned until first production-signed release preparation.
-
-When provisioning signing, store these environment secrets:
+The environment exists. For the first signed release (`0.0.1`), provision these environment secrets:
 
 - `ANDROID_KEYSTORE_BASE64` — complete release keystore encoded as base64;
 - `ANDROID_KEYSTORE_PASSWORD`;
@@ -18,7 +16,9 @@ When provisioning signing, store these environment secrets:
 - `ANDROID_KEY_PASSWORD`;
 - `ANDROID_CERT_SHA256` — expected SHA-256 fingerprint of the release signing certificate.
 
-The expected certificate fingerprint is kept as an environment-protected trust anchor so changing repository code alone cannot silently authorize a different signing identity.
+This intentionally matches the release-secret shape already used by the owner's other Android repositories, while keeping the expected certificate fingerprint as a protected Kenato secret rather than repository data.
+
+The expected certificate fingerprint is an environment-protected trust anchor so changing repository code alone cannot silently authorize a different signing identity.
 
 Do not store the raw keystore, passwords, decoded temporary files, or production signing configuration in source control.
 
@@ -26,11 +26,11 @@ Do not store the raw keystore, passwords, decoded temporary files, or production
 
 The release workflow:
 
-1. accepts only immutable-style `vX.Y.Z` or `vX.Y.Z-rc.N` tag pushes;
+1. accepts only immutable `vX.Y.Z` tag pushes; alpha/beta/rc or other prerelease suffixes are rejected;
 2. verifies the tagged commit is the exact requested revision and is contained in `main`;
-3. requires successful `main` runs of CI, Semgrep/security, Gitleaks, and CodeQL for that exact commit;
-4. verifies versionName/versionCode and `com.sl.kenato`;
-5. verifies monotonically increasing release `versionCode`;
+3. requires successful `main` runs of CI, Security and Quality, Gitleaks, and CodeQL for that exact commit;
+4. verifies `versionName`, `versionCode`, namespace and `com.sl.kenato` application id;
+5. verifies monotonically increasing release `versionCode` against prior numeric release tags;
 6. verifies the Gradle Wrapper before build execution;
 7. decodes the keystore with restrictive permissions into `$RUNNER_TEMP`;
 8. validates the expected keystore alias;
@@ -38,10 +38,17 @@ The release workflow:
 10. verifies APK/AAB signatures and matches both certificate fingerprints to `ANDROID_CERT_SHA256`;
 11. creates and verifies SHA-256 artifact checksums;
 12. creates OIDC-backed GitHub artifact attestations for APK and AAB;
-13. uploads only the packaged release artifacts/checksum;
-14. removes the temporary decoded keystore even when a later workflow step fails.
+13. uploads only the packaged signed artifacts/checksum;
+14. creates a GitHub Release for the immutable tag and attaches the verified APK/AAB/checksum;
+15. removes the temporary decoded keystore even when a later workflow step fails.
 
 The ephemeral runner is discarded after the job as an additional containment boundary.
+
+## Provisioning the existing JKS
+
+The existing release JKS should be kept outside the repository. Before `v0.0.1` is created, derive and verify its alias and SHA-256 certificate fingerprint locally, then place the JKS and credentials only in the five protected `release` environment secrets above.
+
+The keystore base64 value must be the complete binary JKS encoded without modification. Do not commit an encoded JKS file to the repository merely because it is base64 text.
 
 ## Local signing
 
@@ -64,7 +71,7 @@ Never add signing variables to committed shell scripts, Gradle files, `.env` fil
 
 ## Store strategy
 
-The same application ID and source commit are used for RuStore and Google Play.
+The same application ID, signing identity and source commit are used for RuStore and Google Play.
 
 - RuStore is the first publication target.
 - Google Play follows later.
@@ -76,7 +83,7 @@ Google Play App Signing/upload-key decisions are finalized when Play Console acc
 
 The project owner is responsible for an offline backup of the original signing key and passwords.
 
-Before the first public release, document:
+Before public store publication, document:
 
 - secure offline backup location;
 - key recovery procedure;
