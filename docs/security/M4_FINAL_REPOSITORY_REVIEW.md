@@ -1,6 +1,6 @@
 # M4 Final Repository-Wide Security Review
 
-Status: final M4 verification for issue #54 / tracker #49. The mandatory second repository-wide pass is complete with no unresolved Critical/High M4 finding. M4 is **not complete** until this review branch is squash-merged and the resulting exact `main` push is fully green. M5 remains prohibited. After M4 closure the next permitted work is #59/M4.5.
+Status: **complete** for issue #54 / tracker #49. The mandatory second repository-wide pass completed with no unresolved Critical/High M4 finding. Final audit PR #60 was squash-merged and the resulting exact `main` revision `2a3388d2898191edb9ac1277eafdcdbf780b467f` independently passed the required main-push CI, Semgrep/Security, Gitleaks, and CodeQL matrix. The next permitted work is #59/M4.5; M5 remains prohibited until #59 completes.
 
 ## Scope
 
@@ -25,9 +25,9 @@ The final pass found and closed the following concrete issues/regression gaps:
 5. The direct-delivery ACK versus durable-fallback `Store` race is deterministically regression-tested so an ACK that wins during the fallback write cannot strand a retained mailbox row.
 6. Go and Android share deterministic canonical M4 Envelope/client-send/server-delivery golden vectors.
 7. Unexpected HTTP-server failure now enters the common ordered shutdown path: upgraded WSS work stops before HTTP shutdown and SQLite closure.
-8. Root/protocol/server/architecture/toolchain/security review documentation is synchronized with #53 complete and #54 active.
+8. Root/protocol/server/architecture/toolchain/security review documentation was synchronized with the implemented M4 system and is finalized by the milestone-closure status pass after exact-main proof.
 9. The new WSS replay regression itself used a fixed 2033 server clock with a helper envelope expiring from the real 2026 clock, producing a false `SEND_REJECTED`. The test now derives expiry from the same fixed clock and additionally proves the exact original authenticated peer remains registered after the replay attempt.
-10. The second repository-wide documentation pass found two additional stale current-state claims in `CONTRIBUTING.md` and `docs/development/OCI_HOST.md` that still said M4 had not started. Both now reflect #50–#53 complete, #54 active, #59/M4.5 next, and M5 blocked.
+10. The second repository-wide documentation pass found two additional stale current-state claims in `CONTRIBUTING.md` and `docs/development/OCI_HOST.md` that still said M4 had not started. Both were corrected during #54 and are finalized at M4 closure with #59/M4.5 next and M5 blocked.
 
 ## Security invariants rechecked
 
@@ -101,4 +101,6 @@ M4 closes only in this order:
 6. obtain the required green exact-`main` push matrix;
 7. close #54 and tracker #49 and clean up the merged branch.
 
-Only then may work move to #59/M4.5. M5 remains blocked until #59 is complete.
+Steps 1–6 completed through PR #60 and exact-main `2a3388d2898191edb9ac1277eafdcdbf780b467f`. This status-only closure pass records that verified result in authoritative repository text before the administrative issue/branch cleanup in step 7.
+
+Only after M4 administrative closure may work move to #59/M4.5. M5 remains blocked until #59 is complete.
