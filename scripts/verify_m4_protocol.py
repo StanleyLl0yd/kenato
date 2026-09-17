@@ -184,7 +184,7 @@ for fragment in (
     "M4 is active under tracker #49",
     "M4 WSS authentication",
     "M4 transport is intentionally at-least-once",
-    "crash-safe durable delivery handoff",
+    "atomically retains a recoverable inbound handoff with the advanced ratchet",
     "MessagingSendAccepted",
 ):
     require("docs/security/THREAT_MODEL.md", threat_model, fragment)
