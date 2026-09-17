@@ -166,26 +166,30 @@ for fragment in (
     require("docs/security/M4_PROTOCOL_REVIEW.md", security_review, fragment)
 
 roadmap = read("ROADMAP.md")
-require("ROADMAP.md", roadmap, "Status: **Active**")
-require("ROADMAP.md", roadmap, "#49")
+require("ROADMAP.md", roadmap, "Status: **Complete** (2026-09-17; tracker #49; final verification #54).")
+require("ROADMAP.md", roadmap, "#54 final end-to-end/security verification — **complete**")
+require("ROADMAP.md", roadmap, "#59/M4.5")
 
 protocol_readme = read("protocol/README.md")
 require("protocol/README.md", protocol_readme, "## M4 minimal messaging")
+require("protocol/README.md", protocol_readme, "M4 Minimal Messaging is complete")
 require("protocol/README.md", protocol_readme, "KENATO-MESSAGING-AUTH-V1")
 require("protocol/README.md", protocol_readme, "16-byte")
 require("protocol/README.md", protocol_readme, "72 hours")
 
 architecture = read("docs/architecture/OVERVIEW.md")
-require("docs/architecture/OVERVIEW.md", architecture, "M4 is active")
+require("docs/architecture/OVERVIEW.md", architecture, "M0–M4 are complete")
 require("docs/architecture/OVERVIEW.md", architecture, "crash-safe durable delivery handoff")
+require("docs/architecture/OVERVIEW.md", architecture, "#59/M4.5 is the next permitted milestone")
 
 threat_model = read("docs/security/THREAT_MODEL.md")
 for fragment in (
-    "M4 is active under tracker #49",
+    "Status: M0–M4 complete.",
     "M4 WSS authentication",
     "M4 transport is intentionally at-least-once",
     "atomically retains a recoverable inbound handoff with the advanced ratchet",
     "MessagingSendAccepted",
+    "#59/M4.5 is the next permitted milestone",
 ):
     require("docs/security/THREAT_MODEL.md", threat_model, fragment)
 
