@@ -42,6 +42,12 @@ func TestMessagingWSSRejectsAuthenticationProofReplayAcrossConnections(t *testin
 	if authenticated := readServerFrame(t, first); !authenticated.Authenticated {
 		t.Fatalf("first authentication was not confirmed: %#v", authenticated)
 	}
+	wsServer.mu.Lock()
+	originalPeer := wsServer.peers[string(identityID)]
+	wsServer.mu.Unlock()
+	if originalPeer == nil {
+		t.Fatal("first authenticated peer was not registered")
+	}
 
 	second := dialRawPeer(t, httpServer.URL)
 	defer second.CloseNow()
@@ -62,12 +68,13 @@ func TestMessagingWSSRejectsAuthenticationProofReplayAcrossConnections(t *testin
 	wsServer.mu.Lock()
 	current := wsServer.peers[string(identityID)]
 	wsServer.mu.Unlock()
-	if current == nil {
+	if current != originalPeer {
 		t.Fatal("replayed proof displaced the existing authenticated peer")
 	}
 
 	recipientID := testIdentity(0x32)
 	envelope := testEnvelope(identityID, recipientID, 0x33)
+	envelope.ExpiresAtUnixSeconds = now.Add(time.Hour).Unix()
 	writeClientFrame(t, first, messaging.ClientFrame{ProtocolVersion: messaging.ProtocolVersion, Send: &envelope})
 	accepted := readServerFrame(t, first)
 	if accepted.SendAccepted == nil || !bytes.Equal(accepted.SendAccepted.MessageID, envelope.MessageID) {
