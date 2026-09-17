@@ -1,6 +1,6 @@
 # Contributing to Kenato
 
-Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, M2 Invite + Contact Establishment, M3 E2EE Session, and M4 Minimal Messaging are complete. M4 implementation slices #50–#53 and final repository-wide verification #54 completed with exact-head and exact-main gates green. #59/M4.5 is now the active next milestone: the first closed messaging-only `0.0.1` release and physical-device gate. M5 remains blocked until #59 is complete.
+Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, M2 Invite + Contact Establishment, M3 E2EE Session, and M4 Minimal Messaging are complete. M4 implementation slices #50–#53 and final repository-wide verification #54 completed with exact-head and exact-main gates green. #59/M4.5 is the next permitted milestone and is now active: the first closed messaging-only `0.0.1` release and physical-device gate. M5 remains blocked until #59 is complete.
 
 Published pre-1.0 versions use ordinary numeric SemVer (`0.0.1`, `0.0.2`, ...). Do not introduce alpha, beta, rc, or other prerelease suffixes.
 
