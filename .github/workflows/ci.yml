@@ -35,27 +35,6 @@ jobs:
           --component clippy
           --component rustfmt
 
-      - name: Prepare native Rust diagnostics
-        run: |
-          cd native/session-engine
-          cargo +1.85.0 generate-lockfile
-          cargo +1.85.0 fmt --all
-          cd ../session-jni
-          cargo +1.85.0 generate-lockfile
-          cargo +1.85.0 fmt --all
-
-      - name: Upload generated native diagnostics
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: native-session-diagnostics
-          path: |
-            native/session-engine/Cargo.lock
-            native/session-engine/src/lib.rs
-            native/session-jni/Cargo.lock
-            native/session-jni/src/lib.rs
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Install pinned cargo-audit
         run: |
           rustup toolchain install 1.88.0 --profile minimal

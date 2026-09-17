@@ -1,6 +1,6 @@
 # Kenato Server
 
-Kenato's backend is a deliberately small Go service. M2 provides authenticated identity publication and invite/contact establishment. M3 adds authenticated asynchronous session bootstrap. M4 is active: #50 defines the messaging/auth contract, #51 provides bounded durable mailbox custody, and the current #52 slice adds authenticated WSS routing with direct delivery plus bounded mailbox fallback.
+Kenato's backend is a deliberately small Go service. M2 provides authenticated identity publication and invite/contact establishment. M3 adds authenticated asynchronous session bootstrap. M4 is active in final verification: #50 defines the messaging/auth contract, #51 provides bounded durable mailbox custody, #52 provides authenticated WSS routing/direct delivery, and #53 provides the Android transport/history counterpart; #54 is the current repository-wide end-to-end/security pass.
 
 ## Current surface
 
@@ -60,11 +60,13 @@ ACK deletion matches authenticated recipient, stored sender and message id. A mi
 
 A new WebSocket connection begins unauthenticated. The server sends a fresh non-zero 32-byte challenge from `crypto/rand`; the client has 10 seconds to return the #50 canonical challenge response signed by its existing P-256 Kenato identity. The server reuses the existing canonical identity-key parser, identity-id hash binding and ECDSA/SHA-256 verification path. Merely naming an identity id never authenticates a connection.
 
-A failed proof cannot replace or disconnect the current authenticated peer for that identity. A successfully authenticated replacement becomes the new routing owner first; only then is the previous peer stopped. Application frames are binary only, compression is disabled and each connection enforces the 100 KiB M4 read limit.
+A failed or replayed proof cannot replace or disconnect the current authenticated peer for that identity. A successfully authenticated replacement becomes the new routing owner first; only then is the previous peer stopped. Application frames are binary only, compression is disabled and each connection enforces the 100 KiB M4 read limit. An authenticated peer may send only an envelope whose sender equals its socket identity, and another authenticated peer cannot resolve or delete the intended recipient's ACK state.
 
 For an online recipient, the server prefers direct opaque delivery. The pending direct operation waits up to 5 seconds for a matching ACK from the authenticated recipient connection. A matching direct ACK lets the sender receive `SendAccepted` without durable mailbox storage. Timeout, disconnect or bounded outbound backpressure falls back to #51 mailbox custody when possible. `SendAccepted` never states which path occurred.
 
 If ACK and fallback race, the transport checks ACK state after the durable store attempt and performs an idempotent authenticated mailbox delete so a just-committed fallback row is not intentionally stranded by an ACK that won the race. Retained reconnect deliveries remain in the mailbox until authenticated ACK; writing them to a socket never deletes them.
+
+Upgraded WebSocket handlers, writers, mailbox drains, send workers and direct pending operations are explicitly bounded and participate in M4 shutdown. Both signal-driven shutdown and an unexpected HTTP `ListenAndServe` return enter the same ordered lifecycle: WSS shutdown/wait first, HTTP shutdown second, and deferred SQLite closes afterward.
 
 ## Resource bounds
 
@@ -122,4 +124,4 @@ go vet ./...
 govulncheck ./...
 ```
 
-Repository verification additionally runs `scripts/verify_m4_protocol.py`, `scripts/verify_m4_mailbox.py`, and `scripts/verify_m4_transport.py`. CI builds the server for linux/amd64 and linux/arm64 and validates all current protocol schemas with `protoc`.
+Repository verification additionally runs `scripts/verify_m4_protocol.py`, `scripts/verify_m4_mailbox.py`, `scripts/verify_m4_transport.py`, and `scripts/verify_m4_server_lifecycle.py`. CI builds the server for linux/amd64 and linux/arm64 and validates all current protocol schemas with `protoc`. The final M4 audit also pins shared Go/Android canonical server-visible wire vectors and WSS challenge-replay/authorization/ACK-race regressions.

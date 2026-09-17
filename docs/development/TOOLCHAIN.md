@@ -28,6 +28,8 @@ Current post-M3 baseline:
 
 The committed Gradle Wrapper is the authoritative Gradle entry point for local and CI builds. The committed `server/go.mod` and `server/go.sum` are the authoritative Go dependency graph; CI runs `go mod tidy` and requires those files to remain unchanged. The two committed native `Cargo.lock` files are authoritative for their Rust dependency graphs and are audited with the pinned cargo-audit release.
 
+Rust verification must consume those committed lockfiles with `--locked`. Verification workflows must not run `cargo generate-lockfile` or `cargo update` before checking/building the native crates: doing so makes the dependency graph depend on the current registry index and can cause the same source commit to pass a PR and fail a later exact-main push when a newly published semver-compatible transitive release appears. `scripts/verify_ci_supply_chain.py` rejects those mutating Cargo-resolution commands in GitHub Actions verification paths.
+
 The Kotlin 2.4.10 pin is a verification-compatibility constraint, not a product downgrade. The published CodeQL 2.27.0 Java/Kotlin extractor rejects Kotlin 2.4.20 during manual extraction, while buildless `java-kotlin` analysis does not analyze Kotlin source. A Kotlin upgrade must therefore be reviewed together with the pinned CodeQL bundle/action so the required Java/Kotlin gate continues to analyze the actual Kotlin source rather than silently reducing coverage.
 
 The SQLite dependency is intentionally pure Go so `kenato-server` remains cross-buildable for the ARM64 OCI target with `CGO_ENABLED=0`. CI verifies both linux/amd64 and linux/arm64 server builds.
@@ -39,6 +41,8 @@ Release signing material must never be committed. The tag-triggered signed-relea
 ## Verification baseline
 
 M3 #35 established the repository-wide verification baseline rather than weakening the existing gates. `make test` is the repository-wide contract and covers protobuf/protolint validation, Go module/format/test/race/vet/govulncheck/build checks, both Rust crates' format/check/clippy/test/build/advisory scans, security-policy verification, Gradle Wrapper verification, pinned native JNI build, and Android lint/unit/build/bundle verification.
+
+M4 adds policy verification for the messaging protocol, mailbox, authenticated transport, Android messaging durability/privacy, and server lifecycle. The final M4 audit also pins shared Go/Android server-visible wire vectors and registry-independent Cargo lock verification.
 
 CI also runs focused Android, Go, and protocol jobs. CodeQL analyzes Go, Java/Kotlin, Rust, and GitHub Actions. Java/Kotlin extraction installs the pinned Android SDK/NDK and native Rust tooling, builds the three reviewed JNI ABIs, and runs a real `:android:app:assembleDebug` under manual CodeQL build mode.
 

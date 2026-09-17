@@ -1,12 +1,12 @@
 # M4 Authenticated Transport Security Review
 
-Status: implementation review for M4 issue #52, with the #53 cross-boundary response-backpressure hardening recorded here. This review covers only the server-side authenticated WebSocket routing/direct-delivery slice. Android local history/UI and M5 calling remain out of scope.
+Status: implemented review for M4 issue #52 with #53 cross-boundary hardening and #54 final replay/authorization/lifecycle verification recorded here. This document covers the server-side authenticated WebSocket routing/direct-delivery slice and its Android durability interactions. M5 calling remains out of scope.
 
 ## Trust boundary
 
 The Go service continues to bind to loopback by default. Public deployment terminates TLS at the reviewed reverse proxy and forwards ordinary HTTP/WebSocket traffic to the loopback service. Forwarded address headers are never identity credentials.
 
-The WebSocket endpoint is `GET /v1/messaging/ws`. Application messages are binary only. Compression is disabled and each connection applies the existing 100 KiB M4 wire-frame read limit.
+The WebSocket endpoint is `GET /v1/messaging/ws`. Application messages are binary only. Compression is disabled and each connection applies the 100 KiB M4 wire-frame read limit.
 
 ## Identity authentication
 
@@ -14,11 +14,11 @@ A newly upgraded socket is unauthenticated. The server generates a non-zero 32-b
 
 The client response is validated against the exact challenge and expiry before signature verification. Signature verification reuses the existing canonical P-256 identity-key parser, identity-id hash binding and ECDSA/SHA-256 verifier in the contact package. Routing identity ids alone never authenticate a connection.
 
-A failed proof has no authority over the current authenticated connection for the claimed identity. A same-identity replacement becomes active only after successful proof verification. Only then is the previous authenticated peer stopped. Tests cover both failed replacement isolation and successful replacement.
+A failed proof has no authority over the current authenticated connection for the claimed identity. A same-identity replacement becomes active only after successful proof verification. Only then is the previous authenticated peer stopped. Tests cover failed replacement isolation, successful replacement and replay of a previously valid proof against a fresh second-connection challenge; replay fails authentication and leaves the existing authenticated peer active.
 
 ## Resource bounds
 
-The initial #52 server limits are intentionally explicit and fail closed:
+The server limits are explicit and fail closed:
 
 - at most 128 authenticated connections in the active routing registry;
 - at most 32 unauthenticated WebSocket handshakes at once;
@@ -40,11 +40,17 @@ Security tests exercise the unauthenticated handshake cap, authenticated registr
 
 For an online recipient the server first attempts direct delivery of the opaque encrypted envelope. A pending direct record is keyed by authenticated sender plus message id and stores the exact canonical envelope bytes used for conflict detection. Exact sender retries join the existing pending result; conflicting reuse is rejected.
 
-A matching ACK is accepted only from the authenticated recipient connection and must name the original sender plus message id. The ACK resolves the direct pending state before mailbox deletion so a healthy direct delivery is not blocked by storage latency.
+A matching ACK is accepted only from the authenticated recipient connection and must name the original sender plus message id. The ACK resolves the direct pending state before mailbox deletion so a healthy direct delivery is not blocked by storage latency. A different authenticated peer may issue the same syntactic ACK, but its socket identity does not match the pending recipient and therefore cannot resolve that delivery or delete the intended recipient's retained row.
 
-If timeout, disconnect or backpressure races the recipient ACK, fallback may begin at the same time. After durable store returns, fallback checks ACK state again. If the ACK won the race, the server performs an idempotent authenticated mailbox delete so a newly committed fallback row is not intentionally stranded. Even if a later storage operation fails, #51 retention remains bounded by 72 hours and the client-side #53 design must deduplicate by the authenticated message id.
+If timeout, disconnect or backpressure races the recipient ACK, fallback may begin at the same time. After durable Store returns, fallback checks ACK state again. If the ACK won the race, the server performs an idempotent authenticated mailbox delete so a newly committed fallback row is not intentionally stranded. A deterministic #54 test blocks Store, lets the recipient ACK win, then completes Store and verifies the post-store delete and direct-pending cleanup. Even if a later storage operation fails, #51 retention is bounded by 72 hours and the implemented #53 client deduplicates exact authenticated envelopes from durable history.
 
 `MessagingSendAccepted` intentionally does not expose whether the recipient was online. It means either direct delivery was acknowledged or durable mailbox custody was accepted.
+
+## Sender and ACK authorization
+
+An authenticated WSS peer may send only an envelope whose outer sender identity equals the peer identity. Sender substitution is rejected before mailbox persistence.
+
+ACK authority is likewise derived from the authenticated socket, not from attacker-controlled frame fields. The recipient id is not present in the ACK payload at all; it comes from connection state. Durable deletion is bound to authenticated recipient + sender + message id, and direct pending resolution separately compares the authenticated peer against the intended recipient. Final M4 regressions exercise both sender substitution and an unauthorized ACK from another valid authenticated peer.
 
 ## Sender response backpressure and retry classification
 
@@ -74,21 +80,24 @@ The transport uses the exact Go module `github.com/coder/websocket v1.8.15`. Com
 
 ## Shutdown and lifecycle
 
-Messaging shutdown marks routing closed, stops authenticated peers, closes in-flight handshake sockets and waits for bounded handler/send/pending work before durable stores are allowed to close. The application invokes messaging shutdown before HTTP server shutdown.
+Messaging shutdown marks routing closed, stops authenticated peers, closes in-flight handshake sockets and waits for bounded handler/send/pending work before durable stores are allowed to close. Each authenticated handler waits for its writer and mailbox-drain workers; global send workers and direct pending deliveries are separately included in the shutdown completion condition.
+
+The application invokes messaging shutdown before HTTP server shutdown. Final #54 review also corrected the unexpected `ListenAndServe` failure path: it now enters the same ordered shutdown path rather than returning directly and allowing deferred SQLite closes to race upgraded WebSocket workers. `scripts/verify_m4_server_lifecycle.py` pins this ordering in repository-wide `make test`.
 
 Each authenticated peer has one bounded writer path and a cancellable context. Connection replacement and shutdown use idempotent stop semantics so repeated close paths cannot panic or leave the registry pointing at an older peer.
 
 ## Verification requirements
 
-The #52 baseline plus the #53 cross-boundary hardening require:
+The implemented transport is guarded by:
 
-- `go test ./...` and `go test -race ./...` must pass;
-- malformed, text and oversized WebSocket frames must fail closed;
-- failed authentication must not evict an existing authenticated peer;
-- successful same-identity authentication must replace the old peer;
-- direct ACK, offline fallback, reconnect drain, backpressure and shutdown tests must pass;
-- sender response-queue exhaustion must disconnect instead of silently losing `SendAccepted`/error state;
-- transient storage and mailbox-capacity send failures must produce `RETRY_LATER`, while explicit mailbox rejection and message-id conflict must produce `SEND_REJECTED`;
-- transient ACK deletion failure must produce `RETRY_LATER`, while explicit mailbox ACK rejection must produce `MALFORMED`;
-- `scripts/verify_m4_transport.py` must remain part of repository `make test`;
-- all protected-branch exact-head checks must be green.
+- `go test ./...` and `go test -race ./...`;
+- malformed, text and oversized WebSocket frame failures;
+- failed and successful same-identity replacement tests;
+- fresh-challenge authentication proof replay rejection;
+- sender-substitution and unauthorized-ACK tests;
+- direct ACK, offline fallback, reconnect drain, backpressure and shutdown tests;
+- deterministic direct-ACK/fallback-Store race coverage;
+- sender response-queue exhaustion disconnect behavior;
+- transient/permanent send and ACK error-classification tests;
+- `scripts/verify_m4_transport.py` and `scripts/verify_m4_server_lifecycle.py` in repository `make test`;
+- required protected-branch exact-head checks before merge.

@@ -1,6 +1,6 @@
 # M4 Mailbox Security Review
 
-Status: implementation review for M4 issue #51.
+Status: implemented mailbox review for M4 issue #51, revalidated during final M4 audit #54.
 
 The M4 mailbox stores only opaque encrypted envelopes and the routing/timing metadata required to deliver and delete them. It is a separate SQLite/WAL durability boundary from the M2/M3 contact/bootstrap database; recipient existence is checked only through an internal identity-directory interface and no public user lookup endpoint is added.
 
@@ -31,7 +31,7 @@ A mailbox write is accepted by the service only when:
 
 The storage interface rechecks that a `MailboxRecord` contains exactly the canonical encoding of its structured envelope. Callers therefore cannot supply one routing envelope for validation and unrelated raw bytes for later delivery. On read, the mailbox decodes the retained envelope, re-encodes it canonically, and compares sender, recipient, message id, expiry and ciphertext length against the indexed row metadata before returning any delivery. It also revalidates persisted `accepted_at` and the maximum 72-hour acceptance-to-expiry window, rather than relying only on SQLite `CHECK` constraints. Unknown/noncanonical or mismatched retained bytes/metadata fail closed as corrupt state.
 
-Unknown-recipient handling returns the same generic mailbox rejection class used for other non-capacity send rejection. #52 must continue to map these internal results to the coarse public M4 error contract and must not expose the internal identity lookup as an endpoint.
+Unknown-recipient handling returns the same generic mailbox rejection class used for other non-capacity send rejection. The implemented #52 transport maps internal mailbox outcomes to the coarse public M4 error contract and exposes no identity lookup endpoint.
 
 The mailbox database itself does not duplicate public identity bundles or contact state. Splitting the databases avoids coupling M4 retention lifecycle to destructive M2/M3 invite/bootstrap cleanup while keeping both databases local, mode 0600, SQLite WAL, and synchronous FULL.
 
@@ -53,13 +53,13 @@ ACK deletion is bound to all three values:
 
 A mismatched recipient or sender deletes nothing. An exact duplicate ACK after the row has already been deleted is harmless and remains idempotent. The mailbox never deletes a different row merely because the message id matches.
 
-The Android-side crash-safe rule from ADR 0011 remains mandatory: #53 must not send ACK until ratchet advancement and the durable local delivery handoff/history commit are complete.
+The Android #53 implementation enforces the ADR 0011 crash-safe rule: it does not make an ACK eligible until ratchet advancement and the recoverable local delivery handoff/history commit are durable. The #52/#54 transport regressions additionally verify that another authenticated WSS peer cannot resolve the intended recipient's direct pending delivery.
 
 ## Expiry and cleanup
 
 A retained row is expired exactly when `now >= expires_at`. Expired rows are excluded from delivery immediately at that boundary even if physical cleanup has not yet run.
 
-`OpenSQLiteMailboxStore` performs one bounded cleanup batch at startup. The server also performs bounded mailbox cleanup on the existing hourly retention tick. Contact/invite cleanup and mailbox cleanup use separate bounded timeout contexts so failure or timeout in one retention domain does not cancel the other. Each storage operation may additionally remove one bounded expired batch before a new insert so stale physical rows cannot accumulate indefinitely while writes continue.
+`OpenSQLiteMailboxStore` performs one bounded cleanup batch at startup. The server also performs bounded mailbox cleanup on the hourly retention tick. Contact/invite cleanup and mailbox cleanup use separate bounded timeout contexts so failure or timeout in one retention domain does not cancel the other. Each storage operation may additionally remove one bounded expired batch before a new insert so stale physical rows cannot accumulate indefinitely while writes continue.
 
 The physical global count/byte quotas include rows awaiting cleanup. This keeps disk use bounded even if cleanup is delayed or repeatedly interrupted.
 
@@ -85,8 +85,10 @@ A compromised server still learns sender/recipient routing ids, timing, envelope
 
 ## Verification record
 
-The #51 candidate was reviewed with explicit tests for restart durability, exact retry/conflict handling, expiry boundaries, bounded cleanup, quotas under concurrency, malformed/noncanonical persisted state, SQLite path/mode/schema hardening, canonical envelope binding, persisted acceptance-window corruption, and ACK scoping. Repository policy verification pins the storage/resource/canonicalization and independent-retention-timeout invariants.
+The #51 implementation is covered by explicit tests for restart durability, exact retry/conflict handling, exact expiry boundaries, bounded cleanup, quotas under concurrency, malformed/noncanonical persisted state, SQLite path/mode/schema hardening, canonical envelope binding, persisted acceptance-window corruption, and ACK scoping. Repository policy verification pins the storage/resource/canonicalization and independent-retention-timeout invariants.
+
+Final #54 review rechecked the storage/service paths against the live transport and found no additional mailbox persistence defect. The direct-delivery fallback/ACK race is covered at the transport boundary: if ACK wins while fallback Store is committing, the server performs the post-store idempotent delete so the newly committed row is not intentionally stranded.
 
 ## Scope boundary
 
-This review covers durable mailbox persistence only. It does not add the authenticated WSS connection hub, direct online delivery, WebSocket backpressure policy, Android conversation history, or M5 calling. Those remain #52–#54 and later milestones.
+This document reviews durable mailbox persistence. Authenticated WSS/direct delivery and Android conversation history are implemented and reviewed in `M4_TRANSPORT_REVIEW.md` and `M4_ANDROID_MESSAGING_REVIEW.md`; the final cross-component audit is #54. M5 calling remains out of scope.

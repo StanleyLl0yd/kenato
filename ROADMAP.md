@@ -64,7 +64,7 @@ Completion record: #32–#35 are complete, the final M3 PR was squash-merged to 
 
 ## M4 — Minimal Messaging
 
-Status: **Active** (2026-09-14; tracker #49).
+Status: **Active** (2026-09-14; tracker #49; final verification #54 active).
 
 - WSS routing;
 - online direct delivery;
@@ -73,7 +73,7 @@ Status: **Active** (2026-09-14; tracker #49).
 - local conversation history;
 - server deletion after acknowledged delivery.
 
-Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **complete**; #53 Android transport/history — **active**; #54 final end-to-end/security verification — pending.
+Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **complete**; #53 Android transport/history — **complete**; #54 final end-to-end/security verification — **active**.
 
 Exit: end-to-end minimal messaging is durable, bounded, identity-bound, restart/reconnect safe, reviewed across Android/server boundaries, and exact-main green with no unresolved Critical/High M4 finding.
 
