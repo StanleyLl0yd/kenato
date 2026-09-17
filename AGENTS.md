@@ -38,7 +38,7 @@ Brand:
 
 Current repository phase:
 
-M0–M3 are complete. M4 — Minimal Messaging is active under tracker #49. #50 protocol/auth, #51 bounded mailbox persistence, and #52 authenticated WSS/direct routing are complete; #53 Android messaging/history is the current slice and #54 final M4 end-to-end/security verification follows it.
+M0–M3 are complete. M4 — Minimal Messaging is active under tracker #49 in final repository-wide verification #54. #50 protocol/auth, #51 bounded mailbox persistence, #52 authenticated WSS/direct routing, and #53 Android messaging/history are complete. Do not treat M4 as complete until #54 is merged and the resulting exact `main` push is fully green.
 
 Do not start M5 or later-milestone implementation while M4 is active. After M4 is complete and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate; M5 remains blocked until #59 is complete. Repository-wide audit/refactor/hardening work must preserve completed milestone boundaries and must not silently grow into a later product milestone.
 
