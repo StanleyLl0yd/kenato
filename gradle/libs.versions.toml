@@ -19,4 +19,4 @@ zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version = "9.4.0" }
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version = "2.4.10" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version = "2.4.20" }
