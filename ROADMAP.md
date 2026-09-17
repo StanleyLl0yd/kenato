@@ -81,7 +81,7 @@ Completion record: #50–#54 completed the M4 protocol/authentication, bounded m
 
 ## M4.5 — Closed Messaging Alpha `0.1.0-alpha.1`
 
-Status: **Planned / next permitted milestone**; release gate tracked by #59. It starts only after M4 is complete and exact `main` is green.
+Status: **Planned / next permitted milestone**; #59/M4.5 is the release gate. It starts only after M4 is complete and exact `main` is green.
 
 This is a small messaging-only pre-voice cohort, not the formal M9 Private Alpha:
 
