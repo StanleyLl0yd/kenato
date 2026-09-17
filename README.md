@@ -36,9 +36,9 @@ docs/       Architecture, security and ADRs
 scripts/    Project tooling
 ```
 
-**M0 — Foundation**, **M1 — Local Identity**, **M2 — Invite + Contact Establishment**, **M3 — E2EE Session**, and **M4 — Minimal Messaging** are complete. M4 implementation slices #50–#53 and final repository-wide end-to-end/security verification #54 completed with the final audit merged in #60 and its exact `main` revision independently green.
+**M0 — Foundation**, **M1 — Local Identity**, **M2 — Invite + Contact Establishment**, **M3 — E2EE Session**, and **M4 — Minimal Messaging** are complete. M4 implementation slices #50–#53 and final repository-wide end-to-end/security verification #54 completed with the final audit merged in #60 and closure status merged in #62; the resulting exact `main` revision was independently green.
 
-M4 provides minimal E2EE text messaging on the reviewed M3 Double Ratchet boundary: bounded authenticated WSS routing, offline mailbox behavior, exact retry/ACK semantics, crash-safe Android message handoffs, and app-private bounded conversation history. It did not start WebRTC/calling work. **#59 / M4.5** is the next permitted milestone: the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 remains blocked until #59 is complete.
+M4 provides minimal E2EE text messaging on the reviewed M3 Double Ratchet boundary: bounded authenticated WSS routing, offline mailbox behavior, exact retry/ACK semantics, crash-safe Android message handoffs, and app-private bounded conversation history. It did not start WebRTC/calling work. **#59 / M4.5** is now the active next milestone: the first closed messaging-only `0.0.1` release and physical-device gate. Published pre-1.0 versions use ordinary numeric versions (`0.0.1`, `0.0.2`, ...), with no alpha/beta/rc suffixes. M5 remains blocked until #59 is complete.
 
 ## Security
 
