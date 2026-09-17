@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 is now active and begins with the authenticated minimal-messaging wire contract; durable mailbox, live WSS routing, Android history integration, and final M4 verification remain separate child slices.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 Minimal Messaging is implemented across its protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), and Android messaging/history (#53) slices; #54 is the active final repository-wide end-to-end/security verification before M4 closure.
 
 The current schemas live under `protocol/kenato/v1/`:
 
@@ -227,7 +227,7 @@ Reconnect/retry may therefore redeliver an envelope. Ordering is best-effort tra
 
 M3 already durably commits advanced ratchet state before returning inbound plaintext. M4 adds another durability requirement: the Android client must not ACK merely because decrypt succeeded. If the process crashed after the ratchet commit but before conversation state recorded the plaintext/message id, a redelivered ciphertext may correctly be rejected by the ratchet as a replay and the user message could be lost.
 
-Therefore #53 must provide a crash-safe durable delivery handoff/journal tied to the completed M3 decrypt result. The exact authenticated message identity and plaintext must be durably recoverable before ACK. Conversation-history insertion is idempotent, and only a completed durable handoff/history commit permits the network ACK.
+The completed #53 implementation provides a crash-safe durable delivery handoff/journal tied to the completed M3 decrypt result. The exact authenticated message identity and plaintext are durably recoverable before ACK. Conversation-history insertion is idempotent, and only a completed durable handoff/history commit permits the network ACK.
 
 ### M4 expiry and bounds
 
@@ -242,7 +242,7 @@ The first M4 contract fixes these hard maximums:
 - authentication challenge: exactly 32 bytes, at most 30 seconds lifetime;
 - durable mailbox design bound: at most 500 retained messages per recipient.
 
-Exact mailbox byte/global quotas and direct-delivery timers are implemented and regression-tested in later M4 children; they may be stricter than the protocol maxima but may not silently exceed them.
+Exact mailbox byte/global quotas and direct-delivery timers are implemented and regression-tested by the completed M4 server slices; they may be stricter than the protocol maxima but may not silently exceed them.
 
 ## Server-visible state
 
