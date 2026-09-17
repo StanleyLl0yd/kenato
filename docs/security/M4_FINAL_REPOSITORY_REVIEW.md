@@ -1,6 +1,6 @@
 # M4 Final Repository-Wide Security Review
 
-Status: final M4 verification for issue #54 / tracker #49. M4 is **not complete** until this review branch is squash-merged and the resulting exact `main` push is fully green. M5 remains prohibited. After M4 closure the next permitted work is #59/M4.5.
+Status: final M4 verification for issue #54 / tracker #49. The mandatory second repository-wide pass is complete with no unresolved Critical/High M4 finding. M4 is **not complete** until this review branch is squash-merged and the resulting exact `main` push is fully green. M5 remains prohibited. After M4 closure the next permitted work is #59/M4.5.
 
 ## Scope
 
@@ -12,7 +12,7 @@ This is the final repository-wide M4 review after the completed implementation s
 - #53 — Android durable messaging transport, crash-safe handoff and bounded local history;
 - #54 — this final repository-wide end-to-end/security verification.
 
-The review covers protocol definitions and canonical encoding, Go server routing/mailbox/lifecycle behavior, Android messaging/session/history boundaries, persistence and restart behavior, CI/supply-chain policy, documentation consistency, and required exact-head/exact-main gates. It does not authorize M5 calling/WebRTC work.
+The review covers protocol definitions and canonical encoding, Go server routing/mailbox/lifecycle behavior, Android messaging/session/history boundaries, persistence and restart behavior, the M3 native/JNI cryptographic boundary, CI/supply-chain and release policy, repository configuration/resources, documentation consistency, and required exact-head/exact-main gates. It does not authorize M5 calling/WebRTC work.
 
 ## Findings closed during #54
 
@@ -26,6 +26,8 @@ The final pass found and closed the following concrete issues/regression gaps:
 6. Go and Android share deterministic canonical M4 Envelope/client-send/server-delivery golden vectors.
 7. Unexpected HTTP-server failure now enters the common ordered shutdown path: upgraded WSS work stops before HTTP shutdown and SQLite closure.
 8. Root/protocol/server/architecture/toolchain/security review documentation is synchronized with #53 complete and #54 active.
+9. The new WSS replay regression itself used a fixed 2033 server clock with a helper envelope expiring from the real 2026 clock, producing a false `SEND_REJECTED`. The test now derives expiry from the same fixed clock and additionally proves the exact original authenticated peer remains registered after the replay attempt.
+10. The second repository-wide documentation pass found two additional stale current-state claims in `CONTRIBUTING.md` and `docs/development/OCI_HOST.md` that still said M4 had not started. Both now reflect #50–#53 complete, #54 active, #59/M4.5 next, and M5 blocked.
 
 ## Security invariants rechecked
 
@@ -42,6 +44,7 @@ The final review preserves these M4 boundaries:
 - inbound ACK is emitted only after crash-safe durable client handoff/history state exists;
 - outbound retries reuse durable ciphertext and never re-encrypt/advance the ratchet for transport retry;
 - Android conversation history remains app-private, no-backup and bounded;
+- M3/JNI secret pickle-key and plaintext native buffers remain bounded and zeroized at the reviewed boundary;
 - verification never mutates committed Cargo dependency resolution state.
 
 ## Regression evidence pinned by repository tests
@@ -78,11 +81,13 @@ The final PR head must then be green for the protected-branch matrix: CI (Androi
 
 Because earlier M4 work exposed PR/main nondeterminism, PR success is insufficient by itself. After squash merge, the exact resulting `main` SHA must independently pass the main-push CI/security/Gitleaks/CodeQL checks before tracker #49 / issue #54 are treated as complete. Dependency Review is PR-only and is therefore expected not to run on the main push.
 
-## Second-pass requirement
+## Mandatory second repository-wide pass — completed
 
-A mandatory second repository-wide pass is part of #54. It must re-enumerate production source, tests, protocol, persistence, build/CI, dependencies, deployment/configuration and documentation after the #54 edits, with special attention to newly exposed dead code, duplicated state, stale status text, mutable verification inputs, unbounded work, authentication/ACK authority, shutdown ordering, and retry/restart races.
+The repository tree was recursively re-enumerated after the #54 edits and the second pass covered the whole repository surface rather than only the PR diff: production source, tests, protocol, native/JNI code, persistence, Android manifest/resources/build configuration, CI/release/security workflows, dependencies and lock/integrity policy, repository metadata, documentation/ADRs, and development/release configuration.
 
-No Critical/High M4 finding may remain unresolved at merge. Any new material finding found by the second pass reopens implementation work and invalidates the frozen-head assumption until fixed and reverified.
+The second pass specifically rechecked newly exposed dead/stale state, duplicated authority, mutable verification inputs, unbounded work, authentication/ACK ownership, mailbox quotas/TTL/corruption/restart behavior, shutdown ordering, Android crash/retry/recovery boundaries, backup/logging/privacy surfaces, native secret handling, later-milestone leakage, and current milestone/status text.
+
+Its material results were the replay-regression fixture correction and the two stale current-state documentation corrections listed above. No new production runtime/security defect was found after those corrections, and no unresolved Critical/High M4 finding remains. M5/WebRTC implementation is absent from the current repository surface.
 
 ## Closure rule
 
