@@ -64,7 +64,7 @@ Completion record: #32–#35 are complete, the final M3 PR was squash-merged to 
 
 ## M4 — Minimal Messaging
 
-Status: **Active** (2026-09-14; tracker #49; final verification #54 active).
+Status: **Complete** (2026-09-17; tracker #49; final verification #54).
 
 - WSS routing;
 - online direct delivery;
@@ -73,13 +73,15 @@ Status: **Active** (2026-09-14; tracker #49; final verification #54 active).
 - local conversation history;
 - server deletion after acknowledged delivery.
 
-Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **complete**; #53 Android transport/history — **complete**; #54 final end-to-end/security verification — **active**.
+Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51 bounded mailbox persistence — **complete**; #52 authenticated WSS/direct routing — **complete**; #53 Android transport/history — **complete**; #54 final end-to-end/security verification — **complete**.
 
 Exit: end-to-end minimal messaging is durable, bounded, identity-bound, restart/reconnect safe, reviewed across Android/server boundaries, and exact-main green with no unresolved Critical/High M4 finding.
 
+Completion record: #50–#54 completed the M4 protocol/authentication, bounded mailbox, authenticated transport, Android durability/history, and final repository-wide security-review slices. Final audit PR #60 was squash-merged to protected `main`; the resulting exact `main` revision `2a3388d2898191edb9ac1277eafdcdbf780b467f` independently passed CI, Semgrep/Security, Gitleaks, and CodeQL for Go, Java/Kotlin, Rust, and Actions. M4 did not introduce M5/WebRTC work.
+
 ## M4.5 — Closed Messaging Alpha `0.1.0-alpha.1`
 
-Status: **Planned**; release gate tracked by #59. It starts only after M4 is complete and exact `main` is green.
+Status: **Planned / next permitted milestone**; release gate tracked by #59. It starts only after M4 is complete and exact `main` is green.
 
 This is a small messaging-only pre-voice cohort, not the formal M9 Private Alpha:
 
