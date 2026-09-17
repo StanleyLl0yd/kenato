@@ -38,9 +38,9 @@ Brand:
 
 Current repository phase:
 
-M0–M3 are complete. M4 — Minimal Messaging is active under tracker #49 in final repository-wide verification #54. #50 protocol/auth, #51 bounded mailbox persistence, #52 authenticated WSS/direct routing, and #53 Android messaging/history are complete. Do not treat M4 as complete until #54 is merged and the resulting exact `main` push is fully green.
+M0–M4 are complete. M4 — Minimal Messaging completed tracker #49 through #50 protocol/auth, #51 bounded mailbox persistence, #52 authenticated WSS/direct routing, #53 Android messaging/history, and #54 final repository-wide verification. Final audit PR #60 was squash-merged and the resulting exact `main` revision independently passed the required push verification matrix.
 
-Do not start M5 or later-milestone implementation while M4 is active. After M4 is complete and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate; M5 remains blocked until #59 is complete. Repository-wide audit/refactor/hardening work must preserve completed milestone boundaries and must not silently grow into a later product milestone.
+#59/M4.5 is the next permitted milestone: the closed messaging-only `0.1.0-alpha.1` physical-device release gate. Do not start M5 or later-milestone implementation until #59 is complete. Repository-wide audit/refactor/hardening work must preserve completed milestone boundaries and must not silently grow into a later product milestone.
 
 Kenato 1.0 is intentionally narrow:
 
@@ -49,7 +49,8 @@ Kenato 1.0 is intentionally narrow:
 - invite-only contact establishment;
 - no phone number or email requirement;
 - Android first;
-- RuStore first, Google Play later.
+- RuStore first;
+- Google Play later.
 
 Do not add phone-number identity, email identity, address-book upload, public user search, groups, video, file transfer, cloud history, or multi-device synchronization unless an explicit milestone or owner instruction requires it.
 
