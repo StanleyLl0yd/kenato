@@ -49,8 +49,7 @@ Kenato 1.0 is intentionally narrow:
 - invite-only contact establishment;
 - no phone number or email requirement;
 - Android first;
-- RuStore first;
-- Google Play later.
+- RuStore first, Google Play later.
 
 Do not add phone-number identity, email identity, address-book upload, public user search, groups, video, file transfer, cloud history, or multi-device synchronization unless an explicit milestone or owner instruction requires it.
 
