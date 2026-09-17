@@ -77,15 +77,17 @@ Implementation slices: #50 protocol/auth/delivery contract — **complete**; #51
 
 Exit: end-to-end minimal messaging is durable, bounded, identity-bound, restart/reconnect safe, reviewed across Android/server boundaries, and exact-main green with no unresolved Critical/High M4 finding.
 
-Completion record: #50–#54 completed the M4 protocol/authentication, bounded mailbox, authenticated transport, Android durability/history, and final repository-wide security-review slices. Final audit PR #60 was squash-merged to protected `main`; the resulting exact `main` revision `2a3388d2898191edb9ac1277eafdcdbf780b467f` independently passed CI, Semgrep/Security, Gitleaks, and CodeQL for Go, Java/Kotlin, Rust, and Actions. M4 did not introduce M5/WebRTC work.
+Completion record: #50–#54 completed the M4 protocol/authentication, bounded mailbox, authenticated transport, Android durability/history, and final repository-wide security-review slices. Final audit PR #60 and closure PR #62 were squash-merged to protected `main`; exact `main` `7b85dd76d90416d3d2a8cf98a870f338fb1429b6` independently passed CI, Semgrep/Security, Gitleaks, and CodeQL for Go, Java/Kotlin, Rust, and Actions. M4 did not introduce M5/WebRTC work.
 
-## M4.5 — Closed Messaging Alpha `0.1.0-alpha.1`
+## M4.5 — Closed Messaging Release `0.0.1`
 
-Status: **Planned / next permitted milestone**; #59/M4.5 is the release gate. It starts only after M4 is complete and exact `main` is green.
+Status: **Active**; #59/M4.5 is the current release gate. M4 is complete and exact `main` is green. M5 remains blocked until this gate completes.
 
-This is a small messaging-only pre-voice cohort, not the formal M9 Private Alpha:
+This is a small messaging-only pre-voice release, not a separate prerelease version class:
 
-- signed Android APK built from the exact reviewed `main` commit;
+- source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`;
+- signed Android APK/AAB built from the exact reviewed `main` commit;
+- GitHub Release containing the verified APK/AAB/checksum;
 - direct distribution to a small trusted cohort (initially roughly 2–10 testers; public store publication is not required);
 - at least two physical Android devices;
 - clean install and identity persistence;
@@ -93,11 +95,13 @@ This is a small messaging-only pre-voice cohort, not the formal M9 Private Alpha
 - online E2EE text and offline mailbox/reconnect delivery;
 - duplicate/retry/ACK behavior without duplicate visible history;
 - process death, relaunch and device reboot recovery;
-- APK update preserving identity/session/history;
+- establish `0.0.1` as the update baseline; from `0.0.2` onward verify in-place update preserving identity/session/history;
 - Wi-Fi/mobile-network loss and recovery;
-- no third-party analytics/crash SDK or plaintext diagnostics added merely for the alpha.
+- no third-party analytics/crash SDK or plaintext diagnostics added merely for testing.
 
-Exit: alpha blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.** The broader call-quality/OEM/TURN/battery Private Alpha remains M9.
+Versioning policy: published pre-1.0 builds use ordinary numeric versions (`0.0.1`, `0.0.2`, ...). Alpha, beta, rc, and other prerelease suffixes are not used.
+
+Exit: `0.0.1` is signed, published and exercised on the closed cohort; blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.**
 
 ## M5 — Voice Core
 
@@ -141,13 +145,13 @@ Exit: alpha blockers are recorded and fixed without unrelated feature expansion.
 - release signing review;
 - no open Critical/High findings.
 
-## M9 — Private Alpha
+## M9 — Private Device Test
 
 Small real-device cohort. Focus on call quality, OEM behavior, TURN usage, crashes, battery, invite UX, and update/install behavior.
 
-No feature expansion beyond fixes required for alpha quality.
+No feature expansion beyond fixes required for test quality.
 
-## M10 — Public Beta / Release Candidate
+## M10 — Public Test / Release Preparation
 
 - UI/accessibility polish;
 - RU + EN;
