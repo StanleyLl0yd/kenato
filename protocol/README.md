@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 Minimal Messaging is implemented across its protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), and Android messaging/history (#53) slices; #54 is the active final repository-wide end-to-end/security verification before M4 closure.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 Minimal Messaging is complete across protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), Android messaging/history (#53), and final repository-wide end-to-end/security verification (#54). Final audit PR #60 and its resulting exact `main` revision passed the required verification matrix. #59/M4.5 is the next permitted milestone; M5 remains blocked until #59 completes.
 
 The current schemas live under `protocol/kenato/v1/`:
 

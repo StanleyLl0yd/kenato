@@ -1,6 +1,6 @@
 # M4 Android Messaging Security Review
 
-Status: #53 Android messaging/history implementation is complete. This review records the completed Android authenticated WSS client, durable M3 message handoff, local one-to-one conversation history and minimal application-facing messaging boundary and is carried into #54 final repository-wide M4 verification. Server mailbox/routing reviews remain in the existing M4 protocol/mailbox/transport documents. M5 calling and background/push behavior are out of scope.
+Status: #53 Android messaging/history implementation is complete and was revalidated by the completed #54 final repository-wide M4 verification. This review records the completed Android authenticated WSS client, durable M3 message handoff, local one-to-one conversation history and minimal application-facing messaging boundary. Server mailbox/routing reviews remain in the existing M4 protocol/mailbox/transport documents. M5 calling and background/push behavior are out of scope.
 
 ## Trust and crypto boundary
 
@@ -124,7 +124,7 @@ M4 does not claim metadata hiding from the Kenato server. Routing identities, ra
 
 ## Verification requirements
 
-The completed #53 implementation evidence carried into #54 includes:
+The completed #53 implementation evidence revalidated by #54 includes:
 
 - session-state v1→v2 and conversation-history v1→v2 migration tests must pass;
 - outbound/inbound atomic handoff failure and restart windows must pass;
@@ -143,4 +143,4 @@ The completed #53 implementation evidence carried into #54 includes:
 - `scripts/verify_m4_android_messaging.py` must remain part of repository `make test`;
 - all protected-branch exact-head checks must be green.
 
-Issue #54 is the active final repository-wide M4 end-to-end/security cleanup. M5 calling is not part of this review.
+Issue #54 final repository-wide M4 end-to-end/security verification is complete. M4 closure is verified; #59/M4.5 is the next permitted work. M5 calling is not part of this review and remains blocked until #59 completes.

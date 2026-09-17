@@ -1,6 +1,6 @@
 # Kenato Server
 
-Kenato's backend is a deliberately small Go service. M2 provides authenticated identity publication and invite/contact establishment. M3 adds authenticated asynchronous session bootstrap. M4 is active in final verification: #50 defines the messaging/auth contract, #51 provides bounded durable mailbox custody, #52 provides authenticated WSS routing/direct delivery, and #53 provides the Android transport/history counterpart; #54 is the current repository-wide end-to-end/security pass.
+Kenato's backend is a deliberately small Go service. M2 provides authenticated identity publication and invite/contact establishment. M3 adds authenticated asynchronous session bootstrap. M4 Minimal Messaging is complete: #50 defines the messaging/auth contract, #51 provides bounded durable mailbox custody, #52 provides authenticated WSS routing/direct delivery, #53 provides the Android transport/history counterpart, and #54 completed the final repository-wide end-to-end/security verification. #59/M4.5 is the next permitted milestone; M5 remains blocked until #59 completes.
 
 ## Current surface
 

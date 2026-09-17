@@ -83,61 +83,101 @@ for verifier in (
 require(
     "docs/security/M4_FINAL_REPOSITORY_REVIEW.md",
     "# M4 Final Repository-Wide Security Review",
+    "Status: **complete** for issue #54 / tracker #49",
     "## Mandatory second repository-wide pass — completed",
     "No new production runtime/security defect was found after those corrections",
     "no unresolved Critical/High M4 finding remains",
     "## Closure rule",
     "exact resulting `main` SHA",
+    "2a3388d2898191edb9ac1277eafdcdbf780b467f",
     "M5 remains blocked",
 )
 require(
+    "ROADMAP.md",
+    "Status: **Complete** (2026-09-17; tracker #49; final verification #54).",
+    "#54 final end-to-end/security verification — **complete**",
+    "#59/M4.5",
+)
+require(
     "protocol/README.md",
-    "#53) slices; #54 is the active final repository-wide end-to-end/security verification",
+    "M4 Minimal Messaging is complete across protocol/auth (#50)",
+    "final repository-wide end-to-end/security verification (#54)",
     "The completed #53 implementation provides a crash-safe durable delivery handoff/journal",
 )
 forbid(
     "protocol/README.md",
+    "#54 is the active final repository-wide end-to-end/security verification",
     "M4 is now active and begins with the authenticated minimal-messaging wire contract",
     "Therefore #53 must provide a crash-safe durable delivery handoff/journal",
 )
 require(
     "AGENTS.md",
-    "#53 Android messaging/history are complete",
-    "#54 is merged and the resulting exact `main` push is fully green",
+    "M0–M4 are complete.",
+    "#54 final repository-wide verification",
+    "#59/M4.5 is the next permitted milestone",
+    "Do not start M5",
 )
 forbid(
     "AGENTS.md",
+    "M4 — Minimal Messaging is active",
+    "Do not treat M4 as complete until #54",
     "#53 Android messaging/history is the current slice",
 )
 require(
     "CONTRIBUTING.md",
-    "M4 Minimal Messaging is active under tracker #49 in final repository-wide verification #54",
+    "M4 Minimal Messaging are complete",
     "#59/M4.5 is the next permitted milestone",
     "M5 remains blocked",
 )
 forbid(
     "CONTRIBUTING.md",
+    "M4 Minimal Messaging is active",
     "M4 Minimal Messaging has not started",
 )
 require(
     "docs/development/OCI_HOST.md",
-    "M4 Minimal Messaging is active in final repository-wide verification #54",
+    "M0–M4 are complete.",
     "#59/M4.5 is the next permitted milestone",
     "M5 remains blocked",
 )
 forbid(
     "docs/development/OCI_HOST.md",
+    "M4 Minimal Messaging is active",
     "M4 has not started",
 )
 require(
+    "docs/architecture/OVERVIEW.md",
+    "M0–M4 are complete.",
+    "#54 completed final repository-wide M4 end-to-end/security verification",
+    "#59/M4.5 is the next permitted milestone",
+)
+forbid(
+    "docs/architecture/OVERVIEW.md",
+    "M4 is active in final verification",
+    "#54 is the current final repository-wide M4",
+)
+require(
+    "docs/security/THREAT_MODEL.md",
+    "Status: M0–M4 complete.",
+    "#50–#54 are complete",
+    "#59/M4.5 is the next permitted milestone",
+)
+forbid(
+    "docs/security/THREAT_MODEL.md",
+    "M4 is active under tracker #49",
+    "#54 final repository-wide M4 verification is active",
+)
+require(
     "docs/security/M4_ANDROID_MESSAGING_REVIEW.md",
-    "Status: #53 Android messaging/history implementation is complete.",
-    "Issue #54 is the active final repository-wide M4 end-to-end/security cleanup.",
+    "Status: #53 Android messaging/history implementation is complete and was revalidated by the completed #54",
+    "Issue #54 final repository-wide M4 end-to-end/security verification is complete.",
+    "#59/M4.5 is the next permitted work",
 )
 forbid(
     "docs/security/M4_ANDROID_MESSAGING_REVIEW.md",
     "Before #53 is complete:",
     "Issue #54 remains the final repository-wide M4 end-to-end/security cleanup after #53.",
+    "Issue #54 is the active final repository-wide M4 end-to-end/security cleanup.",
 )
 
 workflow = read(".github/workflows/ci.yml")

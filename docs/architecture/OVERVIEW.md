@@ -34,7 +34,7 @@ Android <---- WebRTC / ICE ----> Android
                   +---- coturn fallback
 ```
 
-M0–M3 are complete. M4 is active in final verification. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback, and #53 completed the Android durable M3 message handoff, authenticated WSS reconnect/recovery, bounded no-backup conversation history, and minimal application messaging boundary. #54 is the current final repository-wide M4 end-to-end/security verification. TURN credentials and calling remain later milestones.
+M0–M4 are complete. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback, #53 completed the Android durable M3 message handoff, authenticated WSS reconnect/recovery, bounded no-backup conversation history, and minimal application messaging boundary, and #54 completed final repository-wide M4 end-to-end/security verification with exact-main green. #59/M4.5 is the next permitted milestone. TURN credentials and calling remain later milestones, and M5 remains blocked until #59 completes.
 
 ## Client
 
@@ -185,7 +185,7 @@ The #53 Android client uses a dedicated exact-pinned OkHttp 5.5.0 WebSocket clie
 
 Android conversation history is independently bounded to at most 1,000 messages / 4 MiB per conversation and 4,096 messages / 16 MiB globally. `PENDING_ACCEPTANCE` outbound state is never pruned for age/capacity. Accepted or terminal-expired outbound records are safe-prunable oldest-first; inbound `PENDING_ACK` becomes safe-prunable only once its authenticated expiry has passed.
 
-With #50–#53 complete, #54 is the final whole-system end-to-end/security verification before the M4 tracker can close.
+With #50–#54 complete, M4 Minimal Messaging is closed at the architecture level. #59/M4.5 is the next permitted milestone; M5 remains blocked until that closed messaging-alpha gate completes.
 
 ## Calling
 
@@ -230,6 +230,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M3 are complete and M4 is active under tracker #49 with #50–#53 complete and #54 performing the final repository-wide verification. After M4 completes and exact `main` is green, #59/M4.5 is the closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0–M4 are complete. M4 tracker #49 covers completed slices #50–#54, with final audit PR #60 and the resulting exact `main` revision verified green. #59/M4.5 is the next permitted closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
 
 Self-hosted federation is explicitly out of scope for 1.0.

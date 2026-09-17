@@ -1,6 +1,6 @@
 # Contributing to Kenato
 
-Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, M2 Invite + Contact Establishment, and M3 E2EE Session are complete. M4 Minimal Messaging is active under tracker #49 in final repository-wide verification #54 after completion of implementation slices #50–#53. Do not treat M4 as complete until #54 is merged and the resulting exact `main` push is fully green. After M4, #59/M4.5 is the next permitted milestone; M5 remains blocked until that closed messaging-alpha gate is complete.
+Kenato is in pre-1.0 milestone-driven development. M0 Foundation, M1 Local Identity, M2 Invite + Contact Establishment, M3 E2EE Session, and M4 Minimal Messaging are complete. M4 implementation slices #50–#53 and final repository-wide verification #54 completed with exact-head and exact-main gates green. #59/M4.5 is the next permitted milestone; M5 remains blocked until that closed messaging-alpha gate is complete.
 
 ## Workflow
 

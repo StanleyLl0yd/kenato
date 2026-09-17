@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0–M3 complete. M4 is active under tracker #49; #50 protocol/authentication, #51 bounded mailbox, #52 authenticated WSS/direct routing, and #53 Android transport/history are complete; #54 final repository-wide M4 verification is active.
+Status: M0–M4 complete. M4 tracker #49 and implementation/final-verification issues #50–#54 are complete; final audit PR #60 and its resulting exact `main` revision independently passed the required verification matrix. #59/M4.5 is the next permitted milestone, and M5 remains blocked until #59 completes.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
