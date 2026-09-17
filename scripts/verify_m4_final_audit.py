@@ -33,6 +33,9 @@ require(
     "TestMessagingWSSRejectsAuthenticationProofReplayAcrossConnections",
     "TestMessagingWSSRejectsAuthenticatedSenderSubstitution",
     "TestMessagingWSSUnauthorizedAckCannotResolveDirectDelivery",
+    "originalPeer := wsServer.peers[string(identityID)]",
+    "current != originalPeer",
+    "envelope.ExpiresAtUnixSeconds = now.Add(time.Hour).Unix()",
 )
 require(
     "server/internal/httpapi/messaging_ack_store_race_test.go",
@@ -80,7 +83,9 @@ for verifier in (
 require(
     "docs/security/M4_FINAL_REPOSITORY_REVIEW.md",
     "# M4 Final Repository-Wide Security Review",
-    "## Second-pass requirement",
+    "## Mandatory second repository-wide pass — completed",
+    "No new production runtime/security defect was found after those corrections",
+    "no unresolved Critical/High M4 finding remains",
     "## Closure rule",
     "exact resulting `main` SHA",
     "M5 remains blocked",
@@ -103,6 +108,26 @@ require(
 forbid(
     "AGENTS.md",
     "#53 Android messaging/history is the current slice",
+)
+require(
+    "CONTRIBUTING.md",
+    "M4 Minimal Messaging is active under tracker #49 in final repository-wide verification #54",
+    "#59/M4.5 is the next permitted milestone",
+    "M5 remains blocked",
+)
+forbid(
+    "CONTRIBUTING.md",
+    "M4 Minimal Messaging has not started",
+)
+require(
+    "docs/development/OCI_HOST.md",
+    "M4 Minimal Messaging is active in final repository-wide verification #54",
+    "#59/M4.5 is the next permitted milestone",
+    "M5 remains blocked",
+)
+forbid(
+    "docs/development/OCI_HOST.md",
+    "M4 has not started",
 )
 require(
     "docs/security/M4_ANDROID_MESSAGING_REVIEW.md",
