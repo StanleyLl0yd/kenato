@@ -39,7 +39,7 @@ The release workflow:
 11. creates and verifies SHA-256 artifact checksums;
 12. creates OIDC-backed GitHub artifact attestations for APK and AAB;
 13. uploads only the packaged signed artifacts/checksum;
-14. creates the immutable `vX.Y.Z` tag on the verified `main` commit as part of creating a draft GitHub Release, attaches the verified APK/AAB/checksum, then publishes it;
+14. creates a GitHub Release and the immutable `vX.Y.Z` tag on the verified `main` commit as one draft-publication operation, attaches the verified APK/AAB/checksum, then publishes it;
 15. removes the temporary decoded keystore even when a later workflow step fails.
 
 The ephemeral runner is discarded after the job as an additional containment boundary.
