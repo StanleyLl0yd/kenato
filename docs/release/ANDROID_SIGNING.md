@@ -26,8 +26,8 @@ Do not store the raw keystore, passwords, decoded temporary files, or production
 
 The release workflow:
 
-1. accepts only immutable `vX.Y.Z` tag pushes; alpha/beta/rc or other prerelease suffixes are rejected;
-2. verifies the tagged commit is the exact requested revision and is contained in `main`;
+1. runs only on protected `main` pushes that change the Android release version or the release workflow, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
+2. verifies the workflow source is the exact current protected `main` revision;
 3. requires successful `main` runs of CI, Security and Quality, Gitleaks, and CodeQL for that exact commit;
 4. verifies `versionName`, `versionCode`, namespace and `com.sl.kenato` application id;
 5. verifies monotonically increasing release `versionCode` against prior numeric release tags;
@@ -39,14 +39,14 @@ The release workflow:
 11. creates and verifies SHA-256 artifact checksums;
 12. creates OIDC-backed GitHub artifact attestations for APK and AAB;
 13. uploads only the packaged signed artifacts/checksum;
-14. creates a GitHub Release for the immutable tag and attaches the verified APK/AAB/checksum;
+14. creates a GitHub Release and the immutable `vX.Y.Z` tag on the verified `main` commit as one draft-publication operation, attaches the verified APK/AAB/checksum, then publishes it;
 15. removes the temporary decoded keystore even when a later workflow step fails.
 
 The ephemeral runner is discarded after the job as an additional containment boundary.
 
 ## Provisioning the existing JKS
 
-The existing release JKS should be kept outside the repository. Before `v0.0.1` is created, derive and verify its alias and SHA-256 certificate fingerprint locally, then place the JKS and credentials only in the five protected `release` environment secrets above.
+The existing release JKS should be kept outside the repository. Before the `0.0.1` release workflow runs, derive and verify the JKS alias and SHA-256 certificate fingerprint locally, then place the JKS and credentials only in the five protected `release` environment secrets above.
 
 The keystore base64 value must be the complete binary JKS encoded without modification. Do not commit an encoded JKS file to the repository merely because it is base64 text.
 

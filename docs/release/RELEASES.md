@@ -14,7 +14,7 @@ Android `versionCode` is monotonically increasing and never reused for a publish
 
 ## Git
 
-Release artifacts are built only from protected immutable Git tags matching exactly `vX.Y.Z`, for example:
+Release artifacts are built from the exact verified protected `main` commit. Publication creates a protected immutable Git tag matching exactly `vX.Y.Z`, for example:
 
 - `v0.0.1`;
 - `v0.0.2`;
@@ -40,7 +40,7 @@ A release is not valid if one artifact is produced from a different source commi
 
 Before any published release:
 
-- the tag resolves to a reviewed commit contained in protected `main`;
+- the release workflow source is the exact verified protected `main` commit; publication creates `vX.Y.Z` on that commit, after which the tag is immutable;
 - exact-main CI, Security and Quality, Gitleaks, and CodeQL runs are successful for that commit;
 - repository-wide relevant tests pass;
 - Android lint/build passes;
