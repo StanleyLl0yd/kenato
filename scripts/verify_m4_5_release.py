@@ -74,6 +74,8 @@ require(
     "sha256sum --check",
     "actions/attest@",
     "actions/download-artifact@",
+    'if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
+    'if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
     'gh release create "$RELEASE_TAG"',
     '--target "$GITHUB_SHA"',
     "--verify-tag",
@@ -87,6 +89,7 @@ forbid(
     "-rc.",
     "-alpha",
     "-beta",
+    'releases/tags/$RELEASE_TAG" 2>/dev/null || true',
 )
 
 require(
