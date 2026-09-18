@@ -53,6 +53,18 @@ if workflow:
                 f".github/workflows/release-android.yml: privileged release workflow must not use {forbidden_event}"
             )
 
+    test_step = workflow.find("      - name: Test and lint release source")
+    restore_step = workflow.find("      - name: Restore and validate release keystore")
+    signed_build_step = workflow.find("      - name: Build signed APK and AAB")
+    if min(test_step, restore_step, signed_build_step) < 0:
+        errors.append(
+            ".github/workflows/release-android.yml: release test/signing steps must all be present"
+        )
+    elif not (test_step < restore_step < signed_build_step):
+        errors.append(
+            ".github/workflows/release-android.yml: test/lint must run before restoring signing material, and signing material must be restored before the signed build"
+        )
+
 require("Makefile", "python3 scripts/verify_m4_5_release.py")
 require(
     ".github/workflows/release-android.yml",
