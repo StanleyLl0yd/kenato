@@ -90,12 +90,23 @@ jobs:
         run: |
           set -euo pipefail
           tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+
           if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
             draft="$(jq -r '.draft' <<< "$release_json")"
+            target="$(jq -r '.target_commitish // ""' <<< "$release_json")"
+
             if [[ "$draft" == "true" ]]; then
-              test -n "$tag_sha"
-              test "$tag_sha" = "$GITHUB_SHA"
-              echo "Resuming draft release $RELEASE_TAG on $GITHUB_SHA"
+              if [[ -n "$tag_sha" ]]; then
+                test "$tag_sha" = "$GITHUB_SHA"
+                echo "Resuming draft release $RELEASE_TAG with existing immutable tag on $GITHUB_SHA."
+              else
+                test -n "$target"
+                if [[ "$target" == "$GITHUB_SHA" ]]; then
+                  echo "Resuming draft release $RELEASE_TAG targeting exact main $GITHUB_SHA."
+                else
+                  echo "Draft $RELEASE_TAG currently targets $target and will be retargeted to exact main $GITHUB_SHA after fresh verified artifacts are built."
+                fi
+              fi
               echo "should_release=true" >> "$GITHUB_OUTPUT"
             elif [[ "$draft" == "false" ]]; then
               echo "Release $RELEASE_TAG is already published; nothing to do."
@@ -358,10 +369,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
           if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
             test "$(jq -r '.draft' <<< "$existing")" = "true"
-            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
-            echo "Resuming existing draft $RELEASE_TAG."
+            release_id="$(jq -r '.id' <<< "$existing")"
+            target="$(jq -r '.target_commitish // ""' <<< "$existing")"
+            test -n "$release_id"
+
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+              test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+              echo "Resuming draft $RELEASE_TAG with existing immutable tag on $GITHUB_SHA."
+            else
+              if [[ "$target" != "$GITHUB_SHA" ]]; then
+                updated="$(gh api \
+                  --method PATCH \
+                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                  -f target_commitish="$GITHUB_SHA")"
+                test "$(jq -r '.target_commitish' <<< "$updated")" = "$GITHUB_SHA"
+                echo "Retargeted draft $RELEASE_TAG to exact main $GITHUB_SHA."
+              else
+                echo "Resuming draft $RELEASE_TAG on exact main $GITHUB_SHA."
+              fi
+            fi
           elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
             gh release create "$RELEASE_TAG" \
@@ -392,14 +421,41 @@ jobs:
             --clobber \
             --repo "$GITHUB_REPOSITORY"
 
-      - name: Verify immutable release source
+      - name: Verify draft release source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test "$(jq -r '.draft' <<< "$draft_json")" = "true"
+          test "$(jq -r '.tag_name' <<< "$draft_json")" = "$RELEASE_TAG"
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+          else
+            test "$(jq -r '.target_commitish' <<< "$draft_json")" = "$GITHUB_SHA"
+          fi
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify published immutable release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test "$(jq -r '.draft' <<< "$published")" = "false"
+          test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+
+          version="${RELEASE_TAG#v}"
+          for asset in \
+            "Kenato-$version.apk" \
+            "Kenato-$version.aab" \
+            "Kenato-$version.sha256"
+          do
+            jq -e --arg name "$asset" '.assets | any(.name == $name)' <<< "$published" >/dev/null
+          done

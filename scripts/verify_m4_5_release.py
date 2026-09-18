@@ -65,6 +65,18 @@ if workflow:
             ".github/workflows/release-android.yml: test/lint must run before restoring signing material, and signing material must be restored before the signed build"
         )
 
+    draft_verify_step = workflow.find("      - name: Verify draft release source")
+    publish_step = workflow.find("      - name: Publish release")
+    published_verify_step = workflow.find("      - name: Verify published immutable release source")
+    if min(draft_verify_step, publish_step, published_verify_step) < 0:
+        errors.append(
+            ".github/workflows/release-android.yml: draft verification, publication, and post-publication tag verification must all be present"
+        )
+    elif not (draft_verify_step < publish_step < published_verify_step):
+        errors.append(
+            ".github/workflows/release-android.yml: draft source must be verified before publish and immutable tag/source must be verified after publish"
+        )
+
 require("Makefile", "python3 scripts/verify_m4_5_release.py")
 require(
     ".github/workflows/release-android.yml",
@@ -91,6 +103,11 @@ require(
     "actions/download-artifact@",
     'if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
     'if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
+    "target_commitish",
+    "--method PATCH",
+    '-f target_commitish="$GITHUB_SHA"',
+    "Verify draft release source",
+    "Verify published immutable release source",
     'gh release create "$RELEASE_TAG"',
     '--target "$GITHUB_SHA"',
     "--verify-tag",
@@ -106,6 +123,7 @@ forbid(
     "-beta",
     'releases/tags/$RELEASE_TAG" 2>/dev/null || true',
     "for attempt in $(seq 1 40); do",
+    "      - name: Verify immutable release source",
 )
 
 require(
