@@ -90,17 +90,19 @@ jobs:
         run: |
           set -euo pipefail
           tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
-
-          if [[ -n "$release_json" ]]; then
-            if [[ "$(jq -r '.draft' <<< "$release_json")" == "true" ]]; then
+          if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
+            draft="$(jq -r '.draft' <<< "$release_json")"
+            if [[ "$draft" == "true" ]]; then
               test -n "$tag_sha"
               test "$tag_sha" = "$GITHUB_SHA"
               echo "Resuming draft release $RELEASE_TAG on $GITHUB_SHA"
               echo "should_release=true" >> "$GITHUB_OUTPUT"
-            else
+            elif [[ "$draft" == "false" ]]; then
               echo "Release $RELEASE_TAG is already published; nothing to do."
               echo "should_release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "Unexpected release state for $RELEASE_TAG." >&2
+              exit 1
             fi
             exit 0
           fi
@@ -356,8 +358,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
-          if [[ -n "$existing" ]]; then
+          if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
             test "$(jq -r '.draft' <<< "$existing")" = "true"
             test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
             echo "Resuming existing draft $RELEASE_TAG."
