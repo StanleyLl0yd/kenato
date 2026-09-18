@@ -65,8 +65,8 @@ if workflow:
             ".github/workflows/release-android.yml: test/lint must run before restoring signing material, and signing material must be restored before the signed build"
         )
 
-    draft_verify_step = workflow.find("      - name: Verify draft release source")
-    publish_step = workflow.find("      - name: Publish release")
+    draft_verify_step = workflow.find("      - name: Verify canonical draft release")
+    publish_step = workflow.find("      - name: Publish canonical release")
     published_verify_step = workflow.find("      - name: Verify published immutable release source")
     if min(draft_verify_step, publish_step, published_verify_step) < 0:
         errors.append(
@@ -101,19 +101,22 @@ require(
     "sha256sum --check",
     "actions/attest@",
     "actions/download-artifact@",
-    'if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
-    'if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
-    "target_commitish",
-    "--method PATCH",
-    '-f target_commitish="$GITHUB_SHA"',
-    "Verify draft release source",
+    'if published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
+    '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+    'select(.draft == true and .tag_name == $tag)',
+    '--method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"',
+    "Create canonical draft release",
+    "Verify canonical draft release",
+    "Publish canonical release",
     "Verify published immutable release source",
+    'RELEASE_ID: ${{ steps.draft.outputs.release_id }}',
+    '-F draft=false',
+    '-f make_latest=true',
     'gh release create "$RELEASE_TAG"',
     '--target "$GITHUB_SHA"',
     "--verify-tag",
     'gh release upload "$RELEASE_TAG"',
     "--clobber",
-    'gh release edit "$RELEASE_TAG" --draft=false --latest',
     'rm -f "$RUNNER_TEMP/kenato-release.jks"',
 )
 forbid(
@@ -124,6 +127,10 @@ forbid(
     'releases/tags/$RELEASE_TAG" 2>/dev/null || true',
     "for attempt in $(seq 1 40); do",
     "      - name: Verify immutable release source",
+    "      - name: Create or resume draft release",
+    "      - name: Verify draft release source",
+    "      - name: Publish release",
+    'gh release edit "$RELEASE_TAG" --draft=false --latest',
 )
 
 require(

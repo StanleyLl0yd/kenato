@@ -91,36 +91,25 @@ jobs:
           set -euo pipefail
           tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
 
-          if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
-            draft="$(jq -r '.draft' <<< "$release_json")"
-            target="$(jq -r '.target_commitish // ""' <<< "$release_json")"
-
-            if [[ "$draft" == "true" ]]; then
-              if [[ -n "$tag_sha" ]]; then
-                test "$tag_sha" = "$GITHUB_SHA"
-                echo "Resuming draft release $RELEASE_TAG with existing immutable tag on $GITHUB_SHA."
-              else
-                test -n "$target"
-                if [[ "$target" == "$GITHUB_SHA" ]]; then
-                  echo "Resuming draft release $RELEASE_TAG targeting exact main $GITHUB_SHA."
-                else
-                  echo "Draft $RELEASE_TAG currently targets $target and will be retargeted to exact main $GITHUB_SHA after fresh verified artifacts are built."
-                fi
-              fi
-              echo "should_release=true" >> "$GITHUB_OUTPUT"
-            elif [[ "$draft" == "false" ]]; then
-              echo "Release $RELEASE_TAG is already published; nothing to do."
-              echo "should_release=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "Unexpected release state for $RELEASE_TAG." >&2
-              exit 1
-            fi
+          if published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
+            test "$(jq -r '.draft' <<< "$published")" = "false"
+            echo "Release $RELEASE_TAG is already published; nothing to do."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          drafts="$(jq -c --arg tag "$RELEASE_TAG" \
+            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$releases")"
+          draft_count="$(jq 'length' <<< "$drafts")"
+
           if [[ -n "$tag_sha" ]]; then
             test "$tag_sha" = "$GITHUB_SHA"
-            echo "Existing immutable tag $RELEASE_TAG has no release; continuing publication."
+            echo "Existing immutable tag $RELEASE_TAG resolves to exact main $GITHUB_SHA."
+          fi
+
+          if (( draft_count > 0 )); then
+            echo "Found $draft_count unpublished draft(s) for $RELEASE_TAG; publish job will replace them with one canonical draft after fresh verified artifacts are built."
           fi
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
@@ -364,35 +353,29 @@ jobs:
           name: kenato-${{ env.RELEASE_TAG }}-signed
           path: release
 
-      - name: Create or resume draft release
+      - name: Create canonical draft release
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$tag_sha" ]]; then
+            resolved_tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+            test "$resolved_tag_sha" = "$GITHUB_SHA"
+          fi
 
-          if existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then
-            test "$(jq -r '.draft' <<< "$existing")" = "true"
-            release_id="$(jq -r '.id' <<< "$existing")"
-            target="$(jq -r '.target_commitish // ""' <<< "$existing")"
-            test -n "$release_id"
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          drafts="$(jq -c --arg tag "$RELEASE_TAG" \
+            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$releases")"
 
-            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-              test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
-              echo "Resuming draft $RELEASE_TAG with existing immutable tag on $GITHUB_SHA."
-            else
-              if [[ "$target" != "$GITHUB_SHA" ]]; then
-                updated="$(gh api \
-                  --method PATCH \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-                  -f target_commitish="$GITHUB_SHA")"
-                test "$(jq -r '.target_commitish' <<< "$updated")" = "$GITHUB_SHA"
-                echo "Retargeted draft $RELEASE_TAG to exact main $GITHUB_SHA."
-              else
-                echo "Resuming draft $RELEASE_TAG on exact main $GITHUB_SHA."
-              fi
-            fi
-          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+          while IFS= read -r release_id; do
+            [[ -n "$release_id" ]] || continue
+            echo "Deleting stale unpublished draft $release_id for $RELEASE_TAG."
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+          done < <(jq -r '.[].id' <<< "$drafts")
+
+          if [[ -n "$tag_sha" ]]; then
             gh release create "$RELEASE_TAG" \
               --verify-tag \
               --draft \
@@ -408,6 +391,21 @@ jobs:
               --repo "$GITHUB_REPOSITORY"
           fi
 
+          refreshed="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          canonical="$(jq -c --arg tag "$RELEASE_TAG" \
+            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$refreshed")"
+          test "$(jq 'length' <<< "$canonical")" = "1"
+
+          release_id="$(jq -r '.[0].id' <<< "$canonical")"
+          target="$(jq -r '.[0].target_commitish // ""' <<< "$canonical")"
+          test -n "$release_id"
+
+          if [[ -z "$tag_sha" ]]; then
+            test "$target" = "$GITHUB_SHA"
+          fi
+
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
       - name: Attach verified assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -421,12 +419,13 @@ jobs:
             --clobber \
             --repo "$GITHUB_REPOSITORY"
 
-      - name: Verify draft release source
+      - name: Verify canonical draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
           set -euo pipefail
-          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
           test "$(jq -r '.draft' <<< "$draft_json")" = "true"
           test "$(jq -r '.tag_name' <<< "$draft_json")" = "$RELEASE_TAG"
 
@@ -436,19 +435,39 @@ jobs:
             test "$(jq -r '.target_commitish' <<< "$draft_json")" = "$GITHUB_SHA"
           fi
 
-      - name: Publish release
+          version="${RELEASE_TAG#v}"
+          for asset in \
+            "Kenato-$version.apk" \
+            "Kenato-$version.aab" \
+            "Kenato-$version.sha256"
+          do
+            jq -e --arg name "$asset" '.assets | any(.name == $name)' <<< "$draft_json" >/dev/null
+          done
+
+      - name: Publish canonical release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          published="$(gh api \
+            --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -f make_latest=true)"
+          test "$(jq -r '.draft' <<< "$published")" = "false"
+          test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
 
       - name: Verify published immutable release source
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
           set -euo pipefail
-          published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          published="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
           test "$(jq -r '.draft' <<< "$published")" = "false"
           test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
+          test -n "$(jq -r '.published_at // ""' <<< "$published")"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
 
           version="${RELEASE_TAG#v}"
