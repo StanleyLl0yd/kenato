@@ -18,7 +18,7 @@ jobs:
   validate:
     name: Validate release request
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       actions: read
       contents: read
@@ -122,7 +122,7 @@ jobs:
           set -euo pipefail
           required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")
 
-          for attempt in $(seq 1 40); do
+          for attempt in $(seq 1 80); do
             runs="$(gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -159,7 +159,7 @@ jobs:
               exit 0
             fi
 
-            if (( attempt < 40 )); then
+            if (( attempt < 80 )); then
               sleep 15
             fi
           done
