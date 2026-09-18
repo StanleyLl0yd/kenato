@@ -215,8 +215,12 @@ for forbidden in ("pull_request_target:", "pull_request:", "workflow_dispatch:")
         errors.append(f"release-android.yml: privileged release workflow must not use {forbidden}")
 
 for required in (
-    "tags:",
-    '"v*"',
+    "branches:",
+    "- main",
+    "android/app/build.gradle.kts",
+    ".github/workflows/release-android.yml",
+    'gh release create "$RELEASE_TAG"',
+    '--target "$GITHUB_SHA"',
     "environment: release",
     "id-token: write",
     "attestations: write",

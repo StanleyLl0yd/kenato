@@ -2,17 +2,17 @@ name: Android release artifacts
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - android/app/build.gradle.kts
+      - .github/workflows/release-android.yml
 
 permissions: {}
 
 concurrency:
-  group: android-release-${{ github.ref }}
+  group: android-release-${{ github.sha }}
   cancel-in-progress: false
-
-env:
-  RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
   validate:
@@ -22,39 +22,43 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      should_release: ${{ steps.state.outputs.should_release }}
     steps:
-      - name: Validate tag format
+      - name: Require canonical main
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
 
-      - name: Checkout tagged commit
+      - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate source, version, and application identity
+        id: metadata
         run: |
           set -euo pipefail
           git fetch --force --tags origin
           git fetch --no-tags origin main:refs/remotes/origin/main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"
 
           build_file="android/app/build.gradle.kts"
           version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
           version_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' "$build_file" | head -1)"
           namespace="$(sed -n 's/^[[:space:]]*namespace = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
           application_id="$(sed -n 's/^[[:space:]]*applicationId = "\([^"]*\)".*/\1/p' "$build_file" | head -1)"
+          RELEASE_TAG="v$version_name"
 
           test -n "$version_name"
           [[ "$version_code" =~ ^[0-9]+$ ]]
           (( version_code > 0 ))
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$namespace" = "com.sl.kenato"
           test "$application_id" = "com.sl.kenato"
-          test "$RELEASE_TAG" = "v$version_name"
 
           max_previous_code=0
           max_previous_tag=""
@@ -76,7 +80,40 @@ jobs:
             exit 1
           fi
 
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Determine release state
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
+
+          if [[ -n "$release_json" ]]; then
+            if [[ "$(jq -r '.draft' <<< "$release_json")" == "true" ]]; then
+              test -n "$tag_sha"
+              test "$tag_sha" = "$GITHUB_SHA"
+              echo "Resuming draft release $RELEASE_TAG on $GITHUB_SHA"
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Release $RELEASE_TAG is already published; nothing to do."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          if [[ -n "$tag_sha" ]]; then
+            test "$tag_sha" = "$GITHUB_SHA"
+            echo "Existing immutable tag $RELEASE_TAG has no release; continuing publication."
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
       - name: Require successful main verification
+        if: steps.state.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -131,6 +168,9 @@ jobs:
   build-sign:
     name: Test, build, sign, and attest
     needs: validate
+    if: needs.validate.outputs.should_release == 'true'
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment: release
@@ -139,10 +179,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Checkout release tag
+      - name: Checkout exact release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify Gradle Wrapper JAR
@@ -294,11 +334,16 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: build-sign
+    needs:
+      - validate
+      - build-sign
+    if: needs.validate.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
     steps:
       - name: Download signed package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -306,29 +351,32 @@ jobs:
           name: kenato-${{ env.RELEASE_TAG }}-signed
           path: release
 
-      - name: Refuse an existing release
+      - name: Create or resume draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists." >&2
-            exit 1
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
+          if [[ -n "$existing" ]]; then
+            test "$(jq -r '.draft' <<< "$existing")" = "true"
+            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+            echo "Resuming existing draft $RELEASE_TAG."
+          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --draft \
+              --title "Kenato ${RELEASE_TAG#v}" \
+              --generate-notes \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --draft \
+              --title "Kenato ${RELEASE_TAG#v}" \
+              --generate-notes \
+              --repo "$GITHUB_REPOSITORY"
           fi
-
-      - name: Create draft release
-        id: draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release create "$RELEASE_TAG" \
-            --verify-tag \
-            --draft \
-            --title "Kenato ${RELEASE_TAG#v}" \
-            --generate-notes \
-            --repo "$GITHUB_REPOSITORY"
-          echo "created=true" >> "$GITHUB_OUTPUT"
 
       - name: Attach verified assets
         env:
@@ -340,15 +388,17 @@ jobs:
             "release/Kenato-$version.apk" \
             "release/Kenato-$version.aab" \
             "release/Kenato-$version.sha256" \
+            --clobber \
             --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify immutable release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
-
-      - name: Remove failed draft
-        if: failure() && steps.draft.outputs.created == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY"

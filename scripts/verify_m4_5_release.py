@@ -56,9 +56,11 @@ if workflow:
 require("Makefile", "python3 scripts/verify_m4_5_release.py")
 require(
     ".github/workflows/release-android.yml",
-    'tags:\n      - "v*"',
-    'test "$RELEASE_TAG" = "v$version_name"',
-    'git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main',
+    'branches:\n      - main',
+    'android/app/build.gradle.kts',
+    '.github/workflows/release-android.yml',
+    'RELEASE_TAG="v$version_name"',
+    'test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"',
     'required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")',
     "environment: release",
     "ANDROID_KEYSTORE_BASE64",
@@ -73,8 +75,10 @@ require(
     "actions/attest@",
     "actions/download-artifact@",
     'gh release create "$RELEASE_TAG"',
+    '--target "$GITHUB_SHA"',
     "--verify-tag",
     'gh release upload "$RELEASE_TAG"',
+    "--clobber",
     'gh release edit "$RELEASE_TAG" --draft=false --latest',
     'rm -f "$RUNNER_TEMP/kenato-release.jks"',
 )
@@ -104,7 +108,7 @@ require(
     "docs/release/ANDROID_SIGNING.md",
     "For the first signed release (`0.0.1`)",
     "ANDROID_CERT_SHA256",
-    "accepts only immutable `vX.Y.Z` tag pushes",
+    "runs only on protected `main` pushes",
     "creates a GitHub Release",
 )
 require(
