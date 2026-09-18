@@ -62,6 +62,9 @@ require(
     'RELEASE_TAG="v$version_name"',
     'test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"',
     'required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")',
+    "timeout-minutes: 25",
+    "for attempt in $(seq 1 80); do",
+    "if (( attempt < 80 )); then",
     "environment: release",
     "ANDROID_KEYSTORE_BASE64",
     "ANDROID_KEYSTORE_PASSWORD",
@@ -90,6 +93,7 @@ forbid(
     "-alpha",
     "-beta",
     'releases/tags/$RELEASE_TAG" 2>/dev/null || true',
+    "for attempt in $(seq 1 40); do",
 )
 
 require(
