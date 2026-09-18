@@ -55,7 +55,7 @@ if workflow:
         errors.append(
             ".github/workflows/release-android.yml: SHA-scoped release concurrency permits cross-main publication races"
         )
-    if workflow.count('git/ref/heads/main" --jq '.object.sha'') < 2:
+    if workflow.count("git/ref/heads/main\" --jq '.object.sha'") < 2:
         errors.append(
             ".github/workflows/release-android.yml: exact main must be rechecked before draft mutation and again immediately before publication"
         )
