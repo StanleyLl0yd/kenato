@@ -39,7 +39,7 @@ The release workflow:
 11. creates and verifies SHA-256 artifact checksums;
 12. creates OIDC-backed GitHub artifact attestations for APK and AAB;
 13. uploads only the packaged signed artifacts/checksum;
-14. rechecks that the workflow SHA is still the current protected `main` immediately before draft mutation, creates exactly one canonical draft targeted at that commit after removing any stale unpublished drafts for the same numeric version, attaches and verifies the APK/AAB/checksum, rechecks exact `main` again immediately before publication, publishes that release by its release ID (which creates the protected `vX.Y.Z` tag when no tag exists yet), then verifies the published tag resolves to that exact commit;
+14. rechecks that the workflow SHA is still the current protected `main` immediately before draft mutation, creates a GitHub Release as exactly one canonical draft targeted at that commit after removing any stale unpublished drafts for the same numeric version, attaches and verifies the APK/AAB/checksum, rechecks exact `main` again immediately before publication, publishes that release by its release ID (which creates the protected `vX.Y.Z` tag when no tag exists yet), then verifies the published tag resolves to that exact commit;
 15. removes the temporary decoded keystore even when a later workflow step fails.
 
 The ephemeral runner is discarded after the job as an additional containment boundary.
