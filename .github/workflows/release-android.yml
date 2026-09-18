@@ -11,7 +11,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: android-release-${{ github.sha }}
+  group: android-release-main
   cancel-in-progress: false
 
 jobs:
@@ -359,6 +359,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main_sha" = "$GITHUB_SHA"
+
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null || true)"
           if [[ -n "$tag_sha" ]]; then
             resolved_tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
@@ -450,6 +453,9 @@ jobs:
           RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
           set -euo pipefail
+          current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main_sha" = "$GITHUB_SHA"
+
           published="$(gh api \
             --method PATCH \
             "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \

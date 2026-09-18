@@ -47,6 +47,19 @@ if workflow:
         errors.append(
             ".github/workflows/release-android.yml: numeric vX.Y.Z tag validation must protect both request and prior-tag scanning"
         )
+    if "group: android-release-main" not in workflow:
+        errors.append(
+            ".github/workflows/release-android.yml: release attempts must serialize on one main publication group"
+        )
+    if "group: android-release-${{ github.sha }}" in workflow:
+        errors.append(
+            ".github/workflows/release-android.yml: SHA-scoped release concurrency permits cross-main publication races"
+        )
+    if workflow.count("git/ref/heads/main\" --jq '.object.sha'") < 2:
+        errors.append(
+            ".github/workflows/release-android.yml: exact main must be rechecked before draft mutation and again immediately before publication"
+        )
+
     for forbidden_event in ("pull_request:", "pull_request_target:", "workflow_dispatch:"):
         if forbidden_event in workflow:
             errors.append(
