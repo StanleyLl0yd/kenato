@@ -236,6 +236,9 @@ jobs:
       - name: Build pinned Android JNI libraries
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh
 
+      - name: Test and lint release source
+        run: ./gradlew :android:app:testDebugUnitTest :android:app:lintRelease --stacktrace
+
       - name: Restore and validate release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -258,9 +261,6 @@ jobs:
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             -alias "$ANDROID_KEY_ALIAS" >/dev/null
           echo "KENATO_KEYSTORE_PATH=$RUNNER_TEMP/kenato-release.jks" >> "$GITHUB_ENV"
-
-      - name: Test and lint release source
-        run: ./gradlew :android:app:testDebugUnitTest :android:app:lintRelease --stacktrace
 
       - name: Build signed APK and AAB
         env:
