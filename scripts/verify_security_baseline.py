@@ -11,6 +11,7 @@ manifest_path = Path("android/app/src/main/AndroidManifest.xml")
 build = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
 ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 release = Path(".github/workflows/release-android.yml").read_text(encoding="utf-8")
+release_publisher = Path("scripts/publish_android_release.sh").read_text(encoding="utf-8")
 native_build_script = Path("scripts/build_android_native.sh").read_text(encoding="utf-8")
 gitignore = Path(".gitignore").read_text(encoding="utf-8")
 versions = Path("gradle/libs.versions.toml").read_text(encoding="utf-8")
@@ -219,8 +220,7 @@ for required in (
     "- main",
     "android/app/build.gradle.kts",
     ".github/workflows/release-android.yml",
-    'gh release create "$RELEASE_TAG"',
-    '--target "$GITHUB_SHA"',
+    "bash scripts/publish_android_release.sh",
     "environment: release",
     "id-token: write",
     "attestations: write",
@@ -229,6 +229,37 @@ for required in (
 ):
     if required not in release:
         errors.append(f"release-android.yml: missing required release control: {required}")
+
+for required in (
+    'set -euo pipefail',
+    'gh_api_optional()',
+    'grep -Fq "(HTTP 404)" "$error_file"',
+    'cleanup_on_exit()',
+    'trap - EXIT',
+    'trap cleanup_on_exit EXIT',
+    '"repos/$GITHUB_REPOSITORY/releases"',
+    '-f "target_commitish=$GITHUB_SHA"',
+    '-F draft=true',
+    'upload_template="$(jq -r \'.upload_url // empty\' <<< "$created")"',
+    'expected_upload_base="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"',
+    'test "$upload_template" = "$expected_upload_base{?name,label}"',
+    '--data-binary "@$path"',
+    '--method PATCH',
+    '-F draft=false',
+    'published_by_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"',
+):
+    if required not in release_publisher:
+        errors.append(f"publish_android_release.sh: missing required release control: {required}")
+
+for forbidden in (
+    'gh release create',
+    'gh release upload',
+    '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+    'git/ref/tags/$RELEASE_TAG" 2>/dev/null || true',
+    'if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>&1',
+):
+    if forbidden in release or forbidden in release_publisher:
+        errors.append(f"release publication: forbidden draft-discovery/tag-based control remains: {forbidden}")
 
 if re.search(r'(?im)^\s*[^#\n=]+\s*=\s*"[^"]*(?:\+|latest\.|snapshot)[^"]*"', versions):
     errors.append("libs.versions.toml: dynamic dependency versions are forbidden")

@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Hermetic regression tests for ID-driven Android release publication."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import stat
+import subprocess
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PUBLISHER = ROOT / "scripts" / "publish_android_release.sh"
+SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
+TAG = "v0.0.2"
+REPO = "example/kenato"
+
+FAKE_GH = r'''#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(os.environ["FAKE_RELEASE_STATE"])
+state = json.loads(state_path.read_text())
+args = sys.argv[1:]
+if not args or args[0] != "api":
+    raise SystemExit("fake gh only supports api")
+
+args = args[1:]
+method = "GET"
+jq_expr = None
+endpoint = None
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg == "--method":
+        method = args[i + 1]
+        i += 2
+        continue
+    if arg == "--jq":
+        jq_expr = args[i + 1]
+        i += 2
+        continue
+    if arg in ("-f", "-F", "-H"):
+        i += 2
+        continue
+    if endpoint is None and not arg.startswith("-"):
+        endpoint = arg
+    i += 1
+
+if endpoint is None:
+    raise SystemExit("missing endpoint")
+
+sha = os.environ["GITHUB_SHA"]
+tag = os.environ["RELEASE_TAG"]
+
+def save():
+    state_path.write_text(json.dumps(state))
+
+def emit(value):
+    if jq_expr is None:
+        print(json.dumps(value))
+        return
+    mapping = {
+        ".object.sha": value.get("object", {}).get("sha", ""),
+        ".object.type": value.get("object", {}).get("type", ""),
+        ".sha": value.get("sha", ""),
+        ".draft": value.get("draft", ""),
+    }
+    result = mapping.get(jq_expr)
+    if result is None:
+        raise SystemExit(f"unsupported jq expression: {jq_expr}")
+    if isinstance(result, bool):
+        print("true" if result else "false")
+    else:
+        print(result)
+
+if endpoint.endswith("/git/ref/heads/main"):
+    emit({"object": {"sha": state.get("main_sha", sha), "type": "commit"}})
+elif endpoint.endswith(f"/git/ref/tags/{tag}"):
+    if os.environ.get("FAKE_GH_TAG_PROBE_ERROR") == "1":
+        print("gh: Internal Server Error (HTTP 500)", file=sys.stderr)
+        raise SystemExit(1)
+    if not state["tag_exists"]:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        raise SystemExit(1)
+    emit({"object": {"sha": state["tag_sha"], "type": state["tag_type"]}})
+elif endpoint.endswith(f"/commits/{tag}"):
+    if not state["tag_exists"]:
+        raise SystemExit(1)
+    emit({"sha": state["tag_sha"]})
+elif endpoint.endswith(f"/releases/tags/{tag}"):
+    release = state.get("release")
+    # Drafts are intentionally invisible here, matching the observed GITHUB_TOKEN behavior.
+    if release is None or release["draft"]:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        raise SystemExit(1)
+    if os.environ.get("FAKE_GH_PUBLISHED_LOOKUP_ERROR") == "1":
+        print("gh: Internal Server Error (HTTP 500)", file=sys.stderr)
+        raise SystemExit(1)
+    emit(release)
+elif endpoint.endswith("/releases") and method == "POST":
+    if state.get("release") is not None:
+        raise SystemExit("unexpected duplicate release creation")
+    release = {
+        "id": 42,
+        "draft": True,
+        "tag_name": tag,
+        "target_commitish": sha,
+        "published_at": None,
+        "assets": [],
+        "upload_url": f"https://uploads.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/42/assets{{?name,label}}",
+    }
+    state["release"] = release
+    save()
+    emit(release)
+elif endpoint.endswith("/releases/42") and method == "GET":
+    release = state.get("release")
+    if release is None:
+        raise SystemExit(1)
+    emit(release)
+elif endpoint.endswith("/releases/42") and method == "DELETE":
+    release = state.get("release")
+    if release is None:
+        raise SystemExit(1)
+    if not release["draft"]:
+        raise SystemExit("refusing to delete published release")
+    state["release"] = None
+    state["deleted"] = True
+    save()
+elif endpoint.endswith("/releases/42") and method == "PATCH":
+    release = state.get("release")
+    if release is None:
+        raise SystemExit(1)
+    release["draft"] = False
+    release["published_at"] = "2026-09-21T00:00:00Z"
+    state["tag_exists"] = True
+    state["tag_sha"] = sha
+    state["tag_type"] = "commit"
+    save()
+    emit(release)
+else:
+    raise SystemExit(f"unsupported fake gh request: {method} {endpoint}")
+'''
+
+FAKE_CURL = r'''#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+state_path = Path(os.environ["FAKE_RELEASE_STATE"])
+state = json.loads(state_path.read_text())
+args = sys.argv[1:]
+data_path = None
+url = None
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg == "--data-binary":
+        value = args[i + 1]
+        if not value.startswith("@"):
+            raise SystemExit("expected @file upload")
+        data_path = Path(value[1:])
+        i += 2
+        continue
+    if arg in ("--header", "--request"):
+        i += 2
+        continue
+    if arg in ("--fail-with-body", "--silent", "--show-error"):
+        i += 1
+        continue
+    if arg.startswith("https://"):
+        url = arg
+        i += 1
+        continue
+    raise SystemExit(f"unsupported curl arg: {arg}")
+
+if data_path is None or url is None:
+    raise SystemExit("missing upload inputs")
+
+name = parse_qs(urlparse(url).query)["name"][0]
+if os.environ.get("FAKE_CURL_FAIL_NAME") == name:
+    raise SystemExit(22)
+
+release = state.get("release")
+if release is None or not release["draft"]:
+    raise SystemExit("upload requires current draft")
+
+digest = "sha256:" + hashlib.sha256(data_path.read_bytes()).hexdigest()
+response_digest = digest
+if os.environ.get("FAKE_CURL_BAD_DIGEST_NAME") == name:
+    response_digest = "sha256:" + ("0" * 64)
+asset = {"name": name, "state": "uploaded", "digest": response_digest}
+release["assets"].append(asset)
+if os.environ.get("FAKE_MAIN_CHANGE_AFTER_UPLOAD") == "1" and name.endswith(".sha256"):
+    state["main_sha"] = "f" * 40
+state_path.write_text(json.dumps(state))
+print(json.dumps(asset))
+'''
+
+
+def write_executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def prepare_release(directory: Path) -> None:
+    directory.mkdir()
+    apk = directory / "Kenato-0.0.2.apk"
+    aab = directory / "Kenato-0.0.2.aab"
+    apk.write_bytes(b"deterministic apk fixture\n")
+    aab.write_bytes(b"deterministic aab fixture\n")
+    checksum = directory / "Kenato-0.0.2.sha256"
+    checksum.write_text(
+        f"{hashlib.sha256(apk.read_bytes()).hexdigest()}  {apk.name}\n"
+        f"{hashlib.sha256(aab.read_bytes()).hexdigest()}  {aab.name}\n",
+        encoding="utf-8",
+    )
+
+
+def run_case(
+    *,
+    initial_tag_sha: str | None = None,
+    fail_asset: str | None = None,
+    bad_digest_asset: str | None = None,
+    tag_probe_error: bool = False,
+    main_change_after_upload: bool = False,
+    published_lookup_error: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    with tempfile.TemporaryDirectory(prefix="kenato-release-publisher-") as tmp:
+        root = Path(tmp)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        write_executable(fake_bin / "gh", FAKE_GH)
+        write_executable(fake_bin / "curl", FAKE_CURL)
+
+        release_dir = root / "release"
+        prepare_release(release_dir)
+
+        state_path = root / "state.json"
+        state = {
+            "release": None,
+            "deleted": False,
+            "tag_exists": initial_tag_sha is not None,
+            "tag_sha": initial_tag_sha or "",
+            "tag_type": "commit",
+            "main_sha": SOURCE_SHA,
+        }
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+                "GITHUB_REPOSITORY": REPO,
+                "GITHUB_SHA": SOURCE_SHA,
+                "RELEASE_TAG": TAG,
+                "RELEASE_DIR": str(release_dir),
+                "GH_TOKEN": "test-token",
+                "FAKE_RELEASE_STATE": str(state_path),
+            }
+        )
+        if fail_asset is not None:
+            env["FAKE_CURL_FAIL_NAME"] = fail_asset
+        if bad_digest_asset is not None:
+            env["FAKE_CURL_BAD_DIGEST_NAME"] = bad_digest_asset
+        if tag_probe_error:
+            env["FAKE_GH_TAG_PROBE_ERROR"] = "1"
+        if main_change_after_upload:
+            env["FAKE_MAIN_CHANGE_AFTER_UPLOAD"] = "1"
+        if published_lookup_error:
+            env["FAKE_GH_PUBLISHED_LOOKUP_ERROR"] = "1"
+
+        completed = subprocess.run(
+            ["bash", str(PUBLISHER)],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        final_state = json.loads(state_path.read_text(encoding="utf-8"))
+        return completed, final_state
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def test_happy_path_without_preexisting_tag() -> None:
+    completed, state = run_case()
+    require(completed.returncode == 0, completed.stderr + completed.stdout)
+    release = state["release"]
+    require(release is not None and release["draft"] is False, "release was not published")
+    require(len(release["assets"]) == 3, "expected exactly three assets")
+    require(state["tag_exists"], "publication did not establish tag")
+    require(state["tag_sha"] == SOURCE_SHA, "published tag points to wrong SHA")
+    require(not state["deleted"], "successful release was unexpectedly deleted")
+
+
+def test_happy_path_with_exact_preexisting_tag() -> None:
+    completed, state = run_case(initial_tag_sha=SOURCE_SHA)
+    require(completed.returncode == 0, completed.stderr + completed.stdout)
+    release = state["release"]
+    require(release is not None and release["draft"] is False, "release was not published")
+    require(len(release["assets"]) == 3, "expected exactly three assets")
+    require(state["tag_exists"], "pre-existing tag disappeared")
+    require(state["tag_sha"] == SOURCE_SHA, "pre-existing exact tag changed")
+    require(not state["deleted"], "successful release was unexpectedly deleted")
+
+
+def test_failed_upload_cleans_only_current_draft() -> None:
+    completed, state = run_case(fail_asset="Kenato-0.0.2.aab")
+    require(completed.returncode != 0, "forced upload failure unexpectedly succeeded")
+    require(state["release"] is None, "failed attempt left an unpublished draft")
+    require(state["deleted"], "cleanup did not delete the failed attempt draft")
+
+
+def test_bad_remote_digest_cleans_current_draft() -> None:
+    completed, state = run_case(bad_digest_asset="Kenato-0.0.2.apk")
+    require(completed.returncode != 0, "bad remote digest unexpectedly accepted")
+    require(state["release"] is None, "digest failure left an unpublished draft")
+    require(state["deleted"], "digest failure did not clean the current draft")
+
+
+def test_main_change_before_publish_cleans_current_draft() -> None:
+    completed, state = run_case(main_change_after_upload=True)
+    require(completed.returncode != 0, "main race unexpectedly published")
+    require(state["release"] is None, "main race left an unpublished draft")
+    require(state["deleted"], "main race did not clean the current draft")
+    require(state["main_sha"] != SOURCE_SHA, "main race fixture did not change main")
+
+
+def test_post_publish_verification_failure_preserves_release() -> None:
+    completed, state = run_case(published_lookup_error=True)
+    require(completed.returncode != 0, "forced post-publish verification failure unexpectedly succeeded")
+    release = state["release"]
+    require(release is not None and release["draft"] is False, "published release was lost")
+    require(len(release["assets"]) == 3, "published release asset set changed")
+    require(not state["deleted"], "cleanup deleted an already-published release")
+
+
+def test_non_404_tag_probe_error_fails_before_mutation() -> None:
+    completed, state = run_case(tag_probe_error=True)
+    require(completed.returncode != 0, "non-404 API failure unexpectedly accepted")
+    require(state["release"] is None, "release mutated after non-404 tag probe failure")
+    require(not state["deleted"], "nothing should need cleanup before release creation")
+
+
+def test_wrong_preexisting_tag_fails_before_mutation() -> None:
+    completed, state = run_case(initial_tag_sha="0" * 40)
+    require(completed.returncode != 0, "wrong existing tag unexpectedly accepted")
+    require(state["release"] is None, "release mutated despite wrong immutable tag")
+    require(not state["deleted"], "nothing should need cleanup before release creation")
+
+
+if __name__ == "__main__":
+    test_happy_path_without_preexisting_tag()
+    test_happy_path_with_exact_preexisting_tag()
+    test_failed_upload_cleans_only_current_draft()
+    test_bad_remote_digest_cleans_current_draft()
+    test_main_change_before_publish_cleans_current_draft()
+    test_post_publish_verification_failure_preserves_release()
+    test_non_404_tag_probe_error_fails_before_mutation()
+    test_wrong_preexisting_tag_fails_before_mutation()
+    print("Android release publisher regression tests: OK")

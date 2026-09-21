@@ -24,9 +24,11 @@ Do not store the raw keystore, passwords, decoded temporary files, or production
 
 ## Workflow behavior
 
+The release workflow creates a GitHub Release only after the signed package has passed the required verification gates.
+
 The release workflow:
 
-1. runs only on protected `main` pushes that change the Android release version or the release workflow, serializes all release attempts through one main publication group, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
+1. runs only on protected `main` pushes that change the Android release version, the release workflow, or the reviewed publisher script, serializes all release attempts through one main publication group, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
 2. verifies the workflow source is the exact current protected `main` revision;
 3. requires successful `main` runs of CI, Security and Quality, Gitleaks, and CodeQL for that exact commit;
 4. verifies `versionName`, `versionCode`, namespace and `com.sl.kenato` application id;
@@ -39,7 +41,7 @@ The release workflow:
 11. creates and verifies SHA-256 artifact checksums;
 12. creates OIDC-backed GitHub artifact attestations for APK and AAB;
 13. uploads only the packaged signed artifacts/checksum;
-14. rechecks that the workflow SHA is still the current protected `main` immediately before draft mutation, creates a GitHub Release as exactly one canonical draft targeted at that commit after removing any stale unpublished drafts for the same numeric version, attaches and verifies the APK/AAB/checksum, rechecks exact `main` again immediately before publication, publishes that release by its release ID (which creates the protected `vX.Y.Z` tag when no tag exists yet), then verifies the published tag resolves to that exact commit;
+14. rechecks that the workflow SHA is still the current protected `main` immediately before release mutation, creates one canonical draft through the Releases REST API and captures its release ID directly from the create response, validates the release-specific `upload_url`, uploads and digest-verifies APK/AAB/checksum through that ID without draft enumeration or tag-based lookup, deletes that still-unpublished draft by ID on a failed publication attempt, rechecks exact `main` and any pre-existing tag immediately before publication, publishes the same release by ID, then verifies the published release, assets, and lightweight tag all resolve to that exact commit;
 15. removes the temporary decoded keystore even when a later workflow step fails.
 
 The ephemeral runner is discarded after the job as an additional containment boundary.
