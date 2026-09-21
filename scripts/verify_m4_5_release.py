@@ -99,7 +99,7 @@ if publisher:
             "scripts/publish_android_release.sh: release publication must remain create -> upload -> verify draft -> publish -> verify published"
         )
 
-require("Makefile", "python3 scripts/verify_m4_5_release.py")
+require("Makefile", "python3 scripts/verify_m4_5_release.py", "python3 scripts/test_publish_android_release.py")
 require(
     ".github/workflows/release-android.yml",
     'branches:\n      - main',
