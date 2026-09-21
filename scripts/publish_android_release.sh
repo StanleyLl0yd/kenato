@@ -25,6 +25,27 @@ done
 
 release_id=""
 
+gh_api_optional() {
+  local endpoint="$1"
+  local error_file output
+
+  error_file="$(mktemp)"
+  if output="$(gh api "$endpoint" 2>"$error_file")"; then
+    rm -f "$error_file"
+    printf '%s' "$output"
+    return 0
+  fi
+
+  if grep -Fq "(HTTP 404)" "$error_file"; then
+    rm -f "$error_file"
+    return 1
+  fi
+
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  return 2
+}
+
 cleanup_unpublished_draft() {
   local draft_state
 
@@ -49,14 +70,16 @@ require_exact_main_and_tag() {
   current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
   test "$current_main_sha" = "$GITHUB_SHA"
 
-  tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>/dev/null || true)"
-  if [[ -n "$tag_json" ]]; then
+  if tag_json="$(gh_api_optional "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"; then
     tag_sha="$(jq -r '.object.sha' <<< "$tag_json")"
     tag_type="$(jq -r '.object.type' <<< "$tag_json")"
     test "$tag_type" = "commit"
     resolved_tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
     test "$tag_sha" = "$GITHUB_SHA"
     test "$resolved_tag_sha" = "$GITHUB_SHA"
+  else
+    optional_status=$?
+    (( optional_status == 1 )) || return "$optional_status"
   fi
 }
 
@@ -80,14 +103,20 @@ verify_release_assets() {
 
 require_exact_main_and_tag
 
-if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+if published_probe="$(gh_api_optional "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"; then
   echo "Release $RELEASE_TAG became published before canonical publication started." >&2
   exit 1
+else
+  optional_status=$?
+  (( optional_status == 1 )) || exit "$optional_status"
 fi
 
 tag_exists=false
-if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+if tag_probe="$(gh_api_optional "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"; then
   tag_exists=true
+else
+  optional_status=$?
+  (( optional_status == 1 )) || exit "$optional_status"
 fi
 
 create_args=(
