@@ -104,6 +104,7 @@ elif endpoint.endswith("/releases") and method == "POST":
         "target_commitish": sha,
         "published_at": None,
         "assets": [],
+        "upload_url": f"https://uploads.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/42/assets{{?name,label}}",
     }
     state["release"] = release
     save()
