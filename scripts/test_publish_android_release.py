@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / "scripts" / "publish_android_release.sh"
-SOURCE_SHA = "f83207ed619dfe4393867aa8689c0dce5780674f"
+SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
 TAG = "v0.0.2"
 REPO = "example/kenato"
 
@@ -184,7 +184,10 @@ if release is None or not release["draft"]:
     raise SystemExit("upload requires current draft")
 
 digest = "sha256:" + hashlib.sha256(data_path.read_bytes()).hexdigest()
-asset = {"name": name, "state": "uploaded", "digest": digest}
+response_digest = digest
+if os.environ.get("FAKE_CURL_BAD_DIGEST_NAME") == name:
+    response_digest = "sha256:" + ("0" * 64)
+asset = {"name": name, "state": "uploaded", "digest": response_digest}
 release["assets"].append(asset)
 state_path.write_text(json.dumps(state))
 print(json.dumps(asset))
@@ -214,6 +217,7 @@ def run_case(
     *,
     initial_tag_sha: str | None = None,
     fail_asset: str | None = None,
+    bad_digest_asset: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     with tempfile.TemporaryDirectory(prefix="kenato-release-publisher-") as tmp:
         root = Path(tmp)
@@ -249,6 +253,8 @@ def run_case(
         )
         if fail_asset is not None:
             env["FAKE_CURL_FAIL_NAME"] = fail_asset
+        if bad_digest_asset is not None:
+            env["FAKE_CURL_BAD_DIGEST_NAME"] = bad_digest_asset
 
         completed = subprocess.run(
             ["bash", str(PUBLISHER)],
@@ -296,6 +302,13 @@ def test_failed_upload_cleans_only_current_draft() -> None:
     require(state["deleted"], "cleanup did not delete the failed attempt draft")
 
 
+def test_bad_remote_digest_cleans_current_draft() -> None:
+    completed, state = run_case(bad_digest_asset="Kenato-0.0.2.apk")
+    require(completed.returncode != 0, "bad remote digest unexpectedly accepted")
+    require(state["release"] is None, "digest failure left an unpublished draft")
+    require(state["deleted"], "digest failure did not clean the current draft")
+
+
 def test_wrong_preexisting_tag_fails_before_mutation() -> None:
     completed, state = run_case(initial_tag_sha="0" * 40)
     require(completed.returncode != 0, "wrong existing tag unexpectedly accepted")
@@ -307,5 +320,6 @@ if __name__ == "__main__":
     test_happy_path_without_preexisting_tag()
     test_happy_path_with_exact_preexisting_tag()
     test_failed_upload_cleans_only_current_draft()
+    test_bad_remote_digest_cleans_current_draft()
     test_wrong_preexisting_tag_fails_before_mutation()
     print("Android release publisher regression tests: OK")
