@@ -28,7 +28,7 @@ The release workflow creates a GitHub Release only after the signed package has 
 
 The release workflow:
 
-1. runs only on protected `main` pushes that change the Android release version or the release workflow, serializes all release attempts through one main publication group, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
+1. runs only on protected `main` pushes that change the Android release version, the release workflow, or the reviewed publisher script, serializes all release attempts through one main publication group, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
 2. verifies the workflow source is the exact current protected `main` revision;
 3. requires successful `main` runs of CI, Security and Quality, Gitleaks, and CodeQL for that exact commit;
 4. verifies `versionName`, `versionCode`, namespace and `com.sl.kenato` application id;
