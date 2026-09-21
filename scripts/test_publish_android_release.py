@@ -82,6 +82,7 @@ if endpoint.endswith("/git/ref/heads/main"):
     emit({"object": {"sha": sha, "type": "commit"}})
 elif endpoint.endswith(f"/git/ref/tags/{tag}"):
     if not state["tag_exists"]:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
         raise SystemExit(1)
     emit({"object": {"sha": state["tag_sha"], "type": state["tag_type"]}})
 elif endpoint.endswith(f"/commits/{tag}"):
@@ -92,6 +93,7 @@ elif endpoint.endswith(f"/releases/tags/{tag}"):
     release = state.get("release")
     # Drafts are intentionally invisible here, matching the observed GITHUB_TOKEN behavior.
     if release is None or release["draft"]:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
         raise SystemExit(1)
     emit(release)
 elif endpoint.endswith("/releases") and method == "POST":
