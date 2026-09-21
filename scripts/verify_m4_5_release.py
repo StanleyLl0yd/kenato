@@ -55,11 +55,6 @@ if workflow:
         errors.append(
             ".github/workflows/release-android.yml: SHA-scoped release concurrency permits cross-main publication races"
         )
-    if workflow.count("git/ref/heads/main\" --jq '.object.sha'") < 2:
-        errors.append(
-            ".github/workflows/release-android.yml: exact main must be rechecked before draft mutation and again immediately before publication"
-        )
-
     for forbidden_event in ("pull_request:", "pull_request_target:", "workflow_dispatch:"):
         if forbidden_event in workflow:
             errors.append(
@@ -86,6 +81,10 @@ if workflow:
 
 publisher = read("scripts/publish_android_release.sh")
 if publisher:
+    if publisher.count("git/ref/heads/main\" --jq '.object.sha'") < 1 or publisher.count("require_exact_main_and_tag") < 3:
+        errors.append(
+            "scripts/publish_android_release.sh: exact main/tag guard must run before release creation and again immediately before publication"
+        )
     create_step = publisher.find('created="$(gh api "${create_args[@]}")"')
     upload_step = publisher.find('uploaded="$(curl')
     draft_verify_step = publisher.find('draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"')
@@ -132,7 +131,9 @@ require(
 require(
     "scripts/publish_android_release.sh",
     'set -euo pipefail',
-    'trap cleanup_unpublished_draft EXIT INT TERM',
+    'trap cleanup_unpublished_draft EXIT',
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
     'gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"',
     '"repos/$GITHUB_REPOSITORY/releases"',
     '-f "tag_name=$RELEASE_TAG"',
