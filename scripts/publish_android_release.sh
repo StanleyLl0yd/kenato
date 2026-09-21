@@ -60,12 +60,19 @@ cleanup_unpublished_draft() {
   fi
 }
 
-trap cleanup_unpublished_draft EXIT
+cleanup_on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup_unpublished_draft
+  exit "$status"
+}
+
+trap cleanup_on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 require_exact_main_and_tag() {
-  local current_main_sha tag_json tag_sha tag_type resolved_tag_sha
+  local current_main_sha tag_json tag_sha tag_type resolved_tag_sha optional_status
 
   current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
   test "$current_main_sha" = "$GITHUB_SHA"
