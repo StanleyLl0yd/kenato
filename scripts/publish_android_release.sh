@@ -103,7 +103,13 @@ create_args=(
 
 created="$(gh api "${create_args[@]}")"
 release_id="$(jq -r '.id // empty' <<< "$created")"
+upload_template="$(jq -r '.upload_url // empty' <<< "$created")"
 test -n "$release_id"
+
+expected_upload_base="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
+test "$upload_template" = "$expected_upload_base{?name,label}"
+upload_base="${upload_template%%\{*}"
+test "$upload_base" = "$expected_upload_base"
 
 test "$(jq -r '.draft' <<< "$created")" = "true"
 test "$(jq -r '.tag_name' <<< "$created")" = "$RELEASE_TAG"
@@ -118,7 +124,7 @@ echo "Created canonical release draft ID $release_id."
 for path in "$apk_path" "$aab_path" "$checksum_path"; do
   asset_name="$(basename "$path")"
   expected_digest="sha256:$(sha256sum "$path" | awk '{print $1}')"
-  upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$asset_name"
+  upload_url="$upload_base?name=$asset_name"
 
   uploaded="$(curl \
     --fail-with-body \
