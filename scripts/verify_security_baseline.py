@@ -232,6 +232,8 @@ for required in (
 
 for required in (
     'set -euo pipefail',
+    'gh_api_optional()',
+    'grep -Fq "(HTTP 404)" "$error_file"',
     'trap cleanup_unpublished_draft EXIT',
     '"repos/$GITHUB_REPOSITORY/releases"',
     '-f "target_commitish=$GITHUB_SHA"',
@@ -251,6 +253,8 @@ for forbidden in (
     'gh release create',
     'gh release upload',
     '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+    'git/ref/tags/$RELEASE_TAG" 2>/dev/null || true',
+    'if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>&1',
 ):
     if forbidden in release or forbidden in release_publisher:
         errors.append(f"release publication: forbidden draft-discovery/tag-based control remains: {forbidden}")
