@@ -78,16 +78,26 @@ if workflow:
             ".github/workflows/release-android.yml: test/lint must run before restoring signing material, and signing material must be restored before the signed build"
         )
 
-    draft_verify_step = workflow.find("      - name: Verify canonical draft release")
-    publish_step = workflow.find("      - name: Publish canonical release")
-    published_verify_step = workflow.find("      - name: Verify published immutable release source")
-    if min(draft_verify_step, publish_step, published_verify_step) < 0:
+    publish_step = workflow.find("      - name: Publish verified GitHub release")
+    if publish_step < 0:
         errors.append(
-            ".github/workflows/release-android.yml: draft verification, publication, and post-publication tag verification must all be present"
+            ".github/workflows/release-android.yml: ID-driven verified release publication step must be present"
         )
-    elif not (draft_verify_step < publish_step < published_verify_step):
+
+publisher = read("scripts/publish_android_release.sh")
+if publisher:
+    create_step = publisher.find('created="$(gh api "${create_args[@]}")"')
+    upload_step = publisher.find('uploaded="$(curl')
+    draft_verify_step = publisher.find('draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"')
+    publish_step = publisher.find("--method PATCH")
+    published_verify_step = publisher.find('published_by_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"')
+    if min(create_step, upload_step, draft_verify_step, publish_step, published_verify_step) < 0:
         errors.append(
-            ".github/workflows/release-android.yml: draft source must be verified before publish and immutable tag/source must be verified after publish"
+            "scripts/publish_android_release.sh: create, upload, draft verification, publication, and final verification must all be present"
+        )
+    elif not (create_step < upload_step < draft_verify_step < publish_step < published_verify_step):
+        errors.append(
+            "scripts/publish_android_release.sh: release publication must remain create -> upload -> verify draft -> publish -> verify published"
         )
 
 require("Makefile", "python3 scripts/verify_m4_5_release.py")
@@ -115,23 +125,38 @@ require(
     "actions/attest@",
     "actions/download-artifact@",
     'if published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null)"; then',
-    '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
-    'select(.draft == true and .tag_name == $tag)',
-    '--method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"',
-    "Create canonical draft release",
-    "Verify canonical draft release",
-    "Publish canonical release",
-    "Verify published immutable release source",
-    'RELEASE_ID: ${{ steps.draft.outputs.release_id }}',
-    '-F draft=false',
-    '-f make_latest=true',
-    'gh release create "$RELEASE_TAG"',
-    '--target "$GITHUB_SHA"',
-    "--verify-tag",
-    'gh release upload "$RELEASE_TAG"',
-    "--clobber",
+    "Publish verified GitHub release",
+    "bash scripts/publish_android_release.sh",
     'rm -f "$RUNNER_TEMP/kenato-release.jks"',
 )
+require(
+    "scripts/publish_android_release.sh",
+    'set -euo pipefail',
+    'trap cleanup_unpublished_draft EXIT INT TERM',
+    'gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"',
+    '"repos/$GITHUB_REPOSITORY/releases"',
+    '-f "tag_name=$RELEASE_TAG"',
+    '-f "target_commitish=$GITHUB_SHA"',
+    '-F draft=true',
+    '-F generate_release_notes=true',
+    'https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$asset_name',
+    '--data-binary "@$path"',
+    'test "$remote_digest" = "$expected_digest"',
+    'draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"',
+    '--method PATCH',
+    '-F draft=false',
+    '-f make_latest=true',
+    'published_by_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"',
+    'test "$(jq -r \'.object.type\' <<< "$tag_json")" = "commit"',
+    'test "$(jq -r \'.object.sha\' <<< "$tag_json")" = "$GITHUB_SHA"',
+)
+forbid(
+    "scripts/publish_android_release.sh",
+    'gh release create',
+    'gh release upload',
+    '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+)
+
 forbid(
     ".github/workflows/release-android.yml",
     "-rc.",
@@ -144,6 +169,9 @@ forbid(
     "      - name: Verify draft release source",
     "      - name: Publish release",
     'gh release edit "$RELEASE_TAG" --draft=false --latest',
+    '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+    'gh release create "$RELEASE_TAG"',
+    'gh release upload "$RELEASE_TAG"',
 )
 
 require(
