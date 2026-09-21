@@ -79,7 +79,7 @@ def emit(value):
         print(result)
 
 if endpoint.endswith("/git/ref/heads/main"):
-    emit({"object": {"sha": sha, "type": "commit"}})
+    emit({"object": {"sha": state.get("main_sha", sha), "type": "commit"}})
 elif endpoint.endswith(f"/git/ref/tags/{tag}"):
     if os.environ.get("FAKE_GH_TAG_PROBE_ERROR") == "1":
         print("gh: Internal Server Error (HTTP 500)", file=sys.stderr)
@@ -97,6 +97,9 @@ elif endpoint.endswith(f"/releases/tags/{tag}"):
     # Drafts are intentionally invisible here, matching the observed GITHUB_TOKEN behavior.
     if release is None or release["draft"]:
         print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        raise SystemExit(1)
+    if os.environ.get("FAKE_GH_PUBLISHED_LOOKUP_ERROR") == "1":
+        print("gh: Internal Server Error (HTTP 500)", file=sys.stderr)
         raise SystemExit(1)
     emit(release)
 elif endpoint.endswith("/releases") and method == "POST":
@@ -195,6 +198,8 @@ if os.environ.get("FAKE_CURL_BAD_DIGEST_NAME") == name:
     response_digest = "sha256:" + ("0" * 64)
 asset = {"name": name, "state": "uploaded", "digest": response_digest}
 release["assets"].append(asset)
+if os.environ.get("FAKE_MAIN_CHANGE_AFTER_UPLOAD") == "1" and name.endswith(".sha256"):
+    state["main_sha"] = "f" * 40
 state_path.write_text(json.dumps(state))
 print(json.dumps(asset))
 '''
@@ -225,6 +230,8 @@ def run_case(
     fail_asset: str | None = None,
     bad_digest_asset: str | None = None,
     tag_probe_error: bool = False,
+    main_change_after_upload: bool = False,
+    published_lookup_error: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     with tempfile.TemporaryDirectory(prefix="kenato-release-publisher-") as tmp:
         root = Path(tmp)
@@ -243,6 +250,7 @@ def run_case(
             "tag_exists": initial_tag_sha is not None,
             "tag_sha": initial_tag_sha or "",
             "tag_type": "commit",
+            "main_sha": SOURCE_SHA,
         }
         state_path.write_text(json.dumps(state), encoding="utf-8")
 
@@ -264,6 +272,10 @@ def run_case(
             env["FAKE_CURL_BAD_DIGEST_NAME"] = bad_digest_asset
         if tag_probe_error:
             env["FAKE_GH_TAG_PROBE_ERROR"] = "1"
+        if main_change_after_upload:
+            env["FAKE_MAIN_CHANGE_AFTER_UPLOAD"] = "1"
+        if published_lookup_error:
+            env["FAKE_GH_PUBLISHED_LOOKUP_ERROR"] = "1"
 
         completed = subprocess.run(
             ["bash", str(PUBLISHER)],
@@ -318,6 +330,23 @@ def test_bad_remote_digest_cleans_current_draft() -> None:
     require(state["deleted"], "digest failure did not clean the current draft")
 
 
+def test_main_change_before_publish_cleans_current_draft() -> None:
+    completed, state = run_case(main_change_after_upload=True)
+    require(completed.returncode != 0, "main race unexpectedly published")
+    require(state["release"] is None, "main race left an unpublished draft")
+    require(state["deleted"], "main race did not clean the current draft")
+    require(state["main_sha"] != SOURCE_SHA, "main race fixture did not change main")
+
+
+def test_post_publish_verification_failure_preserves_release() -> None:
+    completed, state = run_case(published_lookup_error=True)
+    require(completed.returncode != 0, "forced post-publish verification failure unexpectedly succeeded")
+    release = state["release"]
+    require(release is not None and release["draft"] is False, "published release was lost")
+    require(len(release["assets"]) == 3, "published release asset set changed")
+    require(not state["deleted"], "cleanup deleted an already-published release")
+
+
 def test_non_404_tag_probe_error_fails_before_mutation() -> None:
     completed, state = run_case(tag_probe_error=True)
     require(completed.returncode != 0, "non-404 API failure unexpectedly accepted")
@@ -337,6 +366,8 @@ if __name__ == "__main__":
     test_happy_path_with_exact_preexisting_tag()
     test_failed_upload_cleans_only_current_draft()
     test_bad_remote_digest_cleans_current_draft()
+    test_main_change_before_publish_cleans_current_draft()
+    test_post_publish_verification_failure_preserves_release()
     test_non_404_tag_probe_error_fails_before_mutation()
     test_wrong_preexisting_tag_fails_before_mutation()
     print("Android release publisher regression tests: OK")
