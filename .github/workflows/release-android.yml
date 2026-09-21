@@ -98,18 +98,9 @@ jobs:
             exit 0
           fi
 
-          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          drafts="$(jq -c --arg tag "$RELEASE_TAG" \
-            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$releases")"
-          draft_count="$(jq 'length' <<< "$drafts")"
-
           if [[ -n "$tag_sha" ]]; then
             test "$tag_sha" = "$GITHUB_SHA"
             echo "Existing immutable tag $RELEASE_TAG resolves to exact main $GITHUB_SHA."
-          fi
-
-          if (( draft_count > 0 )); then
-            echo "Found $draft_count unpublished draft(s) for $RELEASE_TAG; publish job will replace them with one canonical draft after fresh verified artifacts are built."
           fi
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
@@ -353,134 +344,7 @@ jobs:
           name: kenato-${{ env.RELEASE_TAG }}-signed
           path: release
 
-      - name: Create canonical draft release
-        id: draft
+      - name: Publish verified GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
-          test "$current_main_sha" = "$GITHUB_SHA"
-
-          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$tag_sha" ]]; then
-            resolved_tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
-            test "$resolved_tag_sha" = "$GITHUB_SHA"
-          fi
-
-          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          drafts="$(jq -c --arg tag "$RELEASE_TAG" \
-            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$releases")"
-
-          while IFS= read -r release_id; do
-            [[ -n "$release_id" ]] || continue
-            echo "Deleting stale unpublished draft $release_id for $RELEASE_TAG."
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
-          done < <(jq -r '.[].id' <<< "$drafts")
-
-          if [[ -n "$tag_sha" ]]; then
-            gh release create "$RELEASE_TAG" \
-              --verify-tag \
-              --draft \
-              --title "Kenato ${RELEASE_TAG#v}" \
-              --generate-notes \
-              --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$RELEASE_TAG" \
-              --target "$GITHUB_SHA" \
-              --draft \
-              --title "Kenato ${RELEASE_TAG#v}" \
-              --generate-notes \
-              --repo "$GITHUB_REPOSITORY"
-          fi
-
-          refreshed="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          canonical="$(jq -c --arg tag "$RELEASE_TAG" \
-            '[.[][] | select(.draft == true and .tag_name == $tag)]' <<< "$refreshed")"
-          test "$(jq 'length' <<< "$canonical")" = "1"
-
-          release_id="$(jq -r '.[0].id' <<< "$canonical")"
-          target="$(jq -r '.[0].target_commitish // ""' <<< "$canonical")"
-          test -n "$release_id"
-
-          if [[ -z "$tag_sha" ]]; then
-            test "$target" = "$GITHUB_SHA"
-          fi
-
-          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
-
-      - name: Attach verified assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          gh release upload "$RELEASE_TAG" \
-            "release/Kenato-$version.apk" \
-            "release/Kenato-$version.aab" \
-            "release/Kenato-$version.sha256" \
-            --clobber \
-            --repo "$GITHUB_REPOSITORY"
-
-      - name: Verify canonical draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
-          test "$(jq -r '.draft' <<< "$draft_json")" = "true"
-          test "$(jq -r '.tag_name' <<< "$draft_json")" = "$RELEASE_TAG"
-
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
-          else
-            test "$(jq -r '.target_commitish' <<< "$draft_json")" = "$GITHUB_SHA"
-          fi
-
-          version="${RELEASE_TAG#v}"
-          for asset in \
-            "Kenato-$version.apk" \
-            "Kenato-$version.aab" \
-            "Kenato-$version.sha256"
-          do
-            jq -e --arg name "$asset" '.assets | any(.name == $name)' <<< "$draft_json" >/dev/null
-          done
-
-      - name: Publish canonical release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          current_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
-          test "$current_main_sha" = "$GITHUB_SHA"
-
-          published="$(gh api \
-            --method PATCH \
-            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false \
-            -f make_latest=true)"
-          test "$(jq -r '.draft' <<< "$published")" = "false"
-          test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
-
-      - name: Verify published immutable release source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          published="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
-          test "$(jq -r '.draft' <<< "$published")" = "false"
-          test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
-          test -n "$(jq -r '.published_at // ""' <<< "$published")"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
-
-          version="${RELEASE_TAG#v}"
-          for asset in \
-            "Kenato-$version.apk" \
-            "Kenato-$version.aab" \
-            "Kenato-$version.sha256"
-          do
-            jq -e --arg name "$asset" '.assets | any(.name == $name)' <<< "$published" >/dev/null
-          done
+        run: bash scripts/publish_android_release.sh
