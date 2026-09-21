@@ -278,6 +278,17 @@ def test_happy_path_without_preexisting_tag() -> None:
     require(not state["deleted"], "successful release was unexpectedly deleted")
 
 
+def test_happy_path_with_exact_preexisting_tag() -> None:
+    completed, state = run_case(initial_tag_sha=SOURCE_SHA)
+    require(completed.returncode == 0, completed.stderr + completed.stdout)
+    release = state["release"]
+    require(release is not None and release["draft"] is False, "release was not published")
+    require(len(release["assets"]) == 3, "expected exactly three assets")
+    require(state["tag_exists"], "pre-existing tag disappeared")
+    require(state["tag_sha"] == SOURCE_SHA, "pre-existing exact tag changed")
+    require(not state["deleted"], "successful release was unexpectedly deleted")
+
+
 def test_failed_upload_cleans_only_current_draft() -> None:
     completed, state = run_case(fail_asset="Kenato-0.0.2.aab")
     require(completed.returncode != 0, "forced upload failure unexpectedly succeeded")
@@ -294,6 +305,7 @@ def test_wrong_preexisting_tag_fails_before_mutation() -> None:
 
 if __name__ == "__main__":
     test_happy_path_without_preexisting_tag()
+    test_happy_path_with_exact_preexisting_tag()
     test_failed_upload_cleans_only_current_draft()
     test_wrong_preexisting_tag_fails_before_mutation()
     print("Android release publisher regression tests: OK")
