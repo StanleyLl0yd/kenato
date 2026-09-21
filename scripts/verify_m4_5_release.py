@@ -105,6 +105,7 @@ require(
     'branches:\n      - main',
     'android/app/build.gradle.kts',
     '.github/workflows/release-android.yml',
+    'scripts/publish_android_release.sh',
     'RELEASE_TAG="v$version_name"',
     'test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"',
     'required_workflows=("CI" "Security and Quality" "Gitleaks" "CodeQL")',
