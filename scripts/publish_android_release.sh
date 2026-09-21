@@ -39,7 +39,9 @@ cleanup_unpublished_draft() {
   fi
 }
 
-trap cleanup_unpublished_draft EXIT INT TERM
+trap cleanup_unpublished_draft EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 require_exact_main_and_tag() {
   local current_main_sha tag_json tag_sha tag_type resolved_tag_sha
@@ -118,7 +120,17 @@ for path in "$apk_path" "$aab_path" "$checksum_path"; do
   expected_digest="sha256:$(sha256sum "$path" | awk '{print $1}')"
   upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$asset_name"
 
-  uploaded="$(curl     --fail-with-body     --silent     --show-error     --request POST     --header "Accept: application/vnd.github+json"     --header "Authorization: Bearer $GH_TOKEN"     --header "X-GitHub-Api-Version: 2026-03-10"     --header "Content-Type: application/octet-stream"     --data-binary "@$path"     "$upload_url")"
+  uploaded="$(curl \
+    --fail-with-body \
+    --silent \
+    --show-error \
+    --request POST \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $GH_TOKEN" \
+    --header "X-GitHub-Api-Version: 2026-03-10" \
+    --header "Content-Type: application/octet-stream" \
+    --data-binary "@$path" \
+    "$upload_url")"
 
   test "$(jq -r '.name' <<< "$uploaded")" = "$asset_name"
   test "$(jq -r '.state' <<< "$uploaded")" = "uploaded"
@@ -132,7 +144,11 @@ verify_release_assets "$draft_json"
 
 require_exact_main_and_tag
 
-published="$(gh api   --method PATCH   "repos/$GITHUB_REPOSITORY/releases/$release_id"   -F draft=false   -f make_latest=true)"
+published="$(gh api \
+  --method PATCH \
+  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+  -F draft=false \
+  -f make_latest=true)"
 
 test "$(jq -r '.draft' <<< "$published")" = "false"
 test "$(jq -r '.tag_name' <<< "$published")" = "$RELEASE_TAG"
