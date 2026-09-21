@@ -135,6 +135,9 @@ require(
 require(
     "scripts/publish_android_release.sh",
     'set -euo pipefail',
+    'gh_api_optional()',
+    'grep -Fq "(HTTP 404)" "$error_file"',
+    '(( optional_status == 1 )) || return "$optional_status"',
     'trap cleanup_unpublished_draft EXIT',
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
@@ -163,6 +166,8 @@ forbid(
     'gh release create',
     'gh release upload',
     '--paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"',
+    'git/ref/tags/$RELEASE_TAG" 2>/dev/null || true',
+    'if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>&1',
 )
 
 forbid(
