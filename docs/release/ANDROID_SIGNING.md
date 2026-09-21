@@ -24,6 +24,8 @@ Do not store the raw keystore, passwords, decoded temporary files, or production
 
 ## Workflow behavior
 
+The release workflow creates a GitHub Release only after the signed package has passed the required verification gates.
+
 The release workflow:
 
 1. runs only on protected `main` pushes that change the Android release version or the release workflow, serializes all release attempts through one main publication group, derives only `vX.Y.Z`, and no-ops after that version is already published; alpha/beta/rc or other prerelease suffixes are rejected;
