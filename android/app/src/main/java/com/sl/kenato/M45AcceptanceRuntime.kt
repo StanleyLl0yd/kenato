@@ -133,9 +133,11 @@ internal class M45AcceptanceRuntime(
 
     fun createInvite(): ShareableInvite = withMessagingPaused {
         identity.loadOrCreate()
-        val invite = contacts.createInvite()
+        // Do not expose a shareable invite until the creator's authenticated M3 bootstrap is
+        // available. Otherwise the redeemer could consume M2 state and then fail reservation.
+        contacts.publishIdentity()
         sessions.maintainBootstrap()
-        invite
+        contacts.createInvite()
     }
 
     fun redeemAndEstablish(inviteUri: String): PinnedContact = withMessagingPaused {
