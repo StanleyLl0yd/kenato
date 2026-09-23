@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -134,14 +133,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     Button(
                         onClick = { controller.saveServiceOrigin(originInput) },
                         enabled = !state.busy && originInput.isNotBlank(),
-                        modifier = Modifier.weight(1f),
                     ) {
                         Text("Save")
                     }
                     TextButton(
                         onClick = controller::refresh,
                         enabled = !state.busy,
-                        modifier = Modifier.weight(1f),
                     ) {
                         Text("Refresh")
                     }
@@ -201,13 +198,11 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     ) {
                         TextButton(
                             onClick = { copyText(context, invite) },
-                            modifier = Modifier.weight(1f),
                         ) {
                             Text("Copy")
                         }
                         TextButton(
                             onClick = { shareText(context, invite) },
-                            modifier = Modifier.weight(1f),
                         ) {
                             Text("Share")
                         }
@@ -301,14 +296,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                         enabled = !state.busy &&
                             state.identityId != null &&
                             state.serviceOrigin.isNotBlank(),
-                        modifier = Modifier.weight(1f),
                     ) {
                         Text("Connect")
                     }
                     Button(
                         onClick = controller::stopMessaging,
                         enabled = !state.busy,
-                        modifier = Modifier.weight(1f),
                     ) {
                         Text("Disconnect")
                     }
