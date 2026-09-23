@@ -107,7 +107,7 @@ for path, text in ((nginx_path, nginx), (doc_path, doc)):
 require(
     doc_path,
     doc,
-    "kenato-server remains bound to",
+    "`kenato-server` remains bound to",
     "TCP 8080 must not be reachable",
     "Oracle instance-service rules must be preserved",
     "publicly trusted certificate",
