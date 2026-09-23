@@ -67,8 +67,9 @@ class M45AcceptanceRuntimeTest {
             listOf(
                 "messaging.stop",
                 "identity.load",
-                "contacts.create",
+                "contacts.publish",
                 "sessions.maintain",
+                "contacts.create",
                 "messaging.start",
             ),
             fixture.events,
@@ -92,7 +93,7 @@ class M45AcceptanceRuntimeTest {
             ),
             fixture.events,
         )
-        assertArrayEquals(fixture.pin.localId, fixture.sessions.outboundLocalContactId)
+        assertArrayEquals(fixture.pin.localId, requireNotNull(fixture.sessions.outboundLocalContactId))
     }
 
     @Test
@@ -128,7 +129,7 @@ class M45AcceptanceRuntimeTest {
             listOf(
                 "messaging.stop",
                 "identity.load",
-                "contacts.create",
+                "contacts.publish",
                 "sessions.maintain",
             ),
             fixture.events,
