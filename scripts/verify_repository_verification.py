@@ -96,6 +96,7 @@ required_make_fragments = (
     ":android:app:lintRelease",
     ":android:app:testDebugUnitTest",
     "scripts/verify_security_baseline.py",
+    "scripts/verify_m4_5_deployment.py",
 )
 for fragment in required_make_fragments:
     if fragment not in makefile:
