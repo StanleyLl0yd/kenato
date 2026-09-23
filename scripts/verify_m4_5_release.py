@@ -203,7 +203,7 @@ forbid(
 
 require(
     "ROADMAP.md",
-    "## M4.5 — Closed Messaging Release `0.0.1`",
+    "## M4.5 — Closed Messaging Release `0.0.x`",
     "Status: **Active**; #59/M4.5 is the current release gate",
     "first published source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
     "Alpha, beta, rc, and other prerelease suffixes are not used",
