@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin the M4.5 numeric 0.0.1 release and signing contract."""
+"""Pin the M4.5 numeric release series and signing contract."""
 
 from __future__ import annotations
 
@@ -35,10 +35,19 @@ build = read("android/app/build.gradle.kts")
 if build:
     version_name = re.search(r'^\s*versionName\s*=\s*"([^"]+)"', build, re.MULTILINE)
     version_code = re.search(r"^\s*versionCode\s*=\s*([0-9]+)", build, re.MULTILINE)
-    if not version_name or version_name.group(1) != "0.0.1":
-        errors.append("android/app/build.gradle.kts: M4.5 release versionName must be 0.0.1")
-    if not version_code or version_code.group(1) != "1":
-        errors.append("android/app/build.gradle.kts: first published release must use versionCode 1")
+    m45_version = re.fullmatch(r"0\.0\.([1-9][0-9]*)", version_name.group(1)) if version_name else None
+    if not m45_version:
+        errors.append(
+            "android/app/build.gradle.kts: M4.5 release versionName must use the numeric 0.0.N series"
+        )
+    if not version_code:
+        errors.append("android/app/build.gradle.kts: M4.5 release versionCode is missing")
+    elif int(version_code.group(1)) <= 0:
+        errors.append("android/app/build.gradle.kts: M4.5 release versionCode must be positive")
+    elif m45_version and int(version_code.group(1)) != int(m45_version.group(1)):
+        errors.append(
+            "android/app/build.gradle.kts: M4.5 0.0.N release must use versionCode N"
+        )
 
 workflow = read(".github/workflows/release-android.yml")
 if workflow:
@@ -194,9 +203,9 @@ forbid(
 
 require(
     "ROADMAP.md",
-    "## M4.5 — Closed Messaging Release `0.0.1`",
+    "## M4.5 — Closed Messaging Release `0.0.x`",
     "Status: **Active**; #59/M4.5 is the current release gate",
-    "source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
+    "first published source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
     "Alpha, beta, rc, and other prerelease suffixes are not used",
     "M5 must not start until #59 is complete",
 )

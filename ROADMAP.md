@@ -79,13 +79,13 @@ Exit: end-to-end minimal messaging is durable, bounded, identity-bound, restart/
 
 Completion record: #50–#54 completed the M4 protocol/authentication, bounded mailbox, authenticated transport, Android durability/history, and final repository-wide security-review slices. Final audit PR #60 and closure PR #62 were squash-merged to protected `main`; exact `main` `7b85dd76d90416d3d2a8cf98a870f338fb1429b6` independently passed CI, Semgrep/Security, Gitleaks, and CodeQL for Go, Java/Kotlin, Rust, and Actions. M4 did not introduce M5/WebRTC work.
 
-## M4.5 — Closed Messaging Release `0.0.1`
+## M4.5 — Closed Messaging Release `0.0.x`
 
-Status: **Active**; #59/M4.5 is the current release gate. M4 is complete and exact `main` is green. M5 remains blocked until this gate completes.
+Status: **Active**; #59/M4.5 is the current release gate. M4 is complete. The signed `0.0.1` source release is published; #75/#76 adds the minimal application surface required to execute the physical-device gate as `0.0.2`. M5 remains blocked until this gate completes.
 
 This is a small messaging-only pre-voice release, not a separate prerelease version class:
 
-- source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`;
+- first published source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`; follow-up M4.5 acceptance fixes advance numerically (`0.0.2` / `versionCode = 2`, then `0.0.3`, ...);
 - signed Android APK/AAB built from the exact reviewed `main` commit;
 - GitHub Release containing the verified APK/AAB/checksum;
 - direct distribution to a small trusted cohort (initially roughly 2–10 testers; public store publication is not required);
@@ -101,7 +101,7 @@ This is a small messaging-only pre-voice release, not a separate prerelease vers
 
 Versioning policy: published pre-1.0 builds use ordinary numeric versions (`0.0.1`, `0.0.2`, ...). Alpha, beta, rc, and other prerelease suffixes are not used.
 
-Exit: `0.0.1` is signed, published and exercised on the closed cohort; blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.**
+Exit: `0.0.1` remains the immutable signed baseline; the acceptance-capable numeric follow-up (`0.0.2` or later if blocker fixes are required) is installed on the closed cohort and the full #59 flow is exercised. Blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.**
 
 ## M5 — Voice Core
 
