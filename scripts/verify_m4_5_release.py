@@ -205,7 +205,7 @@ require(
     "ROADMAP.md",
     "## M4.5 — Closed Messaging Release `0.0.1`",
     "Status: **Active**; #59/M4.5 is the current release gate",
-    "source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
+    "first published source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
     "Alpha, beta, rc, and other prerelease suffixes are not used",
     "M5 must not start until #59 is complete",
 )
