@@ -253,11 +253,15 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     private fun selectedPeerBytes(): ByteArray {
+        val owner = requireOwnerIdentityId()
+        val localContacts = contactState.contacts(owner)
         val encoded = preferences.getString(KEY_SELECTED_PEER, null)
+            ?: localContacts.firstOrNull()?.identityId?.let {
+                Base64.getUrlEncoder().withoutPadding().encodeToString(it)
+            }
             ?: throw IllegalStateException("Select a contact first")
         val peer = decodeM45IdentityId(encoded)
-        val owner = requireOwnerIdentityId()
-        if (contactState.contacts(owner).none { it.identityId.contentEquals(peer) }) {
+        if (localContacts.none { it.identityId.contentEquals(peer) }) {
             throw IllegalStateException("Selected contact is no longer pinned locally")
         }
         return peer
@@ -304,17 +308,15 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
 
         val messages = if (selectedPeer != null && origin.isNotBlank()) {
             val peer = decodeM45IdentityId(selectedPeer)
-            runCatching {
-                requireRuntime().conversation(peer).messages.map { message ->
-                    M45UiMessage(
-                        messageId = message.messageId,
-                        direction = message.direction,
-                        deliveryState = message.deliveryState,
-                        sentAtEpochSeconds = message.sentAtEpochSeconds,
-                        text = message.text,
-                    )
-                }
-            }.getOrDefault(emptyList())
+            requireRuntime().conversation(peer).messages.map { message ->
+                M45UiMessage(
+                    messageId = message.messageId,
+                    direction = message.direction,
+                    deliveryState = message.deliveryState,
+                    sentAtEpochSeconds = message.sentAtEpochSeconds,
+                    text = message.text,
+                )
+            }
         } else {
             emptyList()
         }
