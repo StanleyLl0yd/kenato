@@ -30,6 +30,7 @@ doc_path = "docs/deployment/OCI_TLS_ACCEPTANCE.md"
 systemd = read(systemd_path)
 nginx = read(nginx_path)
 doc = read(doc_path)
+doc_normalized = " ".join(doc.split())
 
 require(
     systemd_path,
@@ -106,7 +107,7 @@ for path, text in ((nginx_path, nginx), (doc_path, doc)):
 
 require(
     doc_path,
-    doc,
+    doc_normalized,
     "`kenato-server` remains bound to",
     "TCP 8080 must not be reachable",
     "Oracle instance-service rules must be preserved",
