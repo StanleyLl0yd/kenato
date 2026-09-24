@@ -59,6 +59,7 @@ test-security:
 	python3 scripts/verify_m4_android_messaging.py
 	python3 scripts/verify_m4_final_audit.py
 	python3 scripts/verify_m4_5_release.py
+	python3 scripts/verify_m4_5_deployment.py
 	python3 scripts/test_publish_android_release.py
 	echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
 
