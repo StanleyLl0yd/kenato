@@ -1,0 +1,61 @@
+name: Build exact Kenato server deployment artifact
+
+on:
+  push:
+    branches:
+      - ops/build-kenato-server-6d90a57
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      EXPECTED_SHA: 6d90a57b1622418aad2b45e03de2f39725538f14
+    steps:
+      - name: Checkout exact deployment source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+
+      - name: Require exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --short)"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Build verified ARM64 server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd server
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64             go build -trimpath -ldflags="-buildid=" -o ../dist/kenato-server ./cmd/kenato-server
+          cd ..
+          file dist/kenato-server
+          test "$(stat -c '%a' dist/kenato-server)" = 755 || chmod 0755 dist/kenato-server
+          sha256sum dist/kenato-server | tee dist/kenato-server.sha256
+          printf '%s\n' "$EXPECTED_SHA" > dist/source-commit.txt
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kenato-server-arm64-6d90a57
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
