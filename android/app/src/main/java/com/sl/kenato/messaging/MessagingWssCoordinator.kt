@@ -299,9 +299,13 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket) return
         note(when (error) {
             is MessagingHttpUpgradeFailure ->
-                if (error.statusCode in 400..499) M45DiagnosticEvent.TRANSPORT_HTTP_4XX
-                else M45DiagnosticEvent.TRANSPORT_HTTP_5XX
-            is SSLPeerUnverifiedException, is SSLException -> M45DiagnosticEvent.TRANSPORT_CERTIFICATE_ERROR
+                when (error.statusCode) {
+                    in 400..499 -> M45DiagnosticEvent.TRANSPORT_HTTP_4XX
+                    in 500..599 -> M45DiagnosticEvent.TRANSPORT_HTTP_5XX
+                    else -> M45DiagnosticEvent.TRANSPORT_HTTP_OTHER
+                }
+            is SSLPeerUnverifiedException -> M45DiagnosticEvent.TRANSPORT_CERTIFICATE_ERROR
+            is SSLException -> M45DiagnosticEvent.TRANSPORT_TLS_ERROR
             is UnknownHostException -> M45DiagnosticEvent.TRANSPORT_DNS_ERROR
             is SocketTimeoutException -> M45DiagnosticEvent.TRANSPORT_TIMEOUT
             is ConnectException -> M45DiagnosticEvent.TRANSPORT_CONNECT_ERROR
