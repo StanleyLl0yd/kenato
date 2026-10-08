@@ -16,6 +16,8 @@ internal const val MESSAGING_MAX_WIRE_FRAME_BYTES = 100 * 1024
 internal const val MESSAGING_MAX_MAILBOX_MESSAGES_PER_RECIPIENT = 500
 internal const val MESSAGING_MAX_TTL_SECONDS = 72L * 60L * 60L
 internal const val MESSAGING_MAX_AUTH_CHALLENGE_LIFETIME_SECONDS = 30L
+// Android receive-only tolerance for a slightly slow device clock; the server's 30 s limit is unchanged.
+internal const val MESSAGING_INBOUND_AUTH_CLOCK_SKEW_TOLERANCE_SECONDS = 5L
 
 internal class MessagingProtocolException(message: String) : IllegalStateException(message)
 
@@ -67,13 +69,35 @@ internal object MessagingProtocol {
         }
     }
 
-    fun validateAuthChallenge(value: MessagingAuthChallenge, nowEpochSeconds: Long) {
+    fun validateAuthChallenge(value: MessagingAuthChallenge, nowEpochSeconds: Long) =
+        validateChallengeWithMaximumRemainingLifetime(
+            value, nowEpochSeconds, MESSAGING_MAX_AUTH_CHALLENGE_LIFETIME_SECONDS,
+        )
+
+    /**
+     * Server-issued challenges always expire after at most 30 s. The receiver's wall clock
+     * may lag the server by a few seconds despite OS time synchronization. Accept only
+     * that bounded positive difference on the Android receiving side; do not accept an
+     * already expired challenge. The Go server independently enforces the strict 30 s
+     * lifetime and exact challenge binding on every signed response.
+     */
+    fun validateInboundAuthChallenge(value: MessagingAuthChallenge, nowEpochSeconds: Long) =
+        validateChallengeWithMaximumRemainingLifetime(
+            value, nowEpochSeconds,
+            MESSAGING_MAX_AUTH_CHALLENGE_LIFETIME_SECONDS + MESSAGING_INBOUND_AUTH_CLOCK_SKEW_TOLERANCE_SECONDS,
+        )
+
+    private fun validateChallengeWithMaximumRemainingLifetime(
+        value: MessagingAuthChallenge,
+        nowEpochSeconds: Long,
+        maxRemainingSeconds: Long,
+    ) {
         requireVersion(value.protocolVersion)
         requireChallenge(value.challenge)
         if (nowEpochSeconds < 0 || value.expiresAtEpochSeconds <= nowEpochSeconds) {
             throw MessagingProtocolException("M4 auth challenge is expired")
         }
-        if (value.expiresAtEpochSeconds - nowEpochSeconds > MESSAGING_MAX_AUTH_CHALLENGE_LIFETIME_SECONDS) {
+        if (value.expiresAtEpochSeconds - nowEpochSeconds > maxRemainingSeconds) {
             throw MessagingProtocolException("M4 auth challenge lifetime is invalid")
         }
     }

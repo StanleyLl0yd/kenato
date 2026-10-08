@@ -335,10 +335,14 @@ internal class MessagingWssCoordinator(
         }
         val now = nowEpochSeconds()
         try {
-            MessagingProtocol.validateAuthChallenge(challenge, now)
+            MessagingProtocol.validateInboundAuthChallenge(challenge, now)
         } catch (error: Exception) {
             note(M45DiagnosticEvent.AUTH_CHALLENGE_REJECTED)
             throw error
+        }
+        if (challenge.expiresAtEpochSeconds - now > MESSAGING_MAX_AUTH_CHALLENGE_LIFETIME_SECONDS) {
+            // Record only the fixed policy event; never log expiry, wall-clock offset or nonce.
+            note(M45DiagnosticEvent.AUTH_CHALLENGE_CLOCK_SKEW_TOLERATED)
         }
         note(M45DiagnosticEvent.AUTH_CHALLENGE_RECEIVED)
         val identityId = try {

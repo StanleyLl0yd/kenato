@@ -1,11 +1,13 @@
 # M4.5 diagnostics: closed physical acceptance
 
 Scope: #81, parent #59. This is an operational diagnostic facility, not a telemetry
-service. It does not modify wire protocol, identity/session storage, WSS auth policy,
-TLS validation or server endpoints. Android versionCode is increased to 3 for signed
-0.0.3 to support in-place upgrade from 0.0.2 without deleting identity/session data.
+service. Android 0.0.4 additionally changes the **inbound challenge freshness check**
+by a bounded five-second receive-side clock tolerance. It does not modify wire
+protocol, identity/session storage, the server authentication or expiry policy,
+TLS validation or server endpoints. Android versionCode 4 and versionName 0.0.4
+support in-place upgrade without deleting identity/session data.
 
-## Android (from 0.0.3 after an exact-main signed build)
+## Android (diagnostic viewer from 0.0.3; clock-skew fix in 0.0.4)
 
 Open section **6. Local diagnostics**. This displays the newest 40 event-code entries
 while the bounded, persisted journal retains at most 128 entries. The screen
@@ -26,6 +28,8 @@ Significant sequence examples:
   `AUTH_RESPONSE_SENT`, `AUTHENTICATED`: working connection.
 - `AUTH_CHALLENGE_REJECTED`: reject an expired/invalid challenge, including
   phone/server clock skew. Confirm automatic time.
+- `AUTH_CHALLENGE_CLOCK_SKEW_TOLERATED` (0.0.4+): accepted a valid challenge
+  with at most five seconds of slow local clock. No nonce, clock offset or expiry logged.
 - `LOCAL_IDENTITY_INVALID`, `IDENTITY_SIGNING_FAILED`: identity or
   Android Keystore path failed; do not clear app data.
 - `AUTH_CONFIRMATION_REJECTED` following `AUTH_RESPONSE_SENT`: server
@@ -57,3 +61,22 @@ so event volume can grow under scanning. Limit diagnostic traffic via the
 already-reviewed Nginx edge policy and journal retention controls; never enable
 raw payload or request-header logging as a substitute. Keep backend TCP 8080
 bound to loopback. 
+
+## Android 0.0.4 receive-only clock tolerance
+
+Android 10 physical WSS diagnostics showed a decoded challenge being rejected before
+any signature or response. Go issues the challenge with server time +30 seconds.
+Android's previous 30-second maximum remaining lifetime falsely rejected fresh
+challenges when the device wall clock was even slightly behind.
+
+For **receiving a WSS authentication challenge only**, Android now permits
+remaining lifetime <=35 seconds (the 30-second server lifetime plus <=5 seconds
+of possible clock lag), but still rejects expired, malformed and farther-future
+challenges. The strict 30-second protocol validator remains unchanged and is used
+for local response checks. The Go server still independently verifies every
+response within its exact 30-second window and validates the P-256 signature,
+challenge bytes and identity. No wire format, certificate policy, server lifetime,
+identity, storage or state-machine transitions have been changed.
+
+Never delete app data or republish identity/session state as a workaround.
+Two-device physical E2EE acceptance is still required by #59 before M5.
