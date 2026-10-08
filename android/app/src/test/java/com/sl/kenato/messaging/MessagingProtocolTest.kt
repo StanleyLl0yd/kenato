@@ -73,6 +73,32 @@ class MessagingProtocolTest {
     }
 
     @Test
+    fun inboundAuthChallengeToleratesAtMostFiveSecondsOfSlowClock() {
+        val challenge = MessagingAuthChallenge(sequence(1, 32), 1_030)
+        for (now in listOf(995L, 999L, 1_000L, 1_029L)) {
+            MessagingProtocol.validateInboundAuthChallenge(challenge, now)
+        }
+        for (now in listOf(994L, 1_030L, -1L)) {
+            assertThrows(MessagingProtocolException::class.java) {
+                MessagingProtocol.validateInboundAuthChallenge(challenge, now)
+            }
+        }
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateAuthChallenge(challenge, 999)
+        }
+    }
+
+    @Test
+    fun inboundAuthChallengeAlwaysRejectsMalformedShape() {
+        val valid = MessagingAuthChallenge(sequence(1, 32), 1_030)
+        for (bad in listOf(valid.copy(protocolVersion = 2), valid.copy(challenge = ByteArray(32)), valid.copy(challenge = byteArrayOf(1)))) {
+            assertThrows(MessagingProtocolException::class.java) {
+                MessagingProtocol.validateInboundAuthChallenge(bad, 1_000)
+            }
+        }
+    }
+
+    @Test
     fun deliveryContextRejectsRelayMetadataRewrite() {
         val now = 1_700_000_000L
         val sender = sequence(0x00, 32)
