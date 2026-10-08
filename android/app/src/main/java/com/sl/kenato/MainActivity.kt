@@ -363,6 +363,48 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 }
             }
 
+            AcceptanceSection(title = "6. Local diagnostics") {
+                Text(
+                    text = "Stored only on this device: timestamps and predefined connection/error codes. " +
+                        "No keys, identities, messages, addresses or protocol payloads. " +
+                        "Copy/Share sends the journal only when you explicitly choose it.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "Entries: ${state.diagnostics.size} / 128",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        enabled = !state.busy && state.diagnostics.isNotEmpty(),
+                        onClick = { copyText(context, state.diagnostics.joinToString("\n")) },
+                    ) {
+                        Text("Copy log")
+                    }
+                    Button(
+                        enabled = !state.busy && state.diagnostics.isNotEmpty(),
+                        onClick = { shareDiagnostics(context, state.diagnostics.joinToString("\n")) },
+                    ) {
+                        Text("Share")
+                    }
+                    TextButton(
+                        enabled = !state.busy,
+                        onClick = controller::clearDiagnostics,
+                    ) {
+                        Text("Clear")
+                    }
+                }
+                SelectionContainer {
+                    Text(
+                        text = state.diagnostics.takeLast(40).joinToString("\n").ifBlank { "No diagnostic events yet" },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
             Text(
                 text = "Acceptance rule: do not reset app data between restart/reboot checks.",
                 style = MaterialTheme.typography.labelMedium,
@@ -399,4 +441,13 @@ private fun shareText(context: Context, value: String) {
         putExtra(Intent.EXTRA_TEXT, value)
     }
     context.startActivity(Intent.createChooser(share, "Share Kenato invite"))
+}
+
+private fun shareDiagnostics(context: Context, value: String) {
+    // Explicit system chooser only: no background upload and no additional permissions.
+    val share = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, value)
+    }
+    context.startActivity(Intent.createChooser(share, "Share Kenato diagnostics"))
 }

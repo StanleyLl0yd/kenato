@@ -10,6 +10,7 @@ import com.sl.kenato.contact.ContactLocalState
 import com.sl.kenato.contact.InviteUriCodec
 import com.sl.kenato.contact.M2InviteDescriptor
 import com.sl.kenato.contact.SharedPreferencesContactStateStore
+import com.sl.kenato.diagnostics.M45DiagnosticJournal
 import com.sl.kenato.identity.LocalIdentityRepository
 import com.sl.kenato.messaging.MessagingConversationDirection
 import com.sl.kenato.messaging.MessagingConversationDeliveryState
@@ -41,6 +42,7 @@ internal data class M45AcceptanceUiState(
     val messagingEnabled: Boolean = false,
     val messagingState: MessagingWssState = MessagingWssState.STOPPED,
     val messages: List<M45UiMessage> = emptyList(),
+    val diagnostics: List<String> = emptyList(),
     val busy: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
@@ -49,6 +51,7 @@ internal data class M45AcceptanceUiState(
 internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val identityRepository = LocalIdentityRepository.create(appContext)
+    private val diagnosticJournal = M45DiagnosticJournal(appContext)
     private val contactState = ContactLocalState(SharedPreferencesContactStateStore(appContext))
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val worker = Executors.newSingleThreadExecutor { runnable ->
@@ -183,6 +186,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
 
     fun refresh() = launchOperation("State refreshed") { }
 
+    fun clearDiagnostics() = launchOperation("Local diagnostic journal cleared") {
+        check(diagnosticJournal.clear()) { "Unable to clear local diagnostic journal" }
+    }
+
     override fun close() {
         foreground = false
         mainHandler.removeCallbacks(pollRunnable)
@@ -275,6 +282,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                 serviceOrigin = origin,
                 messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
                 messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
+                diagnostics = diagnosticJournal.snapshot(),
             )
         }
 
@@ -330,6 +338,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
             messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
             messages = messages,
+            diagnostics = diagnosticJournal.snapshot(),
         )
     }
 
