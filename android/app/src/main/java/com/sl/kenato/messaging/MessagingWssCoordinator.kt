@@ -1,7 +1,14 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.diagnostics.M45DiagnosticEvent
 import com.sl.kenato.identity.LocalIdentityRepository
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
 import java.net.URI
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLPeerUnverifiedException
 import java.time.Instant
 import java.util.Base64
 import java.util.concurrent.Executors
@@ -160,7 +167,13 @@ internal class MessagingWssCoordinator(
     private val inbound: MessagingInboundDeliveryHandler,
     private val scheduler: MessagingRetryScheduler,
     private val clock: MessagingWssClock = SystemMessagingWssClock,
+    private val diagnostics: (M45DiagnosticEvent) -> Unit = {},
 ) : MessagingSocketListener {
+    private fun note(code: M45DiagnosticEvent) {
+        // Never let diagnostics change security, protocol or connection state.
+        runCatching { diagnostics(code) }
+    }
+
     private val endpoint = messagingEndpoint(serviceOrigin)
 
     private var state = MessagingWssState.STOPPED
@@ -198,6 +211,7 @@ internal class MessagingWssCoordinator(
     fun start() {
         if (running) return
         running = true
+        note(M45DiagnosticEvent.TRANSPORT_STARTED)
         reconnectAttempts = 0
         durableRetryAttempts = 0
         ackRetryAttempts = 0
@@ -218,6 +232,7 @@ internal class MessagingWssCoordinator(
         recoveredAcksSentThisConnection.clear()
         pendingAckRetryMessageIds.clear()
         state = MessagingWssState.STOPPED
+        note(M45DiagnosticEvent.TRANSPORT_STOPPED)
     }
 
     @Synchronized
@@ -227,6 +242,7 @@ internal class MessagingWssCoordinator(
             return
         }
         state = MessagingWssState.AWAITING_CHALLENGE
+        note(M45DiagnosticEvent.SOCKET_UPGRADED)
         authenticationTimeout?.cancel()
         authenticationTimeout = scheduler.schedule(AUTHENTICATION_TIMEOUT_MILLIS) {
             synchronized(this) {
@@ -245,12 +261,14 @@ internal class MessagingWssCoordinator(
     override fun onBinaryMessage(socket: MessagingSocket, value: ByteArray) {
         if (!running || socket !== activeSocket) return
         if (value.isEmpty() || value.size > MESSAGING_MAX_WIRE_FRAME_BYTES) {
+            note(M45DiagnosticEvent.SERVER_FRAME_INVALID)
             failClosed(socket)
             return
         }
         val frame = try {
             MessagingWire.decodeServerFrame(value)
         } catch (_: Exception) {
+            note(M45DiagnosticEvent.SERVER_FRAME_INVALID)
             failClosed(socket)
             return
         }
@@ -264,6 +282,7 @@ internal class MessagingWssCoordinator(
         } catch (_: MessagingWssRetryException) {
             retryAfterSendFailure(socket)
         } catch (_: Exception) {
+            note(M45DiagnosticEvent.SERVER_PROTOCOL_REJECTED)
             failClosed(socket)
         }
     }
@@ -271,12 +290,29 @@ internal class MessagingWssCoordinator(
     @Synchronized
     override fun onClosed(socket: MessagingSocket) {
         if (socket !== activeSocket) return
+        note(M45DiagnosticEvent.SOCKET_CLOSED)
         if (hasDurableWorkInFlight()) retryDurableWork(socket) else retryConnection(socket)
     }
 
     @Synchronized
     override fun onFailure(socket: MessagingSocket, error: Throwable) {
         if (socket !== activeSocket) return
+        note(when (error) {
+            is MessagingHttpUpgradeFailure ->
+                when (error.statusCode) {
+                    in 400..499 -> M45DiagnosticEvent.TRANSPORT_HTTP_4XX
+                    in 500..599 -> M45DiagnosticEvent.TRANSPORT_HTTP_5XX
+                    else -> M45DiagnosticEvent.TRANSPORT_HTTP_OTHER
+                }
+            is SSLPeerUnverifiedException -> M45DiagnosticEvent.TRANSPORT_CERTIFICATE_ERROR
+            is SSLException -> M45DiagnosticEvent.TRANSPORT_TLS_ERROR
+            is UnknownHostException -> M45DiagnosticEvent.TRANSPORT_DNS_ERROR
+            is SocketTimeoutException -> M45DiagnosticEvent.TRANSPORT_TIMEOUT
+            is ConnectException -> M45DiagnosticEvent.TRANSPORT_CONNECT_ERROR
+            is MessagingWssException -> M45DiagnosticEvent.SERVER_PROTOCOL_REJECTED
+            is IOException -> M45DiagnosticEvent.TRANSPORT_IO_ERROR
+            else -> M45DiagnosticEvent.TRANSPORT_OTHER_ERROR
+        })
         if (error is MessagingWssException) {
             failClosed(socket)
         } else if (hasDurableWorkInFlight()) {
@@ -298,15 +334,30 @@ internal class MessagingWssCoordinator(
             throw MessagingWssException("Expected M4 authentication challenge")
         }
         val now = nowEpochSeconds()
-        MessagingProtocol.validateAuthChallenge(challenge, now)
-        val identityId = identity.identityId()
-        requireIdentity(identityId)
+        try {
+            MessagingProtocol.validateAuthChallenge(challenge, now)
+        } catch (error: Exception) {
+            note(M45DiagnosticEvent.AUTH_CHALLENGE_REJECTED)
+            throw error
+        }
+        note(M45DiagnosticEvent.AUTH_CHALLENGE_RECEIVED)
+        val identityId = try {
+            identity.identityId().also(::requireIdentity)
+        } catch (error: Exception) {
+            note(M45DiagnosticEvent.LOCAL_IDENTITY_INVALID)
+            throw error
+        }
         val payload = MessagingProtocol.authPayload(
             identityId,
             challenge.challenge,
             challenge.expiresAtEpochSeconds,
         )
-        val signature = identity.signProtocolPayload(payload)
+        val signature = try {
+            identity.signProtocolPayload(payload)
+        } catch (error: Exception) {
+            note(M45DiagnosticEvent.IDENTITY_SIGNING_FAILED)
+            throw error
+        }
         val response = MessagingAuthResponse(
             identityId = identityId.copyOf(),
             challenge = challenge.challenge.copyOf(),
@@ -314,6 +365,7 @@ internal class MessagingWssCoordinator(
             signature = signature.copyOf(),
         )
         sendFrame(socket, MessagingClientFrame(authResponse = response))
+        note(M45DiagnosticEvent.AUTH_RESPONSE_SENT)
         authenticatedIdentityId = identityId.copyOf()
         state = MessagingWssState.AWAITING_AUTHENTICATED
     }
@@ -326,6 +378,7 @@ internal class MessagingWssCoordinator(
             frame.sendAccepted != null ||
             frame.error != null
         ) {
+            note(M45DiagnosticEvent.AUTH_CONFIRMATION_REJECTED)
             throw MessagingWssException("Expected M4 authenticated confirmation")
         }
         authenticationTimeout?.cancel()
@@ -337,7 +390,13 @@ internal class MessagingWssCoordinator(
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
         state = MessagingWssState.AUTHENTICATED
-        pumpRecovery(socket)
+        note(M45DiagnosticEvent.AUTHENTICATED)
+        try {
+            pumpRecovery(socket)
+        } catch (error: Exception) {
+            note(M45DiagnosticEvent.RECOVERY_FAILED)
+            throw error
+        }
     }
 
     private fun handleAuthenticatedFrame(socket: MessagingSocket, frame: MessagingServerFrame) {
@@ -377,6 +436,9 @@ internal class MessagingWssCoordinator(
     }
 
     private fun handleServerError(socket: MessagingSocket, error: MessagingWireError) {
+        if (error.code != MESSAGING_ERROR_RETRY_LATER) {
+            note(M45DiagnosticEvent.SERVER_PROTOCOL_REJECTED)
+        }
         when (error.code) {
             MESSAGING_ERROR_RETRY_LATER -> handleRetryLater(socket, error)
             MESSAGING_ERROR_MALFORMED,
@@ -566,6 +628,7 @@ internal class MessagingWssCoordinator(
     private fun connectNow() {
         if (!running || activeSocket != null) return
         state = MessagingWssState.CONNECTING
+        note(M45DiagnosticEvent.CONNECT_ATTEMPT)
         val socket = try {
             sockets.create(endpoint, this)
         } catch (_: Exception) {
@@ -611,6 +674,7 @@ internal class MessagingWssCoordinator(
         if (!running) return
         scheduledReconnect?.cancel()
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            note(M45DiagnosticEvent.RECONNECT_EXHAUSTED)
             running = false
             state = MessagingWssState.FAILED
             return
@@ -624,6 +688,7 @@ internal class MessagingWssCoordinator(
         if (!running) return
         scheduledReconnect?.cancel()
         if (durableRetryAttempts >= MAX_DURABLE_RETRY_ATTEMPTS) {
+            note(M45DiagnosticEvent.RECONNECT_EXHAUSTED)
             running = false
             state = MessagingWssState.FAILED
             return
@@ -640,6 +705,7 @@ internal class MessagingWssCoordinator(
     }
 
     private fun scheduleReconnectAfter(delayMillis: Long) {
+        note(M45DiagnosticEvent.RECONNECT_SCHEDULED)
         state = MessagingWssState.RETRY_WAIT
         scheduledReconnect = scheduler.schedule(delayMillis) {
             synchronized(this) {
@@ -651,6 +717,7 @@ internal class MessagingWssCoordinator(
 
     private fun failClosed(socket: MessagingSocket) {
         if (socket !== activeSocket) return
+        note(M45DiagnosticEvent.TRANSPORT_FAILED_CLOSED)
         running = false
         cancelTimers()
         socket.cancel()

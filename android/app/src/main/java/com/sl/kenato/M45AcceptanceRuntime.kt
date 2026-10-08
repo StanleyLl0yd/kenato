@@ -2,6 +2,7 @@ package com.sl.kenato
 
 import android.content.Context
 import com.sl.kenato.contact.ContactRepository
+import com.sl.kenato.diagnostics.M45DiagnosticJournal
 import com.sl.kenato.contact.PinnedContact
 import com.sl.kenato.contact.ShareableInvite
 import com.sl.kenato.identity.IdentityBundle
@@ -264,6 +265,7 @@ private class AndroidM45MessagingBoundary(
     serviceOrigin: URI,
 ) : M45MessagingBoundary {
     private val identityRepository = LocalIdentityRepository.create(context)
+    private val diagnosticJournal = M45DiagnosticJournal(context)
     private val sessionRepository = LocalSessionRepository.create(context)
     private val history = ConversationHistoryRepository(AtomicFileConversationHistoryStore(context))
     private val recovery = MessagingRecoveryCoordinator(
@@ -281,6 +283,7 @@ private class AndroidM45MessagingBoundary(
             history = history,
         ),
         scheduler = scheduler,
+        diagnostics = diagnosticJournal::record,
     )
     private val outbound = DurableMessagingOutboundSender(
         sessions = LocalMessagingOutboundSessionDriver(sessionRepository),

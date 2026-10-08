@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"sync"
@@ -118,6 +119,7 @@ func (s *MessagingWebSocketServer) handle(w http.ResponseWriter, r *http.Request
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {
+		// No per-request logging before upgrade: unsolicited internet scans are untrusted.
 		return
 	}
 	defer conn.CloseNow()
@@ -135,13 +137,16 @@ func (s *MessagingWebSocketServer) handle(w http.ResponseWriter, r *http.Request
 
 	identityID, err := s.authenticate(conn)
 	if err != nil {
+		logMessagingWssDiagnostic("authentication_rejected", "see_auth_stage")
 		s.writeImmediateError(conn, messaging.MessagingErrorAuthenticationFailed, nil)
 		return
 	}
 
+	logMessagingWssDiagnostic("authentication_ok", "signature_verified")
 	peer := newMessagingPeer(conn, identityID)
 	oldPeer, err := s.registerPeer(peer)
 	if err != nil {
+		logMessagingWssDiagnostic("registration_rejected", "capacity_or_shutdown")
 		s.writeImmediateError(conn, messaging.MessagingErrorRetryLater, nil)
 		return
 	}
@@ -188,6 +193,7 @@ func (s *MessagingWebSocketServer) authenticate(conn *websocket.Conn) ([]byte, e
 
 	challenge, err := s.newChallenge()
 	if err != nil {
+		logMessagingWssDiagnostic("authentication_error", "challenge_generation")
 		return nil, err
 	}
 	challengeFrame, err := messaging.EncodeServerFrame(messaging.ServerFrame{
@@ -195,32 +201,46 @@ func (s *MessagingWebSocketServer) authenticate(conn *websocket.Conn) ([]byte, e
 		AuthChallenge:   &challenge,
 	})
 	if err != nil {
+		logMessagingWssDiagnostic("authentication_error", "challenge_encode")
 		return nil, err
 	}
 	if err := conn.Write(authCtx, websocket.MessageBinary, challengeFrame); err != nil {
+		logMessagingWssDiagnostic("authentication_error", "challenge_write")
 		return nil, err
 	}
 
 	messageType, encoded, err := conn.Read(authCtx)
 	if err != nil || messageType != websocket.MessageBinary {
+		logMessagingWssDiagnostic("authentication_error", "response_read_or_timeout")
 		return nil, errors.New("messaging authentication frame rejected")
 	}
 	frame, err := messaging.DecodeClientFrame(encoded)
 	if err != nil || frame.AuthResponse == nil || frame.Send != nil || frame.Ack != nil {
+		logMessagingWssDiagnostic("authentication_error", "response_decode_or_shape")
 		return nil, errors.New("messaging authentication frame rejected")
 	}
 	now := s.clock().UTC().Unix()
 	if err := messaging.ValidateAuthResponseForChallenge(*frame.AuthResponse, challenge, now); err != nil {
+		logMessagingWssDiagnostic("authentication_error", "challenge_response_mismatch_or_expiry")
 		return nil, err
 	}
 	payload, err := messaging.AuthPayload(frame.AuthResponse.IdentityID, frame.AuthResponse.Challenge, frame.AuthResponse.ExpiresAtUnixSeconds)
 	if err != nil {
+		logMessagingWssDiagnostic("authentication_error", "payload_encode")
 		return nil, err
 	}
 	if err := s.auth.VerifyIdentitySignature(authCtx, frame.AuthResponse.IdentityID, payload, frame.AuthResponse.Signature); err != nil {
+		logMessagingWssDiagnostic("authentication_error", "identity_signature_not_verified")
 		return nil, errors.New("messaging authentication failed")
 	}
 	return bytes.Clone(frame.AuthResponse.IdentityID), nil
+}
+
+// logMessagingWssDiagnostic accepts only static, reviewed reason codes. Never pass an error,
+// HTTP header, IP address, identity ID, token, envelope or payload to this helper.
+// Journald captures the structured output from the dedicated systemd service.
+func logMessagingWssDiagnostic(event, reason string) {
+	slog.Info("kenato_messaging_wss", "event", event, "reason", reason)
 }
 
 func (s *MessagingWebSocketServer) newChallenge() (messaging.AuthChallenge, error) {
