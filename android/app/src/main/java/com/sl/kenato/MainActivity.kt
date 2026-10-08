@@ -97,7 +97,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                text = "M4.5 physical acceptance · 0.0.2",
+                text = "M4.5 physical acceptance · 0.0.3",
                 style = MaterialTheme.typography.labelLarge,
             )
 
