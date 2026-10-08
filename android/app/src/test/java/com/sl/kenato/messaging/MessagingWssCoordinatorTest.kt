@@ -1,5 +1,6 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.diagnostics.M45DiagnosticEvent
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,6 +43,36 @@ class MessagingWssCoordinatorTest {
         assertArrayEquals(CHALLENGE, auth.challenge)
         assertEquals(120, auth.expiresAtEpochSeconds)
         assertArrayEquals(SIGNATURE, auth.signature)
+    }
+
+    @Test
+    fun smallSlowDeviceClockStillAuthenticatesAndRecordsOnlySafeEventCode() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.open()
+        // Fixture clock is 100, server clock is 105, server expiry is 135.
+        socket.serverFrame(MessagingServerFrame(authChallenge = MessagingAuthChallenge(CHALLENGE.copyOf(), 135)))
+        assertEquals(MessagingWssState.AWAITING_AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size)
+        assertTrue(fixture.diagnosticEvents.contains(M45DiagnosticEvent.AUTH_CHALLENGE_CLOCK_SKEW_TOLERATED))
+        assertTrue(fixture.diagnosticEvents.contains(M45DiagnosticEvent.AUTH_RESPONSE_SENT))
+        socket.serverFrame(MessagingServerFrame(authenticated = true))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+    }
+
+    @Test
+    fun clockSkewBeyondBoundFailsClosedWithoutSigningOrReconnecting() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.open()
+        socket.serverFrame(MessagingServerFrame(authChallenge = MessagingAuthChallenge(CHALLENGE.copyOf(), 136)))
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(0, socket.sent.size)
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        assertTrue(fixture.diagnosticEvents.contains(M45DiagnosticEvent.AUTH_CHALLENGE_REJECTED))
     }
 
     @Test
@@ -304,6 +335,7 @@ class MessagingWssCoordinatorTest {
         val recovery = FakeRecovery()
         val inbound = FakeInbound()
         val scheduler = FakeScheduler()
+        val diagnosticEvents = mutableListOf<M45DiagnosticEvent>()
         val coordinator = MessagingWssCoordinator(
             serviceOrigin = origin,
             sockets = sockets,
@@ -312,6 +344,7 @@ class MessagingWssCoordinatorTest {
             inbound = inbound,
             scheduler = scheduler,
             clock = MessagingWssClock { 100 },
+            diagnostics = diagnosticEvents::add,
         )
 
         fun authenticate(): FakeSocket {
