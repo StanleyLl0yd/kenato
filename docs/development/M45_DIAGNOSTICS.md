@@ -30,7 +30,8 @@ Significant sequence examples:
 - `AUTH_CONFIRMATION_REJECTED` following `AUTH_RESPONSE_SENT`: server
   rejected or failed to confirm authentication; cross-reference server journal.
 - `TRANSPORT_CERTIFICATE_ERROR`, `TRANSPORT_DNS_ERROR`,
-  `TRANSPORT_HTTP_4XX`, `TRANSPORT_HTTP_5XX`, `TRANSPORT_IO_ERROR`:
+  `TRANSPORT_HTTP_4XX`, `TRANSPORT_HTTP_5XX`, `TRANSPORT_HTTP_OTHER`,
+  `TRANSPORT_TLS_ERROR`, `TRANSPORT_IO_ERROR`:
   transport-level failure categories only, not raw exception text.
 - `SERVER_FRAME_INVALID`, `SERVER_PROTOCOL_REJECTED`, `RECOVERY_FAILED`,
   `TRANSPORT_FAILED_CLOSED`: fail-closed operation.
