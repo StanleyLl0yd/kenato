@@ -1,7 +1,9 @@
 # M4.5 diagnostics: closed physical acceptance
 
 Scope: #81, parent #59. This is an operational diagnostic facility, not a telemetry
-service. It does not modify wire protocol, identity/session storage, WSS auth policy,
+service. Android 0.0.4 additionally changes the **inbound challenge freshness check**
+by a bounded five-second receive-side clock tolerance. It does not modify wire
+protocol, identity/session storage, the server authentication or expiry policy,
 TLS validation or server endpoints. Android versionCode 4 and versionName 0.0.4
 support in-place upgrade without deleting identity/session data.
 
