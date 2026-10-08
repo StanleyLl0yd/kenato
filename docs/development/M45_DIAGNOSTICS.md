@@ -2,7 +2,8 @@
 
 Scope: #81, parent #59. This is an operational diagnostic facility, not a telemetry
 service. It does not modify wire protocol, identity/session storage, WSS auth policy,
-TLS validation, server endpoints, or release versioning.
+TLS validation or server endpoints. Android versionCode is increased to 3 for signed
+0.0.3 to support in-place upgrade from 0.0.2 without deleting identity/session data.
 
 ## Android (from 0.0.3 after an exact-main signed build)
 
