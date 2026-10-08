@@ -380,7 +380,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 ) {
                     Button(
                         enabled = !state.busy && state.diagnostics.isNotEmpty(),
-                        onClick = { copyText(context, state.diagnostics.joinToString("\n")) },
+                        onClick = { copyText(context, state.diagnostics.joinToString("\n"), "Kenato diagnostics") },
                     ) {
                         Text("Copy log")
                     }
@@ -430,9 +430,9 @@ private fun AcceptanceSection(
     }
 }
 
-private fun copyText(context: Context, value: String) {
+private fun copyText(context: Context, value: String, label: String = "Kenato invite") {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("Kenato invite", value))
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
 }
 
 private fun shareText(context: Context, value: String) {
