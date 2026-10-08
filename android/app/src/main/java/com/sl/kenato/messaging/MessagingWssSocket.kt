@@ -12,6 +12,12 @@ import okio.ByteString.Companion.toByteString
 /** Only the numeric HTTP status is retained; response URLs, headers and bodies are discarded. */
 internal class MessagingHttpUpgradeFailure(val statusCode: Int) : IOException("WebSocket upgrade rejected")
 
+/** Preserve explicit protocol/security failures; classify only ordinary HTTP upgrade rejections. */
+internal fun classifyMessagingSocketFailure(error: Throwable, responseStatus: Int?): Throwable =
+    if (responseStatus == null || error is MessagingWssException) error
+    else MessagingHttpUpgradeFailure(responseStatus)
+
+
 internal interface MessagingSocket {
     fun connect()
     fun sendBinary(value: ByteArray): Boolean
@@ -90,8 +96,7 @@ private class OkHttpMessagingSocket(
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     listener.onFailure(
                         this@OkHttpMessagingSocket,
-                        if (response == null || t is MessagingWssException) t
-                        else MessagingHttpUpgradeFailure(response.code),
+                        classifyMessagingSocketFailure(t, response?.code),
                     )
                 }
             },
