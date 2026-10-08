@@ -34,8 +34,8 @@ android {
         applicationId = "com.sl.kenato"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.0.3"
+        versionCode = 4
+        versionName = "0.0.4"
 
         ndk {
             abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
