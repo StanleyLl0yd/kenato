@@ -34,6 +34,45 @@ class MessagingProtocolTest {
     }
 
     @Test
+    fun androidInboundChallengeToleratesOnlyFiveSecondsOfSlowClock() {
+        // The server generated this challenge at server time 1_000 with expiry +30.
+        val challenge = MessagingAuthChallenge(sequence(1, 32), 1_030)
+        MessagingProtocol.validateInboundAuthChallenge(challenge, 1_000) // exact clock
+        MessagingProtocol.validateInboundAuthChallenge(challenge, 999) // 1 s behind
+        MessagingProtocol.validateInboundAuthChallenge(challenge, 995) // 5 s behind
+        MessagingProtocol.validateInboundAuthChallenge(challenge, 1_029) // 1 s before expiry
+
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(challenge, 994) // 6 s behind
+        }
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(challenge, 1_030) // expired
+        }
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(challenge, -1) // invalid clock
+        }
+
+        // Original strict validator is unchanged for response/protocol semantics.
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateAuthChallenge(challenge, 999)
+        }
+    }
+
+    @Test
+    fun inboundToleranceNeverAllowsMalformedChallenge() {
+        val valid = MessagingAuthChallenge(sequence(1, 32), 1_030)
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(valid.copy(protocolVersion = 2), 1_000)
+        }
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(valid.copy(challenge = ByteArray(32)), 1_000)
+        }
+        assertThrows(MessagingProtocolException::class.java) {
+            MessagingProtocol.validateInboundAuthChallenge(valid.copy(challenge = byteArrayOf(1)), 1_000)
+        }
+    }
+
+    @Test
     fun deliveryContextRejectsRelayMetadataRewrite() {
         val now = 1_700_000_000L
         val sender = sequence(0x00, 32)
