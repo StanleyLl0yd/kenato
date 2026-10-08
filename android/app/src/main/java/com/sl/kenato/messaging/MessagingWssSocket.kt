@@ -90,7 +90,8 @@ private class OkHttpMessagingSocket(
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     listener.onFailure(
                         this@OkHttpMessagingSocket,
-                        if (response == null) t else MessagingHttpUpgradeFailure(response.code),
+                        if (response == null || t is MessagingWssException) t
+                        else MessagingHttpUpgradeFailure(response.code),
                     )
                 }
             },
