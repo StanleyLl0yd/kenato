@@ -1,5 +1,6 @@
 package com.sl.kenato.messaging
 
+import java.io.IOException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -7,6 +8,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+
+/** Only the numeric HTTP status is retained; response URLs, headers and bodies are discarded. */
+internal class MessagingHttpUpgradeFailure(val statusCode: Int) : IOException("WebSocket upgrade rejected")
 
 internal interface MessagingSocket {
     fun connect()
@@ -84,7 +88,10 @@ private class OkHttpMessagingSocket(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    listener.onFailure(this@OkHttpMessagingSocket, t)
+                    listener.onFailure(
+                        this@OkHttpMessagingSocket,
+                        if (response == null) t else MessagingHttpUpgradeFailure(response.code),
+                    )
                 }
             },
         )
