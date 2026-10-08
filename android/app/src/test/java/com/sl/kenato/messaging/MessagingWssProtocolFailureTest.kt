@@ -1,5 +1,6 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.diagnostics.M45DiagnosticEvent
 import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -11,6 +12,7 @@ class MessagingWssProtocolFailureTest {
         lateinit var listener: MessagingSocketListener
         val socket = FakeSocket()
         val scheduler = FakeScheduler()
+        val recorded = mutableListOf<M45DiagnosticEvent>()
         val coordinator = MessagingWssCoordinator(
             serviceOrigin = URI("https://example.test/"),
             sockets = MessagingSocketFactory { _, value ->
@@ -41,6 +43,7 @@ class MessagingWssProtocolFailureTest {
             inbound = MessagingInboundDeliveryHandler { _, _ -> null },
             scheduler = scheduler,
             clock = MessagingWssClock { 100 },
+            diagnostics = recorded::add,
         )
 
         coordinator.start()
@@ -58,6 +61,16 @@ class MessagingWssProtocolFailureTest {
         assertTrue(socket.cancelled)
         assertEquals(MessagingWssState.FAILED, coordinator.currentState())
         assertTrue(scheduler.pendingDelays().isEmpty())
+        assertEquals(
+            listOf(
+                M45DiagnosticEvent.TRANSPORT_STARTED,
+                M45DiagnosticEvent.CONNECT_ATTEMPT,
+                M45DiagnosticEvent.SOCKET_UPGRADED,
+                M45DiagnosticEvent.SERVER_PROTOCOL_REJECTED,
+                M45DiagnosticEvent.TRANSPORT_FAILED_CLOSED,
+            ),
+            recorded,
+        )
     }
 
     private class FakeSocket : MessagingSocket {
