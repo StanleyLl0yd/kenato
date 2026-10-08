@@ -1,7 +1,6 @@
 package com.sl.kenato.messaging
 
 import com.sl.kenato.diagnostics.M45DiagnosticEvent
-import com.sl.kenato.diagnostics.M45DiagnosticEvent
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,34 +63,6 @@ class MessagingWssCoordinatorTest {
 
     @Test
     fun clockSkewBeyondBoundFailsClosedWithoutSigningOrReconnecting() {
-        val fixture = Fixture()
-        fixture.coordinator.start()
-        val socket = fixture.sockets.latest
-        socket.open()
-        socket.serverFrame(MessagingServerFrame(authChallenge = MessagingAuthChallenge(CHALLENGE.copyOf(), 136)))
-        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
-        assertTrue(socket.cancelled)
-        assertEquals(0, socket.sent.size)
-        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
-        assertTrue(fixture.diagnosticEvents.contains(M45DiagnosticEvent.AUTH_CHALLENGE_REJECTED))
-    }
-
-    @Test
-    fun slowDeviceClockCanAuthenticateWithinFiveSecondTolerance() {
-        val fixture = Fixture()
-        fixture.coordinator.start()
-        val socket = fixture.sockets.latest
-        socket.open()
-        socket.serverFrame(MessagingServerFrame(authChallenge = MessagingAuthChallenge(CHALLENGE.copyOf(), 135)))
-        assertEquals(MessagingWssState.AWAITING_AUTHENTICATED, fixture.coordinator.currentState())
-        assertEquals(1, socket.sent.size)
-        assertTrue(fixture.diagnosticEvents.contains(M45DiagnosticEvent.AUTH_CHALLENGE_CLOCK_SKEW_TOLERATED))
-        socket.serverFrame(MessagingServerFrame(authenticated = true))
-        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
-    }
-
-    @Test
-    fun clockSkewBeyondFiveSecondsFailsClosedWithoutSigning() {
         val fixture = Fixture()
         fixture.coordinator.start()
         val socket = fixture.sockets.latest
