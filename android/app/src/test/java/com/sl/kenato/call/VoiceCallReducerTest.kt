@@ -50,6 +50,11 @@ class VoiceCallReducerTest {
         assertEquals(ringing, busy.next)
         assertEquals(listOf(VoiceCallEffectKind.SEND_BUSY), kinds(busy))
         assertEquals(SECONDARY, busy.effects.single().key)
+
+        val substitutedPeer = VoiceCallKey(PRIMARY.callId, OTHER_IDENTITY)
+        val collision = send(ringing, VoiceCallEventKind.INCOMING_OFFER, substitutedPeer)
+        assertEquals(ringing, collision.next)
+        assertTrue(collision.effects.isEmpty())
     }
 
     @Test
@@ -182,7 +187,7 @@ class VoiceCallReducerTest {
     private fun kinds(result: VoiceCallTransition): List<VoiceCallEffectKind> = result.effects.map { it.kind }
 
     private fun keyFor(value: Int): VoiceCallKey =
-        VoiceCallKey(encode(ByteArray(16) { i -> if (i == 0) value.toByte() else (value ushr (i * 8)).toByte() }), IDENTITY)
+        VoiceCallKey(encode(ByteArray(16) { index -> if (index == 0) value.toByte() else 0 }), IDENTITY)
 
     private fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
