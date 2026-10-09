@@ -65,3 +65,20 @@ coordinate authenticated ACK dispatch. The current `MessagingRecoveryCoordinator
 still treats all handoffs as chat; **do not wire voice to live receiving** until
 typed history/replay separation, outbound staging/recovery and explicit capability
 negotiation are in place.
+
+
+## Type-aware restart recovery (not connected to production)
+
+`MessagingRecoveryCoordinator` now accepts an **optional** M5 recovery adapter. With
+that adapter, only canonical M4 version-1 handoffs enter conversation history;
+M5 version-2 handoffs enter the separate validated voice journal and retain live
+ACK eligibility there. A fully validated expired M5 handoff can be retired
+without ACK. Text and voice idempotency-key collisions fail closed in either
+arrival order. Unsupported outbound voice handoffs, unknown versions and missing
+voice adapters also fail closed, without converting SDP or ICE into chat.
+
+The default production constructor intentionally omits M5, so existing M4
+behavior and startup are preserved. This does **not** enable calling or change
+the WSS inbound decrypt handler, outbound sender, WebRTC, or capabilities.
+Live delivery requires a separate reviewed M3 decrypt/typed stage integration
+and encrypted capability negotiation (see #97).

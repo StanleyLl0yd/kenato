@@ -1,8 +1,10 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.call.VoiceInboundHandoffRecovery
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
+import java.time.Instant
 
 internal data class MessagingRecoveredSend(
     val peerIdentityId: ByteArray,
@@ -21,6 +23,14 @@ internal data class MessagingRecoveryPlan(
 )
 
 internal class MessagingRecoveryException(message: String) : IllegalStateException(message)
+
+internal fun interface MessagingRecoveryClock {
+    fun nowEpochSeconds(): Long
+}
+
+private object SystemMessagingRecoveryClock : MessagingRecoveryClock {
+    override fun nowEpochSeconds(): Long = Instant.now().epochSecond
+}
 
 internal interface MessagingSessionHandoffRepository {
     fun pendingMessageHandoffs(ownerIdentityId: ByteArray): List<SessionMessageHandoff>
@@ -60,6 +70,8 @@ internal class LocalMessagingSessionHandoffRepository(
 internal class MessagingRecoveryCoordinator(
     private val sessions: MessagingSessionHandoffRepository,
     private val history: ConversationHistoryRepository,
+    private val voice: VoiceInboundHandoffRecovery? = null,
+    private val clock: MessagingRecoveryClock = SystemMessagingRecoveryClock,
 ) {
     @Synchronized
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
@@ -75,6 +87,16 @@ internal class MessagingRecoveryCoordinator(
                 peerIdentityId = record.peerIdentityId.copyOf(),
                 messageId = record.messageId.copyOf(),
             )
+        }.toMutableList()
+        if (voice != null) {
+            val now = clock.nowEpochSeconds()
+            recoveredAcks += voice.pendingLiveAcknowledgements(ownerIdentityId, now).map { record ->
+                MessagingRecoveredAck(record.peerIdentityId.copyOf(), record.messageId.copyOf())
+            }
+        }
+        val uniqueAcks = HashSet<MessageKey>()
+        if (recoveredAcks.any { !uniqueAcks.add(MessageKey(it.peerIdentityId, it.messageId)) }) {
+            throw MessagingRecoveryException("Text and voice ACK key collision during recovery")
         }
         return MessagingRecoveryPlan(recoveredSends, recoveredAcks)
     }
@@ -200,6 +222,11 @@ internal class MessagingRecoveryCoordinator(
                     if (includeInbound) recoverInbound(ownerIdentityId, handoff)
                 }
                 SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
+                    if (applicationVersion(handoff) != 1) {
+                        throw MessagingRecoveryException(
+                            "Voice or unknown outbound application handoff requires typed recovery",
+                        )
+                    }
                     val record = history.importOutboundPendingAcceptance(ownerIdentityId, handoff)
                     when (record.deliveryState) {
                         ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> {
@@ -234,8 +261,55 @@ internal class MessagingRecoveryCoordinator(
     }
 
     private fun recoverInbound(ownerIdentityId: ByteArray, handoff: SessionMessageHandoff) {
-        history.importInboundPendingAck(ownerIdentityId, handoff)
+        when (applicationVersion(handoff)) {
+            1 -> {
+                if (voice?.hasPersistedInboundMessageKey(
+                        ownerIdentityId, handoff.peerIdentityId, handoff.messageId,
+                    ) == true
+                ) {
+                    throw MessagingRecoveryException("M4 text collides with a durable M5 voice id")
+                }
+                history.importInboundPendingAck(ownerIdentityId, handoff)
+            }
+            2 -> {
+                val voiceRecovery = voice ?: throw MessagingRecoveryException(
+                    "M5 inbound handoff has no typed voice recovery adapter",
+                )
+                val sameTextKey = history.currentState(ownerIdentityId)?.messages?.any {
+                    it.direction == SessionStateCodec.HANDOFF_DIRECTION_INBOUND &&
+                        it.peerIdentityId.contentEquals(handoff.peerIdentityId) &&
+                        it.messageId.contentEquals(handoff.messageId)
+                } == true
+                if (sameTextKey) {
+                    throw MessagingRecoveryException("M5 voice collides with a durable M4 text id")
+                }
+                voiceRecovery.reconcileCommittedHandoff(
+                    ownerIdentityId, handoff, clock.nowEpochSeconds(),
+                )
+            }
+            else -> throw MessagingRecoveryException("Unsupported recovered M3 application record version")
+        }
+        // Both branches durably import or explicitly validate and retire an expired M5 event.
+        // A write failure leaves the M3 ratchet-coupled handoff intact. ACKs are read only
+        // after reconciliation and therefore cannot precede durable import.
         completeRequired(ownerIdentityId, handoff)
+    }
+
+    /**
+     * M3 handoffs were already authenticated before the atomic ratchet persist. Read only
+     * the canonical version-prefix discriminator here; each destination validates the full
+     * plaintext again. Unknown/malformed types must never enter user-visible M4 history.
+     */
+    private fun applicationVersion(handoff: SessionMessageHandoff): Int {
+        val bytes = handoff.encodedPlaintext
+        if (bytes.size < 2 || bytes[0] != 0x08.toByte()) {
+            throw MessagingRecoveryException("Recovered M3 application prefix is invalid")
+        }
+        return when (bytes[1].toInt() and 0xff) {
+            1 -> 1
+            2 -> 2
+            else -> throw MessagingRecoveryException("Unknown recovered M3 application version")
+        }
     }
 
     private fun completeRequired(ownerIdentityId: ByteArray, handoff: SessionMessageHandoff) {
