@@ -1,6 +1,6 @@
 # Kenato Threat Model
 
-Status: M0–M4 complete. M4 tracker #49 and implementation/final-verification issues #50–#54 are complete; final audit PR #60 and its resulting exact `main` revision independently passed the required verification matrix. #59/M4.5 is the next permitted milestone, and M5 remains blocked until #59 completes.
+Status: M0–M4.5 complete. M4 tracker #49 and issues #50–#54 are complete; M4.5/#59 finished signed Android 10/13 messaging acceptance on 2026-10-08. M5/#84 Voice Core is active, beginning with client-only deterministic call control. Media/signaling cryptographic trust assumptions still require dedicated M5 review.
 
 This document describes what Kenato intends to protect, what the system trusts, and what it does not claim to solve.
 
