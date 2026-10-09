@@ -1,0 +1,35 @@
+// M5 encrypted client-only voice signaling plaintext. Not a server frame.
+syntax = "proto3";
+
+package kenato.v1;
+
+option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;kenatov1";
+
+// A type discriminator inside M3 ciphertext, not visible to the M4 Go relay.
+enum VoiceSignalKind {
+  VOICE_SIGNAL_KIND_UNSPECIFIED = 0;
+  VOICE_SIGNAL_KIND_OFFER = 1;
+  VOICE_SIGNAL_KIND_ANSWER = 2;
+  VOICE_SIGNAL_KIND_REJECT = 3;
+  VOICE_SIGNAL_KIND_BUSY = 4;
+  VOICE_SIGNAL_KIND_HANGUP = 5;
+  VOICE_SIGNAL_KIND_ICE_CANDIDATE = 6;
+  VOICE_SIGNAL_KIND_END_OF_CANDIDATES = 7;
+}
+
+// VoiceSignalingPlaintext is an M3-authenticated app record, not M4 text.
+// Version 2 distinguishes it from M4 MessagingPlaintext (version 1).
+// All fields are REQUIRED by the canonical Android parser, including an empty
+// payload field for bodyless events; protobuf itself cannot enforce presence.
+// The enclosing M4 Envelope stays at protocol version 1.
+message VoiceSignalingPlaintext {
+  uint32 application_protocol_version = 1;
+  bytes sender_identity_id = 2;
+  bytes recipient_identity_id = 3;
+  bytes message_id = 4;
+  int64 sent_unix_seconds = 5;
+  int64 expires_at_unix_seconds = 6;
+  bytes call_id = 7;
+  VoiceSignalKind kind = 8;
+  bytes payload = 9;
+}
