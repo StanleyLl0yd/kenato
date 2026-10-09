@@ -29,6 +29,12 @@ This provisional schema is not sent over the network and does not implement appl
 9. **Glare policy to implement and test.** When both identities call each other simultaneously, compare canonical raw pinned identity ids deterministically to elect one winning outgoing call; retire the losing local offer before processing its incoming counterpart. Neither side may start two media sessions. The #85 reducer does not currently implement this swap; it must be extended and tested separately before enabling signaling.
 10. **Connectivity limitation.** Without a new relay, direct ICE/STUN P2P may fail behind symmetric NAT/CGNAT. Do not claim universal reachability or mark M5 complete without documented physical test results and an explicit product decision about the no-TURN limitation.
 
+## Isolated durable replay journal in M5/#86
+
+The standalone Android replay journal now has a bounded (512 records; 64 KiB) checksum-protected no-backup AtomicFile store for **metadata only**: owner and peer identities, authenticated message/call identifiers, signal kind, expiry and SHA-256 of the exact encrypted M4 envelope. It does not retain SDP, ICE, plaintext, ciphertext or chat history. A reused peer/message id with changed ciphertext is a conflict. A fresh offer id reusing an existing live peer/call id is durably suppressed, even after process restart. Expired records are pruned; a full live journal rejects new admissions rather than evicting active replay evidence.
+
+The journal requires the already **M3-committed** `SessionMessageHandoff` and validates exact encrypted inner/outer identity, ids, version and expiry before persisting metadata. It must run **after atomic ratchet+handoff commit** and **before ACK or reducer effects**. It does not yet own the M3 handoff completion or restart reconciliation: existing `MessagingRecoveryCoordinator` still assumes all handoffs are chat messages. Connecting this component without typed recovery and ACK changes is prohibited. Local SHA-256 detects accidental corruption, **not** hostile tampering by an attacker controlling app storage.
+
 ## Safe implementation order
 
 - First review this contract, compatibility and capability negotiation, with canonical golden vectors shared where possible.
