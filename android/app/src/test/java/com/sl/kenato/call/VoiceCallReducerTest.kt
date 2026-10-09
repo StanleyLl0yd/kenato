@@ -167,12 +167,12 @@ class VoiceCallReducerTest {
 
     @Test
     fun identifiersRequireCanonicalNonzeroBoundedBase64Url() {
-        for (invalidCall in listOf("", "abc", "=", "!", encode(ByteArray(16)), encode(ByteArray(17)))) {
+        for (invalidCall in listOf("", "abc", "=", "!", "A".repeat(100_000), encode(ByteArray(16)), encode(ByteArray(17)))) {
             assertThrows(IllegalArgumentException::class.java) {
                 VoiceCallKey(invalidCall, IDENTITY)
             }
         }
-        for (invalidPeer in listOf("", "abc", "!", encode(ByteArray(32)), encode(ByteArray(31)))) {
+        for (invalidPeer in listOf("", "abc", "!", "A".repeat(100_000), encode(ByteArray(32)), encode(ByteArray(31)))) {
             assertThrows(IllegalArgumentException::class.java) {
                 VoiceCallKey(PRIMARY.callId, invalidPeer)
             }

@@ -212,7 +212,8 @@ private const val RETIRED_CALL_LIMIT = 64
 private val BASE64_URL = Regex("^[A-Za-z0-9_-]+$")
 
 private fun requireCanonicalBase64Url(encoded: String, expectedBytes: Int) {
-    require(encoded.isNotEmpty() && '=' !in encoded && BASE64_URL.matches(encoded))
+    // Reject unbounded caller input before regex matching or base64 decoding.
+    require(encoded.length == (expectedBytes * 8 + 5) / 6 && BASE64_URL.matches(encoded))
     val bytes = try {
         Base64.getUrlDecoder().decode(encoded)
     } catch (_: IllegalArgumentException) {
