@@ -81,7 +81,7 @@ Completion record: #50–#54 completed the M4 protocol/authentication, bounded m
 
 ## M4.5 — Closed Messaging Release `0.0.x`
 
-Status: **Active**; #59/M4.5 is the current release gate. M4 is complete. The signed `0.0.1` source release is published; #75/#76 adds the minimal application surface required to execute the physical-device gate as `0.0.2`. M5 remains blocked until this gate completes.
+Status: **Complete** (2026-10-08; #59 and #77 closed). Signed `v0.0.4` was physically accepted on Android 10 and Android 13: simultaneous WSS authentication, two-way encrypted text delivery, offline mailbox/recovery, no duplicate visible history, in-place updates, reboot and network-change checks. Earlier numeric releases remain immutable.
 
 This is a small messaging-only pre-voice release, not a separate prerelease version class:
 
@@ -104,6 +104,8 @@ Versioning policy: published pre-1.0 builds use ordinary numeric versions (`0.0.
 Exit: `0.0.1` remains the immutable signed baseline; the acceptance-capable numeric follow-up (`0.0.2` or later if blocker fixes are required) is installed on the closed cohort and the full #59 flow is exercised. Blockers are recorded and fixed without unrelated feature expansion. **M5 must not start until #59 is complete.**
 
 ## M5 — Voice Core
+
+Status: **Active** (2026-10-09; tracker #84). First slice: deterministic client-side call control. No voice feature is complete until reviewed signaling, media, connectivity and physical tests pass. Owner's no-new-server-component requirement conflicts with the roadmap's coturn fallback; do not silently add server infrastructure. See `docs/development/M5_CALL_STATE.md`.
 
 - audio-only WebRTC;
 - Opus;
