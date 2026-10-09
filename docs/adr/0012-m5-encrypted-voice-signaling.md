@@ -65,3 +65,39 @@ coordinate authenticated ACK dispatch. The current `MessagingRecoveryCoordinator
 still treats all handoffs as chat; **do not wire voice to live receiving** until
 typed history/replay separation, outbound staging/recovery and explicit capability
 negotiation are in place.
+
+
+## Type-aware restart recovery (not connected to production)
+
+`MessagingRecoveryCoordinator` now accepts an **optional** M5 recovery adapter. With
+that adapter, only canonical M4 version-1 handoffs enter conversation history;
+M5 version-2 handoffs enter the separate validated voice journal and retain live
+ACK eligibility there. A fully validated expired M5 handoff can be retired
+without ACK. Text and voice idempotency-key collisions fail closed in either
+arrival order. Unsupported outbound voice handoffs, unknown versions and missing
+voice adapters also fail closed, without converting SDP or ICE into chat.
+
+The default production constructor intentionally omits M5, so existing M4
+behavior and startup are preserved. This does **not** enable calling or change
+the WSS inbound decrypt handler, outbound sender, WebRTC, or capabilities.
+Live delivery requires a separate reviewed M3 decrypt/typed stage integration
+and encrypted capability negotiation (see #97).
+
+
+## Required semantic durability before live voice ACK
+
+A journal containing only hashed replay metadata **cannot** reconstruct the
+authenticated SDP/ICE payload if the process dies after its M3 handoff is
+removed. Consequently, the optional typed voice recovery adapter now requires
+a separate `MessagingDurableVoiceEventSink` to persist the **exact** authenticated
+live voice handoff before marking replay metadata ACK-eligible and completing
+the M3 handoff. The sink must be idempotent by owner/peer/message id and
+throw on any persistence failure or payload conflict. Failure retains the M3
+handoff and never creates new ACK eligibility. Fully validated expired events
+bypass the sink and generate no ACK.
+
+No production semantic sink exists yet. In-memory callbacks and volatile
+reducer state are **not** suitable implementations. An encrypted, bounded,
+restart-recoverable client store and exact M3/M4 dispatch/capability integration
+remain blocked under #97; do not opt into voice recovery in the live app before
+those are reviewed.

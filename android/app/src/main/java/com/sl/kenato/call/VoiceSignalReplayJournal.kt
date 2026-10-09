@@ -143,6 +143,33 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
      * M3 handoffs. No ACK permission exists for expired or uncommitted signaling. M4 socket
      * ownership and the actual ACK transmission remain outside this journal.
      */
+    /**
+     * A voice receipt must never share an authenticated sender/message id with M4 text.
+     * Include expired retained records: expiry revokes ACK, not message-id provenance.
+     */
+    @Synchronized
+    fun hasPersistedInboundMessageKey(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+    ): Boolean {
+        if (ownerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            ownerIdentityId.all { it == 0.toByte() } ||
+            peerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            messageId.size != VOICE_REPLAY_MESSAGE_ID_BYTES
+        ) {
+            throw VoiceSignalReplayException("Voice replay lookup key is invalid")
+        }
+        val state = store.read()?.let(VoiceSignalReplayStateCodec::decode) ?: return false
+        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+            throw VoiceSignalReplayException("Voice replay lookup belongs to another identity")
+        }
+        return state.records.any {
+            it.peerIdentityId.contentEquals(peerIdentityId) &&
+                it.messageId.contentEquals(messageId)
+        }
+    }
+
     @Synchronized
     fun pendingLiveAcknowledgements(
         ownerIdentityId: ByteArray,

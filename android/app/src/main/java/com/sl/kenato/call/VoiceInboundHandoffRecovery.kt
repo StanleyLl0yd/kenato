@@ -95,6 +95,12 @@ internal class VoiceInboundHandoffRecovery(
         return VoiceInboundHandoffRecoveryOutcome.DURABLY_IMPORTED
     }
 
+    fun hasPersistedInboundMessageKey(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+    ): Boolean = journal.hasPersistedInboundMessageKey(ownerIdentityId, peerIdentityId, messageId)
+
     fun pendingLiveAcknowledgements(
         ownerIdentityId: ByteArray,
         nowEpochSeconds: Long,
