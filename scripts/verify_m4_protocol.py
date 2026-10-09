@@ -168,7 +168,8 @@ for fragment in (
 roadmap = read("ROADMAP.md")
 require("ROADMAP.md", roadmap, "Status: **Complete** (2026-09-17; tracker #49; final verification #54).")
 require("ROADMAP.md", roadmap, "#54 final end-to-end/security verification — **complete**")
-require("ROADMAP.md", roadmap, "#59/M4.5")
+require("ROADMAP.md", roadmap, "Status: **Complete** (2026-10-08; #59 and #77 closed).")
+require("ROADMAP.md", roadmap, "## M5 — Voice Core")
 
 protocol_readme = read("protocol/README.md")
 require("protocol/README.md", protocol_readme, "## M4 minimal messaging")
@@ -178,18 +179,19 @@ require("protocol/README.md", protocol_readme, "16-byte")
 require("protocol/README.md", protocol_readme, "72 hours")
 
 architecture = read("docs/architecture/OVERVIEW.md")
-require("docs/architecture/OVERVIEW.md", architecture, "M0–M4 are complete")
+require("docs/architecture/OVERVIEW.md", architecture, "M0–M4.5 are complete")
 require("docs/architecture/OVERVIEW.md", architecture, "crash-safe durable delivery handoff")
-require("docs/architecture/OVERVIEW.md", architecture, "#59/M4.5 is the next permitted milestone")
+require("docs/architecture/OVERVIEW.md", architecture, "M5/#84 Voice Core is active")
 
 threat_model = read("docs/security/THREAT_MODEL.md")
 for fragment in (
-    "Status: M0–M4 complete.",
+    "Status: M0–M4.5 complete.",
+    "M4.5/#59 finished",
     "M4 WSS authentication",
     "M4 transport is intentionally at-least-once",
     "atomically retains a recoverable inbound handoff with the advanced ratchet",
     "MessagingSendAccepted",
-    "#59/M4.5 is the next permitted milestone",
+    "M5/#84 Voice Core is active",
 ):
     require("docs/security/THREAT_MODEL.md", threat_model, fragment)
 

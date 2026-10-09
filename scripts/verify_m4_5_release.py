@@ -204,7 +204,7 @@ forbid(
 require(
     "ROADMAP.md",
     "## M4.5 — Closed Messaging Release `0.0.x`",
-    "Status: **Active**; #59/M4.5 is the current release gate",
+    "Status: **Complete** (2026-10-08; #59 and #77 closed).",
     "first published source version `0.0.1`, Android `versionCode = 1`, immutable tag `v0.0.1`",
     "Alpha, beta, rc, and other prerelease suffixes are not used",
     "M5 must not start until #59 is complete",
@@ -225,13 +225,13 @@ require(
 )
 require(
     "README.md",
-    "first closed messaging-only `0.0.1` release",
+    "signed `v0.0.4` acceptance build",
     "no alpha/beta/rc suffixes",
-    "M5 remains blocked until #59 is complete",
+    "**M5/#84 Voice Core** is active",
 )
 require(
     "CONTRIBUTING.md",
-    "first closed messaging-only `0.0.1` release",
+    "signed `v0.0.4`",
     "Do not introduce alpha, beta, rc, or other prerelease suffixes",
 )
 for path in (

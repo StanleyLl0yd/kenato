@@ -96,7 +96,7 @@ require(
     "ROADMAP.md",
     "Status: **Complete** (2026-09-17; tracker #49; final verification #54).",
     "#54 final end-to-end/security verification — **complete**",
-    "#59/M4.5",
+    "Status: **Complete** (2026-10-08; #59 and #77 closed).",
 )
 require(
     "protocol/README.md",
@@ -114,8 +114,8 @@ require(
     "AGENTS.md",
     "M0–M4 are complete.",
     "#54 final repository-wide verification",
-    "#59/M4.5 is the next permitted milestone",
-    "Do not start M5",
+    "#59/M4.5 is complete",
+    "M5/#84 Voice Core is now the active milestone",
 )
 forbid(
     "AGENTS.md",
@@ -125,9 +125,9 @@ forbid(
 )
 require(
     "CONTRIBUTING.md",
-    "M4 Minimal Messaging are complete",
-    "#59/M4.5 is the next permitted milestone",
-    "M5 remains blocked",
+    "M0–M4.5 are complete",
+    "signed `v0.0.4`",
+    "M5/#84 Voice Core is active",
 )
 forbid(
     "CONTRIBUTING.md",
@@ -136,9 +136,9 @@ forbid(
 )
 require(
     "docs/development/OCI_HOST.md",
-    "M0–M4 are complete.",
-    "#59/M4.5 is the next permitted milestone",
-    "M5 remains blocked",
+    "M0–M4.5 are complete.",
+    "#59/M4.5 completed",
+    "M5/#84 Voice Core is active",
 )
 forbid(
     "docs/development/OCI_HOST.md",
@@ -147,9 +147,9 @@ forbid(
 )
 require(
     "docs/architecture/OVERVIEW.md",
-    "M0–M4 are complete.",
-    "#54 completed final repository-wide M4 end-to-end/security verification",
-    "#59/M4.5 is the next permitted milestone",
+    "M0–M4.5 are complete.",
+    "M4 tracker #49 covers completed slices #50–#54",
+    "M5/#84 Voice Core is active",
 )
 forbid(
     "docs/architecture/OVERVIEW.md",
@@ -158,9 +158,9 @@ forbid(
 )
 require(
     "docs/security/THREAT_MODEL.md",
-    "Status: M0–M4 complete.",
+    "Status: M0–M4.5 complete.",
     "#50–#54 are complete",
-    "#59/M4.5 is the next permitted milestone",
+    "M5/#84 Voice Core is active",
 )
 forbid(
     "docs/security/THREAT_MODEL.md",

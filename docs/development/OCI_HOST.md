@@ -42,6 +42,6 @@ Source-IP restriction for SSH and final production perimeter rules are deliberat
 
 ## Milestone boundary
 
-M0–M4 are complete. M4 Minimal Messaging completed implementation slices #50–#53 and final repository-wide verification #54 with exact-main green. The OCI host does not expand the current product or protocol milestone scope and must not be used as a reason to introduce M5 calling/WebRTC behavior. #59/M4.5 is the next permitted milestone and M5 remains blocked until that closed messaging-alpha gate is complete.
+M0–M4.5 are complete. M4 Minimal Messaging finished #50–#54 with exact-main verification, and #59/M4.5 completed signed `v0.0.4` physical-device acceptance. M5/#84 Voice Core is active at the client-only call-state stage. This OCI host does not authorize new signaling endpoints, TURN/coturn or other server components without explicit owner approval.
 
-Do not expose the server publicly merely because this host exists. The server remains loopback-bound by default until a reviewed deployment explicitly introduces a TLS boundary and required network policy.
+Keep `kenato-server` loopback-bound behind the reviewed TLS/WSS proxy boundary from #77. Public network exposure, host firewall policy and any calling infrastructure changes require explicit review. This document does not assert fresh live-host compliance without operational evidence.

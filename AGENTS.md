@@ -40,7 +40,7 @@ Current repository phase:
 
 M0–M4 are complete. M4 — Minimal Messaging completed tracker #49 through #50 protocol/auth, #51 bounded mailbox persistence, #52 authenticated WSS/direct routing, #53 Android messaging/history, and #54 final repository-wide verification. Final audit PR #60 was squash-merged and the resulting exact `main` revision independently passed the required push verification matrix.
 
-#59/M4.5 is the next permitted milestone: the closed messaging-only `0.1.0-alpha.1` physical-device release gate. Do not start M5 or later-milestone implementation until #59 is complete. Repository-wide audit/refactor/hardening work must preserve completed milestone boundaries and must not silently grow into a later product milestone.
+#59/M4.5 is complete after the signed `v0.0.4` closed Android 10/13 physical acceptance (2026-10-08). M5/#84 Voice Core is now the active milestone. Keep voice work in focused reviewed slices and do not start M6 or later milestones before M5 exits. The owner previously requested no new server components; do not silently implement new backend signaling endpoints or coturn infrastructure before resolving this explicit architecture constraint.
 
 Kenato 1.0 is intentionally narrow:
 
