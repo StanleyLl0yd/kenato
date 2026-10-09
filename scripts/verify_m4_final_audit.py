@@ -96,7 +96,7 @@ require(
     "ROADMAP.md",
     "Status: **Complete** (2026-09-17; tracker #49; final verification #54).",
     "#54 final end-to-end/security verification — **complete**",
-    "#59/M4.5",
+    "Status: **Complete** (2026-10-08; #59 and #77 closed).",
 )
 require(
     "protocol/README.md",
