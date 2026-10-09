@@ -153,6 +153,19 @@ class VoiceCallReducerTest {
     }
 
     @Test
+    fun mediaFailureInActiveCallTerminatesAndStopsMediaOnce() {
+        val active = establishOutgoing()
+        val failed = send(active, VoiceCallEventKind.MEDIA_FAILED)
+        assertEquals(VoiceCallPhase.IDLE, failed.next.phase)
+        assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP, VoiceCallEffectKind.STOP_MEDIA), kinds(failed))
+        assertEquals(listOf(PRIMARY.callId), failed.next.retiredCallIds)
+
+        val duplicate = send(failed.next, VoiceCallEventKind.MEDIA_FAILED)
+        assertEquals(failed.next, duplicate.next)
+        assertTrue(duplicate.effects.isEmpty())
+    }
+
+    @Test
     fun identifiersRequireCanonicalNonzeroBoundedBase64Url() {
         for (invalidCall in listOf("", "abc", "=", "!", encode(ByteArray(16)), encode(ByteArray(17)))) {
             assertThrows(IllegalArgumentException::class.java) {
@@ -187,7 +200,7 @@ class VoiceCallReducerTest {
     private fun kinds(result: VoiceCallTransition): List<VoiceCallEffectKind> = result.effects.map { it.kind }
 
     private fun keyFor(value: Int): VoiceCallKey =
-        VoiceCallKey(encode(ByteArray(16) { index -> if (index == 0) value.toByte() else 0 }), IDENTITY)
+        VoiceCallKey(encode(ByteArray(16) { index -> if (index == 0) value.toByte() else 0.toByte() }), IDENTITY)
 
     private fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
