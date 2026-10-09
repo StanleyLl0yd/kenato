@@ -23,18 +23,18 @@ kenato-server (Go)
   |- M3 public session bootstrap / temporary init state
   |- authenticated WSS routing            [M4 #52]
   |- bounded offline mailbox              [M4 #51]
-  |- temporary TURN credentials           [later]
+  |- temporary TURN credentials           [not implemented; pending decision]
   |
   +-- SQLite contact/session state
   +-- SQLite mailbox state
 
-Voice media:
+Planned voice media (not implemented):
 Android <---- WebRTC / ICE ----> Android
                   |
-                  +---- coturn fallback
+                  +---- coturn fallback [requires architecture approval]
 ```
 
-M0–M4 are complete. #50 completed the authenticated messaging wire contract and shared protocol bounds, #51 completed the bounded durable mailbox, #52 completed authenticated WSS connection ownership, direct delivery and bounded mailbox fallback, #53 completed the Android durable M3 message handoff, authenticated WSS reconnect/recovery, bounded no-backup conversation history, and minimal application messaging boundary, and #54 completed final repository-wide M4 end-to-end/security verification with exact-main green. #59/M4.5 is the next permitted milestone. TURN credentials and calling remain later milestones, and M5 remains blocked until #59 completes.
+M0–M4.5 are complete. #50–#54 finished M4 authenticated messaging, bounded mailbox, Android durable delivery and repository-wide verification. #59/M4.5 completed signed `v0.0.4` messaging acceptance on physical Android 10 and Android 13 devices, and #77 completed reviewed TLS/WSS deployment acceptance. M5/#84 Voice Core is active with a client-only deterministic call-state reducer. Authenticated signaling, audio media and NAT traversal are not implemented. TURN infrastructure remains subject to the owner’s no-new-server-component constraint.
 
 ## Client
 
@@ -61,6 +61,7 @@ Infrastructure
    |- Identity / contacts
    |- Crypto/session
    |- Messaging transport/history    [M4]
+   |- CallStateReducer                [M5 #84, control only]
    |- WebRtcTransport                 [later]
    |- AudioSession                    [later]
    |- Persistence
@@ -185,7 +186,7 @@ The #53 Android client uses a dedicated exact-pinned OkHttp 5.5.0 WebSocket clie
 
 Android conversation history is independently bounded to at most 1,000 messages / 4 MiB per conversation and 4,096 messages / 16 MiB globally. `PENDING_ACCEPTANCE` outbound state is never pruned for age/capacity. Accepted or terminal-expired outbound records are safe-prunable oldest-first; inbound `PENDING_ACK` becomes safe-prunable only once its authenticated expiry has passed.
 
-With #50–#54 complete, M4 Minimal Messaging is closed at the architecture level. #59/M4.5 is the next permitted milestone; M5 remains blocked until that closed messaging-alpha gate completes.
+With #50–#54 complete, M4 Minimal Messaging is closed at the architecture level. #59/M4.5 subsequently completed signed `v0.0.4` physical-device acceptance. M5/#84 has started with client-only call control; messaging security and delivery contracts remain unchanged.
 
 ## Calling
 
@@ -199,7 +200,7 @@ Planned media stack:
 - P2P when possible;
 - coturn relay when direct connectivity fails.
 
-TURN is a packet relay, not a media server. It must not require plaintext voice content. M5 calling work is out of scope for M4 and remains blocked by the post-M4 closed Messaging Alpha gate.
+TURN is a packet relay, not a media server. It must not require plaintext voice content. M5 currently implements only deterministic client call-state control; no WebRTC, Opus, authenticated call signaling, or connectivity layer is integrated. The proposed coturn fallback would introduce a new server component and must not be deployed without an explicit owner decision.
 
 ## Security invariants
 
@@ -230,6 +231,6 @@ The current non-production development host is an Oracle Cloud Infrastructure Am
 
 The architecture remains provider-neutral: a small Linux VPS/free-tier instance and Raspberry Pi remain valid deployment targets, so backend resource usage should stay modest and dependencies minimal.
 
-M0–M4 are complete. M4 tracker #49 covers completed slices #50–#54, with final audit PR #60 and the resulting exact `main` revision verified green. #59/M4.5 is the next permitted closed messaging-only `0.1.0-alpha.1` physical-device release gate. M5 does not start until that gate is complete. Public server exposure still waits for an explicitly reviewed deployment/TLS boundary.
+M0–M4.5 are complete. M4 tracker #49 covers completed slices #50–#54, including final audit PR #60. #59/M4.5 closed after signed `v0.0.4` physical Android 10/13 acceptance, and reviewed TLS/WSS deployment gate #77 is complete. M5/#84 Voice Core is active at the client call-state stage. Changes to server infrastructure or calling deployment still require separate review.
 
 Self-hosted federation is explicitly out of scope for 1.0.
