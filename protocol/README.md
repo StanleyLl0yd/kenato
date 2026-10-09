@@ -12,6 +12,7 @@ The current schemas live under `protocol/kenato/v1/`:
 - `contact.proto` — M2 public identity publication and invite/contact establishment;
 - `session.proto` — M3 public session-account material, one-time-key reservation, initial Olm pre-key frame exchange, and the local/native ciphertext boundary;
 - `messaging.proto` — M4 authenticated WSS control frames, delivery ACKs, generic send acceptance/errors, and the plaintext structure that is encrypted by the established M3 session.
+- `voice.proto` — **proposed M5-only** application-version-2 encrypted call signaling schema; the Go relay does not parse this record.
 
 M4 does not change the E2EE trust root. The existing long-lived Kenato P-256 identity authenticates connection ownership, while ordinary user text remains inside M3 authenticated ciphertext. The server may see only bounded routing metadata and opaque ciphertext.
 

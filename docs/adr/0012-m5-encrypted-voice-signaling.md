@@ -10,6 +10,12 @@ M4's `MessagingPlaintext` is a **text-only** record inside authenticated M3 ciph
 
 The first M5 slice (#85) supplies a pure single-call state reducer and no transport. The existing M4 mailbox has a maximum 72-hour TTL; it does not imply a ringing or call-event replay policy. The in-memory 64-call retired cache is not durable replay defense.
 
+## Provisional codec proof in the draft PR
+
+A standalone, unconnected `VoiceSignalingPlaintext` schema and Android strict codec use encrypted **application protocol version 2**, while the external M4 Envelope stays at version 1. Version 2 is deliberate domain separation: an M4-only Android receiver rejects it rather than interpreting the call id as chat text. Fields 1-6 keep M4 identity, message and time bindings; field 7 is the call id, field 8 the signal kind, and field 9 the kind-specific body. The codec accepts only fields 1-9 exactly once and in canonical field order, including an empty field 9 for bodyless signals. Tests are local codec tests, not transport security evidence.
+
+This provisional schema is not sent over the network and does not implement application capability discovery, state journal, glare switching, SDP semantic validation, DTLS verification, or WebRTC. Do not connect it to the M4 inbound handler until the entire atomic handoff/classification/replay/ACK design is reviewed.
+
 ## Proposed decisions to resolve before implementation
 
 1. **No new server component.** Reuse the established M3 identity-bound Olm encryption and authenticated M4 WSS envelope, ACK, retry and bounded mailbox routing. Do not add HTTP APIs, Go message-type metadata, TURN/coturn, plaintext SDP, or an unauthenticated voice channel. Keep M4 wire protocol v1 and existing text behavior intact.

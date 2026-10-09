@@ -5,7 +5,8 @@ PROTO_FILES := \
 	protocol/kenato/v1/envelope.proto \
 	protocol/kenato/v1/contact.proto \
 	protocol/kenato/v1/session.proto \
-	protocol/kenato/v1/messaging.proto
+	protocol/kenato/v1/messaging.proto \
+	protocol/kenato/v1/voice.proto
 
 .PHONY: test test-protocol test-go test-rust test-security test-android
 .NOTPARALLEL: test
