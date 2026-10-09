@@ -7,13 +7,21 @@ option go_package = "github.com/StanleyLl0yd/kenato/protocol/gen/go/kenato/v1;ke
 
 // A type discriminator inside M3 ciphertext, not visible to the M4 Go relay.
 enum VoiceSignalKind {
+  // Not a valid signaling event.
   VOICE_SIGNAL_KIND_UNSPECIFIED = 0;
+  // An authenticated new call and its SDP offer.
   VOICE_SIGNAL_KIND_OFFER = 1;
+  // An authenticated response containing SDP answer.
   VOICE_SIGNAL_KIND_ANSWER = 2;
+  // The remote party declined the call.
   VOICE_SIGNAL_KIND_REJECT = 3;
+  // The remote party is already in another call.
   VOICE_SIGNAL_KIND_BUSY = 4;
+  // An authenticated request to finish the call.
   VOICE_SIGNAL_KIND_HANGUP = 5;
+  // One bounded remote ICE candidate.
   VOICE_SIGNAL_KIND_ICE_CANDIDATE = 6;
+  // The candidate set is complete.
   VOICE_SIGNAL_KIND_END_OF_CANDIDATES = 7;
 }
 
@@ -23,13 +31,22 @@ enum VoiceSignalKind {
 // payload field for bodyless events; protobuf itself cannot enforce presence.
 // The enclosing M4 Envelope stays at protocol version 1.
 message VoiceSignalingPlaintext {
+  // Encrypted application record version, exactly 2.
   uint32 application_protocol_version = 1;
+  // Authenticated pinned sender Kenato identity, exactly 32 bytes.
   bytes sender_identity_id = 2;
+  // Authenticated pinned recipient Kenato identity, exactly 32 bytes.
   bytes recipient_identity_id = 3;
+  // Nonzero 16-byte id matching the enclosing M4 Envelope.
   bytes message_id = 4;
+  // Authenticated sender timestamp, in Unix seconds.
   int64 sent_unix_seconds = 5;
+  // Absolute authenticated expiry, at most 90 seconds after sent.
   int64 expires_at_unix_seconds = 6;
+  // Nonzero 16-byte correlation id distinct from the message id.
   bytes call_id = 7;
+  // Typed signaling event, invisible to the Go relay.
   VoiceSignalKind kind = 8;
+  // Kind-specific body with canonical bounded UTF-8 or empty control bytes.
   bytes payload = 9;
 }
