@@ -308,6 +308,13 @@ internal class MessagingRecoveryCoordinator(
                 } catch (error: Exception) {
                     throw MessagingRecoveryException("Recovered M5 envelope is invalid")
                 }
+                if (!MessagingWire.encodeEnvelope(envelope).contentEquals(handoff.encodedEnvelope) ||
+                    !envelope.senderIdentityId.contentEquals(handoff.peerIdentityId) ||
+                    !envelope.recipientIdentityId.contentEquals(ownerIdentityId) ||
+                    !envelope.messageId.contentEquals(handoff.messageId)
+                ) {
+                    throw MessagingRecoveryException("Recovered M5 handoff is not canonically bound to envelope")
+                }
                 if (envelope.expiresAtEpochSeconds > now) {
                     // The M3 handoff is already committed and authenticated. Validate the
                     // full canonical inner/outer context BEFORE trusting the application sink.
