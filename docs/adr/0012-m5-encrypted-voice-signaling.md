@@ -82,3 +82,22 @@ behavior and startup are preserved. This does **not** enable calling or change
 the WSS inbound decrypt handler, outbound sender, WebRTC, or capabilities.
 Live delivery requires a separate reviewed M3 decrypt/typed stage integration
 and encrypted capability negotiation (see #97).
+
+
+## Required semantic durability before live voice ACK
+
+A journal containing only hashed replay metadata **cannot** reconstruct the
+authenticated SDP/ICE payload if the process dies after its M3 handoff is
+removed. Consequently, the optional typed voice recovery adapter now requires
+a separate `MessagingDurableVoiceEventSink` to persist the **exact** authenticated
+live voice handoff before marking replay metadata ACK-eligible and completing
+the M3 handoff. The sink must be idempotent by owner/peer/message id and
+throw on any persistence failure or payload conflict. Failure retains the M3
+handoff and never creates new ACK eligibility. Fully validated expired events
+bypass the sink and generate no ACK.
+
+No production semantic sink exists yet. In-memory callbacks and volatile
+reducer state are **not** suitable implementations. An encrypted, bounded,
+restart-recoverable client store and exact M3/M4 dispatch/capability integration
+remain blocked under #97; do not opt into voice recovery in the live app before
+those are reviewed.

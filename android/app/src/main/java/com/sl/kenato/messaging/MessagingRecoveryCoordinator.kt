@@ -1,5 +1,7 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.call.EncryptedApplicationPayload
+import com.sl.kenato.call.EncryptedApplicationPayloadClassifier
 import com.sl.kenato.call.VoiceInboundHandoffRecovery
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionMessageHandoff
@@ -23,6 +25,21 @@ internal data class MessagingRecoveryPlan(
 )
 
 internal class MessagingRecoveryException(message: String) : IllegalStateException(message)
+
+/**
+ * A M5 live event MUST be durably retained for semantic call handling before its metadata
+ * becomes ACK-eligible. Implementations persist the authenticated M3 handoff's exact voice
+ * plaintext, are idempotent by owner/peer/message id, and throw on failure/conflict.
+ *
+ * A volatile UI callback cannot satisfy this interface. No implementation is wired by
+ * default: M4 remains text-only until an audited encrypted voice-event store exists.
+ */
+internal fun interface MessagingDurableVoiceEventSink {
+    fun persistAuthenticatedVoiceEvent(
+        ownerIdentityId: ByteArray,
+        handoff: SessionMessageHandoff,
+    )
+}
 
 internal fun interface MessagingRecoveryClock {
     fun nowEpochSeconds(): Long
@@ -71,6 +88,7 @@ internal class MessagingRecoveryCoordinator(
     private val sessions: MessagingSessionHandoffRepository,
     private val history: ConversationHistoryRepository,
     private val voice: VoiceInboundHandoffRecovery? = null,
+    private val voiceSink: MessagingDurableVoiceEventSink? = null,
     private val clock: MessagingRecoveryClock = SystemMessagingRecoveryClock,
 ) {
     @Synchronized
@@ -283,9 +301,30 @@ internal class MessagingRecoveryCoordinator(
                 if (sameTextKey) {
                     throw MessagingRecoveryException("M5 voice collides with a durable M4 text id")
                 }
-                voiceRecovery.reconcileCommittedHandoff(
-                    ownerIdentityId, handoff, clock.nowEpochSeconds(),
-                )
+                val now = clock.nowEpochSeconds()
+                if (now < 0L) throw MessagingRecoveryException("Voice recovery clock is invalid")
+                val envelope = try {
+                    MessagingWire.decodeEnvelope(handoff.encodedEnvelope)
+                } catch (error: Exception) {
+                    throw MessagingRecoveryException("Recovered M5 envelope is invalid")
+                }
+                if (envelope.expiresAtEpochSeconds > now) {
+                    // The M3 handoff is already committed and authenticated. Validate the
+                    // full canonical inner/outer context BEFORE trusting the application sink.
+                    // Requiring a durable semantic sink before the replay journal prevents an
+                    // ACK from silently discarding the only restorable SDP/ICE offer on crash.
+                    val parsed = EncryptedApplicationPayloadClassifier.classify(
+                        handoff.encodedPlaintext, envelope, now,
+                    )
+                    if (parsed !is EncryptedApplicationPayload.Voice) {
+                        throw MessagingRecoveryException("Recovered M5 handoff is not a voice record")
+                    }
+                    val sink = voiceSink ?: throw MessagingRecoveryException(
+                        "M5 live handoff has no durable semantic event sink",
+                    )
+                    sink.persistAuthenticatedVoiceEvent(ownerIdentityId, handoff)
+                }
+                voiceRecovery.reconcileCommittedHandoff(ownerIdentityId, handoff, now)
             }
             else -> throw MessagingRecoveryException("Unsupported recovered M3 application record version")
         }
