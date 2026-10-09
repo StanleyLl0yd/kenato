@@ -4,7 +4,7 @@ The Kenato wire protocol is platform-independent and versioned independently of 
 
 ## Current state
 
-M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 Minimal Messaging is complete across protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), Android messaging/history (#53), and final repository-wide end-to-end/security verification (#54). Final audit PR #60 and its resulting exact `main` revision passed the required verification matrix. #59/M4.5 is the next permitted milestone; M5 remains blocked until #59 completes.
+M0 established the outer server-routable envelope. M1 established device-local identity. M2 completed public identity publication and invite/contact establishment. M3 completed authenticated asynchronous E2EE session bootstrap under the existing `kenato.v1` package. M4 Minimal Messaging is complete across protocol/auth (#50), bounded mailbox persistence (#51), authenticated WSS/direct routing (#52), Android messaging/history (#53), and final repository-wide end-to-end/security verification (#54). Final audit PR #60 and its resulting exact `main` revision passed the required verification matrix. #59/M4.5 completed signed v0.0.4 physical acceptance on 2026-10-08. M5/#84 Voice Core is active; #85 provides a client-only call-state reducer. #86 signaling and #88 media remain unimplemented. No new backend components are authorized.
 
 The current schemas live under `protocol/kenato/v1/`:
 
@@ -14,6 +14,9 @@ The current schemas live under `protocol/kenato/v1/`:
 - `messaging.proto` — M4 authenticated WSS control frames, delivery ACKs, generic send acceptance/errors, and the plaintext structure that is encrypted by the established M3 session.
 
 M4 does not change the E2EE trust root. The existing long-lived Kenato P-256 identity authenticates connection ownership, while ordinary user text remains inside M3 authenticated ciphertext. The server may see only bounded routing metadata and opaque ciphertext.
+
+
+- `voice signaling` (M5/#86, proposed): see [ADR 0012](../docs/adr/0012-m5-encrypted-voice-signaling.md). No signaling schema, transport integration, media or app capability negotiation has been implemented yet.
 
 ## M2 invite URI
 
