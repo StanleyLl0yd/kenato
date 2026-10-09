@@ -137,7 +137,38 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
         return if (oldOffer) VoiceSignalReplayDecision.SUPPRESSED_REUSED_CALL_ID
         else VoiceSignalReplayDecision.NEW_EVENT
     }
+
+    /**
+     * Replays only still-live ACK permissions derived from durably imported, authenticated
+     * M3 handoffs. No ACK permission exists for expired or uncommitted signaling. M4 socket
+     * ownership and the actual ACK transmission remain outside this journal.
+     */
+    @Synchronized
+    fun pendingLiveAcknowledgements(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalReplayAck> {
+        if (ownerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            ownerIdentityId.all { it == 0.toByte() } ||
+            nowEpochSeconds < 0
+        ) {
+            throw VoiceSignalReplayException("Voice replay ACK recovery context is invalid")
+        }
+        val state = store.read()?.let(VoiceSignalReplayStateCodec::decode) ?: return emptyList()
+        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+            throw VoiceSignalReplayException("Voice replay ACK state belongs to another identity")
+        }
+        return state.records
+            .filter { it.expiresAtEpochSeconds > nowEpochSeconds }
+            .map { VoiceSignalReplayAck(it.peerIdentityId.copyOf(), it.messageId.copyOf()) }
+    }
 }
+
+/** Immutable-by-convention ACK correlation; copy arrays before handing them to a socket. */
+internal class VoiceSignalReplayAck(
+    val peerIdentityId: ByteArray,
+    val messageId: ByteArray,
+)
 
 internal object VoiceSignalReplayStateCodec {
     const val MAX_RECORDS = 512

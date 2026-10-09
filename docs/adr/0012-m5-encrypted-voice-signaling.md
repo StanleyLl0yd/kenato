@@ -46,3 +46,22 @@ The journal requires the already **M3-committed** `SessionMessageHandoff` and va
 ## Non-goals
 
 No backend endpoints, server type dispatch, coturn, audio recording, video, group calls, push/background calling, M6, app version bump or user-visible claim that voice calling currently works.
+
+
+## Crash recovery of voice M3 handoffs (isolated building block)
+
+An inbound voice signal may be retired only after the atomic M3 decrypt/ratchet/handoff
+commit. The isolated `VoiceInboundHandoffRecovery` performs canonical inner/outer
+validation, durably imports **live** events into the bounded voice replay metadata
+journal, then makes them eligible for an idempotent M4 ACK. A duplicate event has
+no second replay import. A fully validated event that has expired while the app was
+down can instead have its already-committed M3 handoff retired **without any ACK
+or reducer/media effects**. The journal never makes expired entries ACK-eligible.
+Failed or corrupt imports must retain the M3 handoff and must never authorize ACK.
+
+This component is not yet connected to the M4 WSS handler or M3 handoff lifecycle.
+The caller must durably complete the handoff in a correct crash-safe order, then
+coordinate authenticated ACK dispatch. The current `MessagingRecoveryCoordinator`
+still treats all handoffs as chat; **do not wire voice to live receiving** until
+typed history/replay separation, outbound staging/recovery and explicit capability
+negotiation are in place.
