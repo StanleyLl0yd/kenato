@@ -74,7 +74,10 @@ internal data class VoiceCallSnapshot(
     val retiredCallIds: List<String> = emptyList(),
 ) {
     init {
-        require((phase == VoiceCallPhase.IDLE) == (active == null && direction == null))
+        require(
+            if (phase == VoiceCallPhase.IDLE) active == null && direction == null
+            else active != null && direction != null
+        )
         require(retiredCallIds.size <= RETIRED_CALL_LIMIT)
         require(retiredCallIds.size == retiredCallIds.distinct().size)
         require(active == null || active.callId !in retiredCallIds)
@@ -116,10 +119,11 @@ internal object VoiceCallReducer {
         }
 
         if (kind == VoiceCallEventKind.INCOMING_OFFER && key != active) {
-            return if (key.callId in state.retiredCallIds) VoiceCallTransition(state) else VoiceCallTransition(
-                state,
-                listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_BUSY, key)),
-            )
+            // A reused call id with a different peer is not a separate busy call.
+            if (key.callId == active?.callId || key.callId in state.retiredCallIds) {
+                return VoiceCallTransition(state)
+            }
+            return VoiceCallTransition(state, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_BUSY, key)))
         }
         // Stale network frames, UI operations and timeout callbacks must not act on another call.
         if (key != active) return VoiceCallTransition(state)
