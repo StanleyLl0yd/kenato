@@ -11,7 +11,7 @@ Current post-M3 baseline:
 - minSdk: 26
 - Compose BOM: 2026.08.00
 - ZXing Core: 3.5.4 (M2 QR encoding only; no scanner SDK)
-- Go: 1.27.1 in CI
+- Go: 1.27.2 in CI (security update 2026-10-09; standard-library vulnerabilities fixed in Go 1.27.2)
 - Protocol Buffers Go runtime: `google.golang.org/protobuf` 1.36.12
 - protobuf lint: protolint 0.56.4
 - SQLite Go driver: pure-Go `modernc.org/sqlite` 1.58.0
