@@ -35,7 +35,12 @@ jobs:
 
   qodana:
     name: Qodana
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Qodana is expensive: opt-in push verification without enabling it for every PR.
+    # A squash commit to main containing [qodana] validates workflow changes end-to-end.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[qodana]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
@@ -62,6 +67,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          # The SDK no longer serves the legacy `tools` package requested by this pinned action.
+          packages: 'platform-tools'
 
       - name: Install Android SDK 37
         run: >
