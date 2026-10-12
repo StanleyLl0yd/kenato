@@ -168,3 +168,34 @@ decisions were not stored. This intentionally may drop an in-progress
 unreleased M5 test call; it never resurrects a replay or prevents durable
 ACK. New writes use format v2; strict checksum, owner and record validation
 remain mandatory. Production reducer/UI dispatch is still **not connected**.
+
+
+## Matching recoverable events to replay admission
+
+The independent encrypted semantic payload store intentionally preserves all
+authenticated events, including later OFFERs suppressed for reusing a live
+call identifier. **Semantic storage alone must never authorize a call effect.**
+The isolated `RestorableVoiceSignalMatcher` intersects live replay
+**dispatch** permits and decryptable semantic payloads, using a shared clock
+snapshot. Any permitted entry without exactly one matching authenticated
+owner/peer/message/call/kind fails closed. Stored suppressed events without
+a permit are never returned, including after restart or the original OFFER
+expiry. Receipt and ACK eligibility are deliberately independent.
+
+This is a **read-only candidate selector**, not an exactly-once dispatch
+claim, consumer transaction, reducer, authorization to ring, or WebRTC hookup.
+Real foreground side effects must additionally be durably claimed once and
+revalidated for expiry and pinned peer before execution; they remain
+disabled under #97.
+
+The match also compares SHA-256 of the **exact authenticated M4 ciphertext
+envelope** from both independently stored records, not merely IDs and call
+kind. A mismatched digest refuses all matching candidates, preventing
+accidentally crossed ratchet/replay journal versions from authorizing effects.
+
+The recovery write ordering remains: atomic M3 ratchet/handoff, authenticated
+semantic ciphertext stored with Keystore AES-GCM, replay admission recorded,
+then M3 handoff removal and transport ACK. A crash before replay admission
+leaves semantic content without a permit and yields **zero** dispatch candidates.
+A crash after replay admission but before M3 cleanup can be reconciled
+idempotently, subject to a future atomic, one-time foreground claim.

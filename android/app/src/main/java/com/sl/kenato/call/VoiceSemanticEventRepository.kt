@@ -44,6 +44,12 @@ internal class VoiceSemanticEventRecord(
     val encodedPlaintext: ByteArray,
 )
 
+/** Authenticated semantic bytes with the digest of their exact encrypted M4 envelope. */
+internal class VoiceSemanticEventSnapshot(
+    val signal: VoiceSignalPlaintext,
+    val envelopeDigest: ByteArray,
+)
+
 internal class VoiceSemanticEventState(
     val ownerIdentityId: ByteArray,
     val records: List<VoiceSemanticEventRecord>,
@@ -281,19 +287,48 @@ internal class DurableVoiceSemanticEventRepository(
 
     /** Read only live, authenticated, canonical decrypted events for a future foreground consumer. */
     @Synchronized
-    fun pendingLiveEvents(ownerIdentityId: ByteArray): List<VoiceSignalPlaintext> {
+    fun pendingLiveEvents(ownerIdentityId: ByteArray): List<VoiceSignalPlaintext> =
+        pendingLiveEvents(ownerIdentityId, requireNow())
+
+    /** Shared immutable clock snapshot with the M5 replay journal, never two drifting reads. */
+    @Synchronized
+    fun pendingLiveEvents(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalPlaintext> {
         requireOwner(ownerIdentityId)
-        val now = requireNow()
+        if (nowEpochSeconds < 0L) {
+            throw VoiceSemanticEventException("Voice semantic snapshot time is invalid")
+        }
+        return pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds).map { it.signal }
+    }
+
+    /**
+     * Preserve the exact ciphertext-envelope SHA-256 alongside decrypted event
+     * content so the independent replay journal can verify byte-level provenance.
+     */
+    @Synchronized
+    fun pendingLiveEventSnapshots(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSemanticEventSnapshot> {
+        requireOwner(ownerIdentityId)
+        if (nowEpochSeconds < 0L) {
+            throw VoiceSemanticEventException("Voice semantic snapshot time is invalid")
+        }
         return load(ownerIdentityId)
             ?.records
-            ?.filter { it.expiresAtEpochSeconds > now }
+            ?.filter { it.expiresAtEpochSeconds > nowEpochSeconds }
             ?.map {
-                VoiceSignalingWire.decode(
-                    it.encodedPlaintext,
-                    VoiceSignalEnvelopeBinding(
-                        it.peerIdentityId, ownerIdentityId, it.messageId, it.expiresAtEpochSeconds,
+                VoiceSemanticEventSnapshot(
+                    VoiceSignalingWire.decode(
+                        it.encodedPlaintext,
+                        VoiceSignalEnvelopeBinding(
+                            it.peerIdentityId, ownerIdentityId, it.messageId, it.expiresAtEpochSeconds,
+                        ),
+                        nowEpochSeconds,
                     ),
-                    now,
+                    it.envelopeDigest.copyOf(),
                 )
             }
             .orEmpty()
