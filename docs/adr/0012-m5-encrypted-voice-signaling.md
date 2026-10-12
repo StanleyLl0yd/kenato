@@ -151,3 +151,18 @@ A signed proof must never be interpreted as general permission to place calls.
 Until that full flow is implemented, M5 outbound v2 signaling remains
 **disabled**. No M2 server schema change is required for this optional
 out-of-band handshake.
+
+## Durable suppression of reused call identifiersM5's v2 replay-journal format now stores an authenticated OFFER's *admission
+decision* (`suppressedOffer`) alongside its metadata. A second live OFFER
+reusing the same pinned peer/call id remains suppressed even if the original
+event expires first, the journal prunes that original, or the process restarts.
+The journal exposes **separate** recovery lists for ACK permissions and
+semantic effect-dispatch permissions. ACK may still be sent for a durably
+suppressed event, but **that event never receives call-effect permission**.
+
+On a local upgrade from legacy replay-state format v1, existing live OFFERs
+are conservatively marked suppressed because their original admission
+decisions were not stored. This intentionally may drop an in-progress
+unreleased M5 test call; it never resurrects a replay or prevents durable
+ACK. New writes use format v2; strict checksum, owner and record validation
+remain mandatory. Production reducer/UI dispatch is still **not connected**.

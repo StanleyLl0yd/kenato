@@ -37,8 +37,85 @@ class VoiceSignalReplayJournalTest {
             VoiceSignalReplayJournal(store).importAuthenticatedInboundHandoff(OWNER, handoff(message = 2), NOW))
         val state = VoiceSignalReplayStateCodec.decode(store.bytes!!)
         assertEquals(2, state.records.size)
+        assertFalse(state.records[0].suppressedOffer)
+        assertTrue(state.records[1].suppressedOffer)
+        assertEquals(1, VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(2, VoiceSignalReplayJournal(store).pendingLiveAcknowledgements(OWNER, NOW).size)
         assertEquals(VoiceSignalReplayDecision.DUPLICATE_EVENT,
             VoiceSignalReplayJournal(store).importAuthenticatedInboundHandoff(OWNER, handoff(message = 2), NOW))
+    }
+
+
+    @Test
+    fun suppressionNeverResurrectsAfterOriginalOfferExpires() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        assertEquals(
+            VoiceSignalReplayDecision.NEW_EVENT,
+            journal.importAuthenticatedInboundHandoff(
+                OWNER, handoff(message = 30, expiry = NOW + 30), NOW,
+            ),
+        )
+        assertEquals(
+            VoiceSignalReplayDecision.SUPPRESSED_REUSED_CALL_ID,
+            journal.importAuthenticatedInboundHandoff(
+                OWNER, handoff(message = 31, expiry = NOW + 80), NOW,
+            ),
+        )
+        assertEquals(1, VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(0, VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW + 31).size)
+        assertEquals(1, VoiceSignalReplayJournal(store).pendingLiveAcknowledgements(OWNER, NOW + 31).size)
+        assertTrue(VoiceSignalReplayStateCodec.decode(store.bytes!!).records.last().suppressedOffer)
+        assertEquals(
+            VoiceSignalReplayDecision.SUPPRESSED_REUSED_CALL_ID,
+            journal.importAuthenticatedInboundHandoff(
+                OWNER, handoff(message = 32, expiry = NOW + 85), NOW + 31,
+            ),
+        )
+        assertEquals(0, VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW + 31).size)
+        assertTrue(VoiceSignalReplayStateCodec.decode(store.bytes!!).records.all { it.suppressedOffer })
+    }
+
+    @Test
+    fun v1LegacyOffersConservativelyLoseEffectPermissionButKeepAck() {
+        val old = record(40)
+        val content = java.io.ByteArrayOutputStream().use { bytes ->
+            java.io.DataOutputStream(bytes).use { output ->
+                output.write(byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte(), '5'.code.toByte()))
+                output.writeInt(1)
+                output.write(OWNER)
+                output.writeInt(1)
+                output.write(old.peerIdentityId)
+                output.write(old.messageId)
+                output.write(old.callId)
+                output.writeInt(old.kind.number)
+                output.writeLong(old.expiresAtEpochSeconds)
+                output.write(old.envelopeDigest)
+            }
+            bytes.toByteArray()
+        }
+        val legacy = content + java.security.MessageDigest.getInstance("SHA-256").digest(content)
+        val store = MemoryStore()
+        store.bytes = legacy
+        val journal = VoiceSignalReplayJournal(store)
+        assertEquals(1, journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+        assertTrue(journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        val migrated = VoiceSignalReplayStateCodec.encode(VoiceSignalReplayStateCodec.decode(legacy))
+        assertTrue(VoiceSignalReplayStateCodec.decode(migrated).records.single().suppressedOffer)
+        assertTrue(VoiceSignalReplayJournal(MemoryStore().also { it.bytes = migrated })
+            .pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+    }
+
+    @Test
+    fun invalidPersistedSuppressionForControlSignalFailsClosed() {
+        val wrong = VoiceSignalReplayRecord(
+            peerIdentityId = PEER, messageId = id(45), callId = id(77),
+            kind = VoiceSignalKind.HANGUP, expiresAtEpochSeconds = NOW + 60,
+            envelopeDigest = ByteArray(32) { 5 }, suppressedOffer = true,
+        )
+        assertThrows(VoiceSignalReplayException::class.java) {
+            VoiceSignalReplayStateCodec.encode(VoiceSignalReplayState(OWNER, listOf(wrong)))
+        }
     }
 
     @Test
@@ -143,6 +220,7 @@ class VoiceSignalReplayJournalTest {
         sentAt: Long = NOW,
         embeddedMessage: Int = message,
         ciphertext: ByteArray = byteArrayOf(1, 2, 3),
+        expiry: Long = sentAt + 60,
     ): SessionMessageHandoff {
         val signal = VoiceSignalPlaintext(
             senderIdentityId = PEER,
@@ -151,14 +229,14 @@ class VoiceSignalReplayJournalTest {
             callId = id(call),
             kind = VoiceSignalKind.OFFER,
             sentAtEpochSeconds = sentAt,
-            expiresAtEpochSeconds = sentAt + 60,
+            expiresAtEpochSeconds = expiry,
             payload = "v=0\r\n".toByteArray(),
         )
         val envelope = MessagingEnvelope(
             senderIdentityId = PEER,
             recipientIdentityId = OWNER,
             messageId = id(message),
-            expiresAtEpochSeconds = sentAt + 60,
+            expiresAtEpochSeconds = expiry,
             ciphertext = ciphertext,
         )
         return SessionMessageHandoff(

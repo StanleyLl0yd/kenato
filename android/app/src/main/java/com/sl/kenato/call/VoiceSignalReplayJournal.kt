@@ -32,6 +32,8 @@ internal class VoiceSignalReplayRecord(
     val kind: VoiceSignalKind,
     val expiresAtEpochSeconds: Long,
     val envelopeDigest: ByteArray,
+    /** Permanent admission result for an OFFER until this exact event expires. */
+    val suppressedOffer: Boolean = false,
 )
 
 internal class VoiceSignalReplayState(
@@ -127,6 +129,7 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
             event.kind,
             event.expiresAtEpochSeconds,
             digest,
+            suppressedOffer = oldOffer,
         )
         val encoded = VoiceSignalReplayStateCodec.encode(
             VoiceSignalReplayState(ownerIdentityId.copyOf(), retained + record),
@@ -138,11 +141,6 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
         else VoiceSignalReplayDecision.NEW_EVENT
     }
 
-    /**
-     * Replays only still-live ACK permissions derived from durably imported, authenticated
-     * M3 handoffs. No ACK permission exists for expired or uncommitted signaling. M4 socket
-     * ownership and the actual ACK transmission remain outside this journal.
-     */
     /**
      * A voice receipt must never share an authenticated sender/message id with M4 text.
      * Include expired retained records: expiry revokes ACK, not message-id provenance.
@@ -170,6 +168,39 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
         }
     }
 
+    /**
+     * An ACK only confirms durable receipt, not permission to execute a call effect.
+     * A suppressed OFFER remains ACK-eligible but is NEVER dispatchable, including
+     * after the original winning offer expires or the process restarts.
+     */
+    @Synchronized
+    fun pendingLiveDispatchPermits(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalReplayDispatchPermit> {
+        if (ownerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            ownerIdentityId.all { it == 0.toByte() } ||
+            nowEpochSeconds < 0
+        ) {
+            throw VoiceSignalReplayException("Voice dispatch recovery context is invalid")
+        }
+        val state = store.read()?.let(VoiceSignalReplayStateCodec::decode) ?: return emptyList()
+        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+            throw VoiceSignalReplayException("Voice dispatch state belongs to another identity")
+        }
+        return state.records
+            .filter { it.expiresAtEpochSeconds > nowEpochSeconds && !it.suppressedOffer }
+            .map {
+                VoiceSignalReplayDispatchPermit(
+                    it.peerIdentityId.copyOf(),
+                    it.messageId.copyOf(),
+                    it.callId.copyOf(),
+                    it.kind,
+                )
+            }
+    }
+
+    /** Replays still-live ACK permissions even for successfully suppressed offers. */
     @Synchronized
     fun pendingLiveAcknowledgements(
         ownerIdentityId: ByteArray,
@@ -197,12 +228,22 @@ internal class VoiceSignalReplayAck(
     val messageId: ByteArray,
 )
 
+/** Permitted semantic dispatch key, not the authenticated SDP/ICE event payload. */
+internal class VoiceSignalReplayDispatchPermit(
+    val peerIdentityId: ByteArray,
+    val messageId: ByteArray,
+    val callId: ByteArray,
+    val kind: VoiceSignalKind,
+)
+
 internal object VoiceSignalReplayStateCodec {
     const val MAX_RECORDS = 512
     const val MAX_STATE_BYTES = 64 * 1024
-    private const val FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
+    private const val LEGACY_FORMAT_VERSION = 1
     private const val DIGEST_BYTES = 32
-    private const val RECORD_BYTES = 32 + 16 + 16 + 4 + 8 + 32
+    private const val LEGACY_RECORD_BYTES = 32 + 16 + 16 + 4 + 8 + 32
+    private const val RECORD_BYTES = LEGACY_RECORD_BYTES + 1
     private const val HEADER_BYTES = 4 + 4 + 32 + 4
     private val magic = byteArrayOf('K'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte(), '5'.code.toByte())
 
@@ -221,6 +262,7 @@ internal object VoiceSignalReplayStateCodec {
                     output.writeInt(r.kind.number)
                     output.writeLong(r.expiresAtEpochSeconds)
                     output.write(r.envelopeDigest)
+                    output.writeByte(if (r.suppressedOffer) 1 else 0)
                 }
             }
             bytes.toByteArray()
@@ -246,25 +288,40 @@ internal object VoiceSignalReplayStateCodec {
         return try {
             DataInputStream(ByteArrayInputStream(bytes, 0, payloadLength)).use { input ->
                 val header = ByteArray(4).also(input::readFully)
-                if (!header.contentEquals(magic) || input.readInt() != FORMAT_VERSION) {
+                val version = input.readInt()
+                if (!header.contentEquals(magic) ||
+                    version !in LEGACY_FORMAT_VERSION..FORMAT_VERSION
+                ) {
                     throw VoiceSignalReplayException("Unsupported voice replay state format")
                 }
                 val owner = ByteArray(VOICE_REPLAY_IDENTITY_BYTES).also(input::readFully)
                 val count = input.readInt()
+                val recordBytes = if (version == FORMAT_VERSION) RECORD_BYTES else LEGACY_RECORD_BYTES
                 if (count !in 0..MAX_RECORDS ||
-                    input.available() != count * RECORD_BYTES
+                    input.available() != count * recordBytes
                 ) {
                     throw VoiceSignalReplayException("Voice replay state record count is invalid")
                 }
                 val records = List(count) {
-                    VoiceSignalReplayRecord(
-                        peerIdentityId = ByteArray(VOICE_REPLAY_IDENTITY_BYTES).also(input::readFully),
-                        messageId = ByteArray(VOICE_REPLAY_MESSAGE_ID_BYTES).also(input::readFully),
-                        callId = ByteArray(VOICE_REPLAY_MESSAGE_ID_BYTES).also(input::readFully),
-                        kind = VoiceSignalKind.fromNumber(input.readInt().toLong()),
-                        expiresAtEpochSeconds = input.readLong(),
-                        envelopeDigest = ByteArray(DIGEST_BYTES).also(input::readFully),
-                    )
+                    val peer = ByteArray(VOICE_REPLAY_IDENTITY_BYTES).also(input::readFully)
+                    val messageId = ByteArray(VOICE_REPLAY_MESSAGE_ID_BYTES).also(input::readFully)
+                    val callId = ByteArray(VOICE_REPLAY_MESSAGE_ID_BYTES).also(input::readFully)
+                    val kind = VoiceSignalKind.fromNumber(input.readInt().toLong())
+                    val expiry = input.readLong()
+                    val digest = ByteArray(DIGEST_BYTES).also(input::readFully)
+                    val suppressed = if (version == FORMAT_VERSION) {
+                        when (input.readUnsignedByte()) {
+                            0 -> false
+                            1 -> true
+                            else -> throw VoiceSignalReplayException("Invalid persisted voice suppression flag")
+                        }
+                    } else {
+                        // V1 could not tell a winning OFFER from an already-suppressed replay.
+                        // Conservatively disable all old OFFER effects while retaining live
+                        // receipt/ACK rights. Never infer the lost decision from list order.
+                        kind == VoiceSignalKind.OFFER
+                    }
+                    VoiceSignalReplayRecord(peer, messageId, callId, kind, expiry, digest, suppressed)
                 }
                 if (input.available() != 0) {
                     throw VoiceSignalReplayException("Voice replay state contains trailing bytes")
@@ -295,6 +352,7 @@ internal object VoiceSignalReplayStateCodec {
                 record.callId.size != VOICE_REPLAY_MESSAGE_ID_BYTES ||
                 record.callId.all { it == 0.toByte() } ||
                 record.envelopeDigest.size != DIGEST_BYTES ||
+                (record.suppressedOffer && record.kind != VoiceSignalKind.OFFER) ||
                 record.expiresAtEpochSeconds <= 0L
             ) {
                 throw VoiceSignalReplayException("Voice replay record shape is invalid")
