@@ -152,7 +152,9 @@ Until that full flow is implemented, M5 outbound v2 signaling remains
 **disabled**. No M2 server schema change is required for this optional
 out-of-band handshake.
 
-## Durable suppression of reused call identifiersM5's v2 replay-journal format now stores an authenticated OFFER's *admission
+## Durable suppression of reused call identifiers
+
+M5's v2 replay-journal format now stores an authenticated OFFER's *admission
 decision* (`suppressedOffer`) alongside its metadata. A second live OFFER
 reusing the same pinned peer/call id remains suppressed even if the original
 event expires first, the journal prunes that original, or the process restarts.
