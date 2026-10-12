@@ -101,3 +101,30 @@ reducer state are **not** suitable implementations. An encrypted, bounded,
 restart-recoverable client store and exact M3/M4 dispatch/capability integration
 remain blocked under #97; do not opt into voice recovery in the live app before
 those are reviewed.
+
+
+## Isolated encrypted semantic event store
+
+The next client-only, **not-wired** primitive adds `DurableVoiceSemanticEventRepository`
+implementing the durable semantic sink required by the type-aware recovery
+contract. Exact canonical authenticated M5 plaintext and its envelope SHA-256
+digest are stored atomically in an **Android no-backup file encrypted with
+non-exportable app-specific Android Keystore AES-256-GCM**, independently from
+M3's native pickle wrapping key. Each persist uses fresh provider-generated
+GCM IV, a constant protocol domain + the 32-byte owner id as AAD, and a strict
+versioned binary envelope. Authentication failure, missing Keystore key,
+partial writes, wrong owner, conflicting sender/message id and invalid
+M4/M5 bindings all fail closed without replacing an existing live event.
+
+The journal is bounded to 128 live records and 2 MiB, reclaims expired records
+only when admitting new events, and restores only unexpired canonical
+plaintext for a future foreground call consumer. The test suite uses an
+independent JVM AES-GCM cipher to verify restart, ciphertext tampering,
+AAD substitution, replay, write faults, expiry, capacity, and canonicality.
+No SDP/ICE is written unencrypted to disk or sent to the Go relay.
+
+This sink is not yet linked to app startup, call state, inbound M3 decrypt or
+WebRTC. Clearing identity-scoped data, exact consumer-once semantics,
+capability exchange, bounded ICE ingestion and the two-device acceptance
+still require review under #97/#87. **Do not enable live voice ACK or call
+signaling based on this storage primitive alone.**
