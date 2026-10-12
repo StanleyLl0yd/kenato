@@ -199,3 +199,38 @@ then M3 handoff removal and transport ACK. A crash before replay admission
 leaves semantic content without a permit and yields **zero** dispatch candidates.
 A crash after replay admission but before M3 cleanup can be reconciled
 idempotently, subject to a future atomic, one-time foreground claim.
+
+
+## Opt-in type-aware inbound M3/M4 delivery (not activated)
+
+The isolated `VoiceInboundPersistenceFacade` can now be explicitly injected
+into `DurableMessagingInboundDeliveryHandler`; the production/default
+constructor **still uses M4 text-only behavior**. When the voice adapter is
+provided, the handler performs strict canonical classification **only after**
+authenticated M3 decrypt, never from relay-visible fields. Version-1 plaintext
+still enters durable chat history. Version-2 plaintext is first retained in
+AES-GCM encrypted semantic storage, then in the bounded replay receipt
+journal; the M3 handoff is completed and an M4 ACK is emitted only after
+both writes succeed. Any failure retains the atomic M3 ratchet handoff.
+
+Already durably received voice ciphertext can be redelivered without a second
+ratchet decrypt only if the exact envelope SHA-256 matches a replay receipt
+**and** its matching authenticated, restorable semantic payload still exists.
+Changed ciphertext, message-id cross-type collision, incomplete semantic
+storage, missing replay admission or storage corruption fail closed and
+require restart reconciliation. Suppressed OFFERs remain ACK-eligible but
+receive no reducer/media effects.
+
+**No runtime WSS wiring is changed here.** The handler's default text-only
+mode remains in effect. An explicit audited app initialization path,
+capability proof consumption, call-effect claims, outbound voice staging and
+two-device acceptance are required before voice calling is enabled. No
+server endpoint or protocol type metadata was added.
+
+The exact-duplicate shortcut is valid **only for the same authenticated outer
+envelope bytes**. It must not decrypt again after advancing the M3 ratchet.
+Conversely, if AES-GCM semantic state exists but the replay receipt is missing,
+this handler refuses to re-decrypt and leaves the M3 handoff for deterministic
+restart recovery. A valid cached ACK must never mean the associated OFFER is
+eligible for ringtone or media; replay suppression and one-time semantic
+dispatch are independently required.

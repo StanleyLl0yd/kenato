@@ -95,6 +95,13 @@ internal class VoiceInboundHandoffRecovery(
         return VoiceInboundHandoffRecoveryOutcome.DURABLY_IMPORTED
     }
 
+    fun exactLiveInboundReceipt(
+        ownerIdentityId: ByteArray,
+        envelope: com.sl.kenato.messaging.MessagingEnvelope,
+        nowEpochSeconds: Long,
+    ): VoiceSignalReplayReceipt? =
+        journal.exactLiveInboundReceipt(ownerIdentityId, envelope, nowEpochSeconds)
+
     fun hasPersistedInboundMessageKey(
         ownerIdentityId: ByteArray,
         peerIdentityId: ByteArray,
