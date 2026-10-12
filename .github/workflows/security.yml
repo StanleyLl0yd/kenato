@@ -35,7 +35,12 @@ jobs:
 
   qodana:
     name: Qodana
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Qodana is expensive: opt-in push verification without enabling it for every PR.
+    # A squash commit to main containing [qodana] validates workflow changes end-to-end.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[qodana]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
