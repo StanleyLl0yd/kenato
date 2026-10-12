@@ -128,3 +128,26 @@ WebRTC. Clearing identity-scoped data, exact consumer-once semantics,
 capability exchange, bounded ICE ingestion and the two-device acceptance
 still require review under #97/#87. **Do not enable live voice ACK or call
 signaling based on this storage primitive alone.**
+
+
+## Signed out-of-band capability proof (isolated opt-in)
+
+The standalone `VoiceCapabilityProofWire` defines a **challenge-bound** identity
+attestation for encrypted application version 2. The remote M2 P-256 identity
+key signs a canonical, domain-separated statement containing the signing
+identity, exact intended contact identity, 16-byte CSPRNG challenge, supported
+application version and five-minute maximum lifetime. Verification uses the
+*already pinned* M2 public key, never a key carried in the message, and
+rejects substituted contacts, stale/future timestamps, unknown protocol
+versions and noncanonical proof encodings. The relay is not involved and
+legacy clients receive no v2 payload as a compatibility probe.
+
+This standalone codec neither generates nor persists challenges, and it
+provides no transport, QR/UI or device-capability state. A future
+challenge/response flow must generate unpredictable, never-reused challenges
+for a *specific* pinned peer, consume each challenge exactly once, require
+explicit user consent and durably remember only positive peer support.
+A signed proof must never be interpreted as general permission to place calls.
+Until that full flow is implemented, M5 outbound v2 signaling remains
+**disabled**. No M2 server schema change is required for this optional
+out-of-band handshake.
