@@ -196,6 +196,7 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
                     it.messageId.copyOf(),
                     it.callId.copyOf(),
                     it.kind,
+                    it.envelopeDigest.copyOf(),
                 )
             }
     }
@@ -234,6 +235,7 @@ internal class VoiceSignalReplayDispatchPermit(
     val messageId: ByteArray,
     val callId: ByteArray,
     val kind: VoiceSignalKind,
+    val envelopeDigest: ByteArray,
 )
 
 internal object VoiceSignalReplayStateCodec {
