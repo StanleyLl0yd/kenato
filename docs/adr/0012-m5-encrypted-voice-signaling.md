@@ -292,3 +292,25 @@ dedicated Keystore alias **before** removing the atomic file. Old encrypted
 capability grants then cannot be restored by replaying a stale file under
 the previous key. A failed key deletion aborts the reset without reporting
 success; the app must never continue treating those grants as authorized.
+
+
+## One-time durable voice effect claims (isolated)
+
+Replay journal format v3 records a separate persisted `dispatchClaimed` bit per
+message, while leaving durable transport ACK rights unchanged. A verified
+candidate can be atomically claimed before an observable reducer, ringtone or
+media effect. Repeated attempts, expired records and previously suppressed
+OFFERs return no effect. Failed writes never return an event. The same
+single-process write lock serializes journal imports and claims across journal
+instances; a multi-process Android deployment requires its own interprocess
+serialization before opt-in.
+
+Migrating v1 or v2 replay files conservatively marks *all* legacy events
+claimed, since earlier formats could not prove whether a side effect happened.
+This can discard unfinished test calls but cannot resurrect an old call; ACK
+correlation remains intact. `RestorableVoiceSignalMatcher.claimRestorableCandidate`
+first independently verifies AES-GCM semantic storage against exact replay
+envelope digests and only returns decrypted payload after the claim is durable.
+This is an at-most-once admission primitive, not a guarantee that a side
+ effect happens after a crash, nor a call authorization by itself. No app UI,
+WSS or media reducer is connected yet.

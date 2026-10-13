@@ -31,6 +31,37 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun verifiedClaimReturnsDecryptedEventAtMostOnceAcrossRestarts() {
+        val f = Fixture()
+        f.accept(handoff(51))
+        val claimed = f.matcher().claimRestorableCandidate(OWNER, PEER, id(51), NOW)
+        assertArrayEquals(id(51), claimed!!.messageId)
+        assertTrue(f.matcher().restorableCandidates(OWNER, NOW).isEmpty())
+        assertEquals(null, f.matcher().claimRestorableCandidate(OWNER, PEER, id(51), NOW))
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
+    fun noSemanticPayloadCannotClaimReplayPermission() {
+        val f = Fixture()
+        f.journal.importAuthenticatedInboundHandoff(OWNER, handoff(52), NOW)
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidate(OWNER, PEER, id(52), NOW)
+        }
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+    }
+
+    @Test
+    fun suppressedAndExpiredOffersCannotClaimAnEffect() {
+        val f = Fixture()
+        f.accept(handoff(53, expiry = NOW + 30))
+        f.accept(handoff(54, expiry = NOW + 80))
+        assertEquals(null, f.matcher().claimRestorableCandidate(OWNER, PEER, id(54), NOW))
+        assertEquals(null, f.matcher().claimRestorableCandidate(OWNER, PEER, id(53), NOW + 30))
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW + 31).size)
+    }
+
+    @Test
     fun replayReceiptWithoutDurableSemanticPayloadFailsClosed() {
         val f = Fixture()
         f.journal.importAuthenticatedInboundHandoff(OWNER, handoff(3), NOW)
