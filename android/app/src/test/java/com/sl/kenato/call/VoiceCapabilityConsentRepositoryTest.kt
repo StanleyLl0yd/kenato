@@ -135,6 +135,50 @@ class VoiceCapabilityConsentRepositoryTest {
     }
 
     @Test
+    fun restoredEncryptedGrantCannotSurviveIdentityKeyDeletion() {
+        val f = Fixture()
+        val challenge = f.issue()
+        f.repository.confirmSignedProof(OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true)
+        val staleEncryptedGrant = f.store.bytes!!.copyOf()
+        f.repository.clearForIdentityRecovery()
+        f.store.bytes = staleEncryptedGrant
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newRepository().isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded)
+        }
+    }
+
+    @Test
+    fun failedKeystoreDeletionAbortsIdentityClearWithoutSilentlyAuthorizingReset() {
+        val f = Fixture()
+        val challenge = f.issue()
+        f.repository.confirmSignedProof(OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true)
+        f.cipher.failKeyDeletion = true
+        val before = f.store.bytes!!.copyOf()
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.repository.clearForIdentityRecovery()
+        }
+        assertArrayEquals(before, f.store.bytes)
+        assertFalse(f.cipher.keyDestroyed)
+        // Destructive identity recovery must not proceed after this failure.
+        assertTrue(f.repository.isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded))
+    }
+
+    @Test
+    fun failedAtomicFileClearAfterKeyDeletionCannotRestoreOldConsent() {
+        val f = Fixture()
+        val challenge = f.issue()
+        f.repository.confirmSignedProof(OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true)
+        f.store.failClear = true
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.repository.clearForIdentityRecovery()
+        }
+        assertTrue(f.cipher.keyDestroyed)
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newRepository().isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded)
+        }
+    }
+
+    @Test
     fun codecRejectsDuplicatePeerIdsAndAllNoncanonicalEntryShapes() {
         val f = Fixture()
         f.issue()
@@ -202,18 +246,25 @@ class VoiceCapabilityConsentRepositoryTest {
     private class MemoryStore : VoiceCapabilityEncryptedStore {
         var bytes: ByteArray? = null
         var failWrites = false
+        var failClear = false
         override fun read(): ByteArray? = bytes?.copyOf()
         override fun write(bytes: ByteArray): Boolean {
             if (failWrites) return false
             this.bytes = bytes.copyOf()
             return true
         }
-        override fun clear(): Boolean { bytes = null; return true }
+        override fun clear(): Boolean {
+            if (failClear) return false
+            bytes = null
+            return true
+        }
     }
 
     private class TestAesGcm : VoiceCapabilityPayloadCipher {
         var keyDestroyed = false
+        var failKeyDeletion = false
         override fun deleteCapabilityKeyForIdentityRecovery() {
+            if (failKeyDeletion) throw VoiceCapabilityConsentException("Keystore alias deletion failed")
             keyDestroyed = true
         }
         private val key = SecretKeySpec(ByteArray(32) { 0x22.toByte() }, "AES")
