@@ -20,6 +20,35 @@ internal class RestorableVoiceSignalMatcher(
     private val replay: VoiceSignalReplayJournal,
     private val semantic: DurableVoiceSemanticEventRepository,
 ) {
+    /**
+     * Return an authenticated semantic event ONLY after its one-time dispatch
+     * claim has been durably written. A failure/duplicate returns no event.
+     * The caller still MUST check current contact capability/consent and freshness
+     * before ringing, touching the reducer or creating media tracks.
+     */
+    @Synchronized
+    fun claimRestorableCandidate(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): VoiceSignalPlaintext? {
+        if (peerIdentityId.size != 32 || messageId.size != 16) {
+            throw RestorableVoiceSignalMismatchException("Invalid requested voice dispatch key")
+        }
+        val verified = restorableCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.senderIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.messageId, messageId)
+        } ?: return null
+        val permit = replay.pendingLiveDispatchPermits(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.peerIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.messageId, messageId)
+        } ?: return null
+        return if (replay.claimLiveDispatchPermit(ownerIdentityId, permit, nowEpochSeconds)) {
+            verified
+        } else null
+    }
+
     @Synchronized
     fun restorableCandidates(
         ownerIdentityId: ByteArray,

@@ -119,6 +119,119 @@ class VoiceSignalReplayJournalTest {
     }
 
     @Test
+    fun claimingEffectIsDurableOnceWithoutRevokingReceiptAck() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 46), NOW)
+        val permit = journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        assertTrue(journal.claimLiveDispatchPermit(OWNER, permit, NOW))
+        assertFalse(VoiceSignalReplayJournal(store).claimLiveDispatchPermit(OWNER, permit, NOW))
+        assertTrue(VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, VoiceSignalReplayJournal(store).pendingLiveAcknowledgements(OWNER, NOW).size)
+        assertTrue(VoiceSignalReplayStateCodec.decode(store.bytes!!).records.single().dispatchClaimed)
+    }
+
+    @Test
+    fun differentJournalInstancesCannotClaimTheSameEventConcurrently() {
+        val store = MemoryStore()
+        VoiceSignalReplayJournal(store).importAuthenticatedInboundHandoff(
+            OWNER, handoff(message = 59), NOW,
+        )
+        val permit = VoiceSignalReplayJournal(store).pendingLiveDispatchPermits(OWNER, NOW).single()
+        val workers = java.util.concurrent.Executors.newFixedThreadPool(2)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val attempts = (1..2).map {
+                workers.submit<Boolean> {
+                    release.await()
+                    VoiceSignalReplayJournal(store).claimLiveDispatchPermit(OWNER, permit, NOW)
+                }
+            }
+            release.countDown()
+            val results = attempts.map {
+                it.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            assertEquals(1, results.count { it })
+            assertEquals(1, results.count { !it })
+            assertEquals(1, VoiceSignalReplayJournal(store).pendingLiveAcknowledgements(OWNER, NOW).size)
+        } finally {
+            workers.shutdownNow()
+        }
+    }
+
+    @Test
+    fun failedClaimWriteDoesNotConsumeOrPermitAnEffect() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 47), NOW)
+        val permit = journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        val before = store.bytes!!.copyOf()
+        store.failWrite = true
+        assertThrows(VoiceSignalReplayException::class.java) {
+            journal.claimLiveDispatchPermit(OWNER, permit, NOW)
+        }
+        assertArrayEquals(before, store.bytes)
+        store.failWrite = false
+        assertTrue(journal.claimLiveDispatchPermit(OWNER, permit, NOW))
+    }
+
+    @Test
+    fun wrongDigestWrongOwnerSuppressedOrExpiredClaimsFailClosed() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 48), NOW)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 49), NOW)
+        val permit = journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        val wrong = VoiceSignalReplayDispatchPermit(
+            permit.peerIdentityId, permit.messageId, permit.callId, permit.kind,
+            permit.envelopeDigest.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() },
+        )
+        assertThrows(VoiceSignalReplayException::class.java) {
+            journal.claimLiveDispatchPermit(OWNER, wrong, NOW)
+        }
+        assertThrows(VoiceSignalReplayException::class.java) {
+            journal.claimLiveDispatchPermit(ByteArray(32) { 7 }, permit, NOW)
+        }
+        assertFalse(journal.claimLiveDispatchPermit(OWNER, permit, NOW + 60))
+        assertTrue(journal.claimLiveDispatchPermit(OWNER, permit, NOW))
+        assertEquals(2, journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
+    fun v2UpgradeKeepsAcknowledgementsButRetiresAllLegacyEffectPermissions() {
+        val old = record(50)
+        val content = java.io.ByteArrayOutputStream().use { bytes ->
+            java.io.DataOutputStream(bytes).use { output ->
+                output.write(byteArrayOf(75, 78, 86, 53))
+                output.writeInt(2)
+                output.write(OWNER)
+                output.writeInt(1)
+                output.write(old.peerIdentityId)
+                output.write(old.messageId)
+                output.write(old.callId)
+                output.writeInt(old.kind.number)
+                output.writeLong(old.expiresAtEpochSeconds)
+                output.write(old.envelopeDigest)
+                output.writeByte(0)
+            }
+            bytes.toByteArray()
+        }
+        val checksum = java.security.MessageDigest.getInstance("SHA-256").digest(content)
+        val store = MemoryStore().also { it.bytes = content + checksum }
+        val journal = VoiceSignalReplayJournal(store)
+        assertTrue(journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+        val migrated = VoiceSignalReplayStateCodec.encode(
+            VoiceSignalReplayStateCodec.decode(store.bytes!!),
+        )
+        val decoded = VoiceSignalReplayStateCodec.decode(migrated)
+        assertFalse(decoded.records.single().suppressedOffer)
+        assertTrue(decoded.records.single().dispatchClaimed)
+        assertTrue(VoiceSignalReplayJournal(MemoryStore().also { it.bytes = migrated })
+            .pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+    }
+
+    @Test
     fun samePeerAndMessageIdWithDifferentAuthenticatedEnvelopeIsRejected() {
         val store = MemoryStore()
         VoiceSignalReplayJournal(store).importAuthenticatedInboundHandoff(OWNER, handoff(message = 1), NOW)
