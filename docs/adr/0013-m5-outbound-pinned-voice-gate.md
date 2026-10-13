@@ -44,6 +44,17 @@ contain private local-network addresses. The ciphertext sent to the server
 never includes this plaintext outside M3 encryption. Only one pending voice
 event is allowed during this foundation phase.
 
+The optional `VoiceOutboundHandoffRecovery` and `MessagingRecoveryCoordinator.outboundVoice`
+adapter now recognize the committed v2 record without re-encrypting it,
+validate canonical inner voice + outer M4 + session ciphertext binding,
+and offer the exact immutable envelope for ordinary M4 transport retry.
+Expired records can be removed only under the transport's synchronized
+non-in-flight expiry boundary. An authenticated SendAccepted removes the
+M3 handoff atomically; no M4 chat history entry is created. With the
+adapter absent, pre-existing M4 recovery rejects outbound v2 records.
+This recovery is still **not production wired** and is not call/media
+integration or proof of user consent at the runtime call-admission point.
+
 No app runtime uses this guard/stager yet; no backend endpoints, server
 components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
 by this ADR.
