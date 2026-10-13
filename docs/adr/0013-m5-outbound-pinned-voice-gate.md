@@ -19,7 +19,31 @@ M2/M3 binding divergence, identity/key substitution, revocation and corrupt
 AES-GCM consent storage.
 
 This guard is **not** a call authorization or an outbound send operation.
-Future staged encryption must recheck the binding and capability inside the
-same serialized ratchet/transport admission boundary to prevent TOCTOU races.
-No app runtime uses this guard yet; no backend endpoints, server components,
-TURN/coturn, UI, WebRTC, release or M6 additions are permitted by this ADR.
+`VoiceOutboundHandoffStager` now provides an isolated, non-wired first
+outbound crypto-coupled stage. It validates v2 signal/body/TTL and requires
+signed capability both before encryption and inside the M3 synchronized
+encrypt-and-commit builder. The serialized builder also rechecks pending
+message IDs and earlier uncompleted voice handoffs before it can commit the
+advanced ratchet and exact M4 envelope together with the encrypted v2
+application plaintext. This assumes the actual production session and
+handoff adapters use the **same** `LocalSessionRepository` instance/lock;
+separate instances and mutations of contact/consent are not yet covered by
+one shared transaction/lifecycle boundary. This class must remain **unwired**
+until that ordering is proven and outbound voice SendAccepted/expiry/restart
+recovery is independently implemented. The M4 text recovery intentionally
+fails closed if it sees an outbound v2 record.
+
+Signed consent is not inferred from relay behavior and no plaintext SDP/ICE
+leaves M3/M4 ciphertext. The current M3 handoff retains a temporary
+plaintext copy of the exact application record in an Android no-backup
+AtomicFile. This file is isolated by the app sandbox but **is not itself
+AES-GCM encrypted at rest** (unlike the separate durable M5 semantic event
+store). This inherited M3 trust boundary needs explicit threat-model/owner
+review before live voice staging is enabled, especially because SDP can
+contain private local-network addresses. The ciphertext sent to the server
+never includes this plaintext outside M3 encryption. Only one pending voice
+event is allowed during this foundation phase.
+
+No app runtime uses this guard/stager yet; no backend endpoints, server
+components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
+by this ADR.
