@@ -3,6 +3,7 @@ package com.sl.kenato.messaging
 import com.sl.kenato.call.EncryptedApplicationPayload
 import com.sl.kenato.call.EncryptedApplicationPayloadClassifier
 import com.sl.kenato.call.VoiceInboundHandoffRecovery
+import com.sl.kenato.call.VoiceInboundPersistenceFacade
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
@@ -90,6 +91,11 @@ internal class MessagingRecoveryCoordinator(
     private val voice: VoiceInboundHandoffRecovery? = null,
     private val voiceSink: MessagingDurableVoiceEventSink? = null,
     private val clock: MessagingRecoveryClock = SystemMessagingRecoveryClock,
+    /**
+     * Mandatory for any recovered live M5 ACK. A metadata-only replay journal
+     * may not authorize ACK without its matching Keystore-authenticated SDP/ICE.
+     */
+    private val verifiedVoiceAcks: VoiceInboundPersistenceFacade? = null,
 ) {
     @Synchronized
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
@@ -108,8 +114,30 @@ internal class MessagingRecoveryCoordinator(
         }.toMutableList()
         if (voice != null) {
             val now = clock.nowEpochSeconds()
-            recoveredAcks += voice.pendingLiveAcknowledgements(ownerIdentityId, now).map { record ->
-                MessagingRecoveredAck(record.peerIdentityId.copyOf(), record.messageId.copyOf())
+            if (now < 0L) throw MessagingRecoveryException("Voice ACK recovery clock is invalid")
+            val replayCandidates = voice.pendingLiveAcknowledgements(ownerIdentityId, now)
+            if (replayCandidates.isNotEmpty()) {
+                val verifier = verifiedVoiceAcks ?: throw MessagingRecoveryException(
+                    "Voice replay receipts have no independently encrypted semantic ACK verifier",
+                )
+                val verified = verifier.verifiedPendingLiveAcknowledgements(ownerIdentityId, now)
+                // An adapter may never silently omit or add an ACK relative to the raw
+                // bounded journal. Validate the exact set before exposing the plan.
+                val candidates = replayCandidates.map {
+                    MessageKey(it.peerIdentityId, it.messageId)
+                }.toSet()
+                val confirmed = verified.map {
+                    MessageKey(it.peerIdentityId, it.messageId)
+                }.toSet()
+                if (candidates.size != replayCandidates.size ||
+                    confirmed.size != verified.size ||
+                    candidates != confirmed
+                ) {
+                    throw MessagingRecoveryException("Verified voice ACK keys differ from replay journal")
+                }
+                recoveredAcks += verified.map {
+                    MessagingRecoveredAck(it.peerIdentityId.copyOf(), it.messageId.copyOf())
+                }
             }
         }
         val uniqueAcks = HashSet<MessageKey>()

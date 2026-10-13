@@ -1,6 +1,15 @@
 package com.sl.kenato.messaging
 
 import com.sl.kenato.call.VoiceInboundHandoffRecovery
+import com.sl.kenato.call.DurableVoiceSemanticEventRepository
+import com.sl.kenato.call.VoiceInboundPersistenceFacade
+import com.sl.kenato.call.VoiceSemanticClock
+import com.sl.kenato.call.VoiceSemanticEncryptedStore
+import com.sl.kenato.call.VoiceSemanticPayloadCipher
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import com.sl.kenato.call.VoiceSignalKind
 import com.sl.kenato.call.VoiceSignalPlaintext
 import com.sl.kenato.call.VoiceSignalReplayJournal
@@ -22,7 +31,7 @@ class MessagingTypedVoiceRecoveryTest {
         val inbound = voiceHandoff(11)
         f.sessions.handoffs += inbound
         f.sessions.beforeComplete = {
-            assertEquals(1, f.semanticSink.writes)
+            assertEquals(1, f.semanticStore.writes)
             assertEquals(1, f.voiceStore.writes)
             assertEquals(1, f.voice.pendingLiveAcknowledgements(OWNER, NOW).size)
             assertEquals(null, f.history.currentState(OWNER))
@@ -48,7 +57,7 @@ class MessagingTypedVoiceRecoveryTest {
         assertTrue(recovered.inboundAcks.isEmpty())
         assertTrue(f.sessions.handoffs.isEmpty())
         assertEquals(0, f.voiceStore.writes)
-        assertEquals(0, f.semanticSink.writes)
+        assertEquals(0, f.semanticStore.writes)
         assertEquals(null, f.history.currentState(OWNER))
     }
 
@@ -59,7 +68,7 @@ class MessagingTypedVoiceRecoveryTest {
         f.sessions.handoffs += voiceHandoff(13)
         assertThrows(IllegalStateException::class.java) { f.coordinator.recover(OWNER) }
         assertEquals(1, f.sessions.handoffs.size)
-        assertEquals(1, f.semanticSink.writes)
+        assertEquals(1, f.semanticStore.writes)
         assertTrue(f.sessions.completed.isEmpty())
         assertTrue(f.voice.pendingLiveAcknowledgements(OWNER, NOW).isEmpty())
     }
@@ -67,7 +76,7 @@ class MessagingTypedVoiceRecoveryTest {
     @Test
     fun semanticSinkWriteFailureLeavesHandoffAndNeverAuthorizesAck() {
         val f = Fixture()
-        f.semanticSink.failWrites = true
+        f.semanticStore.failWrites = true
         f.sessions.handoffs += voiceHandoff(20)
         assertThrows(IllegalStateException::class.java) { f.coordinator.recover(OWNER) }
         assertEquals(1, f.sessions.handoffs.size)
@@ -95,7 +104,7 @@ class MessagingTypedVoiceRecoveryTest {
         f.semanticSink.persistAuthenticatedVoiceEvent(OWNER, handoff)
         f.sessions.handoffs += handoff
         val recovered = f.coordinator.recover(OWNER)
-        assertEquals(1, f.semanticSink.writes)
+        assertEquals(1, f.semanticStore.writes)
         assertEquals(1, f.voiceStore.writes)
         assertEquals(1, recovered.inboundAcks.size)
     }
@@ -104,12 +113,51 @@ class MessagingTypedVoiceRecoveryTest {
     fun crashAfterVoiceImportBeforeHandoffCompletionRecoversIdempotently() {
         val f = Fixture()
         val handoff = voiceHandoff(14)
+        f.semanticSink.persistAuthenticatedVoiceEvent(OWNER, handoff)
         f.voice.reconcileCommittedHandoff(OWNER, handoff, NOW)
         f.sessions.handoffs += handoff
         val recovered = f.coordinator.recover(OWNER)
         assertEquals(1, f.voiceStore.writes)
         assertEquals(1, recovered.inboundAcks.size)
         assertTrue(f.sessions.handoffs.isEmpty())
+    }
+
+    @Test
+    fun replayReceiptWithoutSemanticRecordNeverAuthorizesRecoveredAck() {
+        val f = Fixture()
+        val handoff = voiceHandoff(23)
+        f.voice.reconcileCommittedHandoff(OWNER, handoff, NOW)
+        assertThrows(MessagingRecoveryException::class.java) {
+            f.coordinator.recover(OWNER)
+        }
+        assertEquals(0, f.semanticStore.writes)
+        assertEquals(1, f.voiceStore.writes)
+    }
+
+    @Test
+    fun tamperedEncryptedSemanticRecordNeverAuthorizesRecoveredAck() {
+        val f = Fixture()
+        f.sessions.handoffs += voiceHandoff(24)
+        assertEquals(1, f.coordinator.recover(OWNER).inboundAcks.size)
+        f.semanticStore.bytes = f.semanticStore.bytes!!.copyOf().also {
+            it[it.lastIndex] = (it.last().toInt() xor 1).toByte()
+        }
+        assertThrows(IllegalStateException::class.java) {
+            f.coordinator.recover(OWNER)
+        }
+    }
+
+    @Test
+    fun voiceMetadataOnlyRecoveryAdapterFailsClosed() {
+        val f = Fixture()
+        f.sessions.handoffs += voiceHandoff(25)
+        f.coordinator.recover(OWNER)
+        val unsafe = MessagingRecoveryCoordinator(
+            f.sessions, f.history, f.voice, f.semanticSink, MessagingRecoveryClock { NOW },
+        )
+        assertThrows(MessagingRecoveryException::class.java) {
+            unsafe.recover(OWNER)
+        }
     }
 
     @Test
@@ -158,10 +206,14 @@ class MessagingTypedVoiceRecoveryTest {
         val history = ConversationHistoryRepository(historyStore)
         val voiceStore = MemoryVoiceStore()
         val voice = VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(voiceStore))
-        val semanticSink = FakeDurableVoiceSink()
+        val semanticStore = MemoryEncryptedSemanticStore()
+        val semanticSink = DurableVoiceSemanticEventRepository(
+            semanticStore, AesGcmTestCipher(), VoiceSemanticClock { now },
+        )
+        val verified = VoiceInboundPersistenceFacade(voice, semanticSink)
         val sessions = FakeSessionHandoffs()
         val coordinator = MessagingRecoveryCoordinator(
-            sessions, history, voice, semanticSink, MessagingRecoveryClock { now },
+            sessions, history, voice, semanticSink, MessagingRecoveryClock { now }, verified,
         )
     }
 
@@ -197,24 +249,38 @@ class MessagingTypedVoiceRecoveryTest {
         }
     }
 
-    private class FakeDurableVoiceSink : MessagingDurableVoiceEventSink {
-        private val retained = HashMap<List<Byte>, ByteArray>()
+    private class MemoryEncryptedSemanticStore : VoiceSemanticEncryptedStore {
+        var bytes: ByteArray? = null
         var writes = 0
         var failWrites = false
-        override fun persistAuthenticatedVoiceEvent(
-            ownerIdentityId: ByteArray,
-            handoff: SessionMessageHandoff,
-        ) {
-            if (failWrites) throw IllegalStateException("Injected durable semantic write failure")
-            val key = ownerIdentityId.toList() + handoff.peerIdentityId.toList() + handoff.messageId.toList()
-            val encoded = handoff.encodedPlaintext.copyOf()
-            val previous = retained[key]
-            if (previous == null) {
-                retained[key] = encoded
-                writes++
-            } else if (!MessageDigest.isEqual(previous, encoded)) {
-                throw IllegalStateException("Conflicting semantic voice event")
-            }
+
+        override fun read(): ByteArray? = bytes?.copyOf()
+        override fun write(value: ByteArray): Boolean {
+            if (failWrites) return false
+            bytes = value.copyOf()
+            writes++
+            return true
+        }
+        override fun clear(): Boolean { bytes = null; return true }
+    }
+
+    private class AesGcmTestCipher : VoiceSemanticPayloadCipher {
+        private val key = SecretKeySpec(ByteArray(32) { 0x55.toByte() }, "AES")
+        private val random = SecureRandom()
+
+        override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+            val iv = ByteArray(12).also(random::nextBytes)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+            c.updateAAD(aad)
+            return byteArrayOf(1) + iv + c.doFinal(plaintext)
+        }
+
+        override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encrypted.copyOfRange(1, 13)))
+            c.updateAAD(aad)
+            return c.doFinal(encrypted.copyOfRange(13, encrypted.size))
         }
     }
 

@@ -245,6 +245,37 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
             }
     }
 
+    /**
+     * Full authenticated receipt metadata for safe comparison against the independently
+     * encrypted semantic store. An ACK candidate is NOT validated until both stores match.
+     */
+    @Synchronized
+    fun pendingLiveReceipts(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalReplayReceipt> {
+        if (ownerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            ownerIdentityId.all { it == 0.toByte() } ||
+            nowEpochSeconds < 0L
+        ) {
+            throw VoiceSignalReplayException("Voice receipt recovery context invalid")
+        }
+        val state = store.read()?.let(VoiceSignalReplayStateCodec::decode) ?: return emptyList()
+        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+            throw VoiceSignalReplayException("Voice receipts belong to another identity")
+        }
+        return state.records.filter { it.expiresAtEpochSeconds > nowEpochSeconds }.map {
+            VoiceSignalReplayReceipt(
+                it.peerIdentityId.copyOf(),
+                it.messageId.copyOf(),
+                it.callId.copyOf(),
+                it.kind,
+                it.expiresAtEpochSeconds,
+                it.envelopeDigest.copyOf(),
+            )
+        }
+    }
+
     /** Replays still-live ACK permissions even for successfully suppressed offers. */
     @Synchronized
     fun pendingLiveAcknowledgements(

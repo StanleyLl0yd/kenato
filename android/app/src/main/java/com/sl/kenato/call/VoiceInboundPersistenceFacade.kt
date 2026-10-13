@@ -53,6 +53,45 @@ internal class VoiceInboundPersistenceFacade(
         return true
     }
 
+    /**
+     * Exactly the set of live voice ACKs whose authenticated replay receipt also has a
+     * decryptable, identically bound, AES-GCM persisted event. Suppressed OFFERs are
+     * still ACK-eligible, but are never effect-eligible. A partial/corrupt store
+     * fails the ENTIRE recovery plan closed, without sending even earlier ACKs.
+     */
+    @Synchronized
+    fun verifiedPendingLiveAcknowledgements(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalReplayAck> {
+        val receipts = recovery.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
+        val events = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+        return receipts.map { receipt ->
+            val matches = events.filter {
+                MessageDigest.isEqual(it.signal.senderIdentityId, receipt.peerIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, receipt.messageId)
+            }
+            if (matches.size != 1) {
+                throw VoiceInboundPersistenceException(
+                    "Recovered M5 ACK is missing exactly one durable semantic event",
+                )
+            }
+            val semanticEvent = matches.single()
+            val signal = semanticEvent.signal
+            if (!MessageDigest.isEqual(semanticEvent.envelopeDigest, receipt.envelopeDigest) ||
+                !MessageDigest.isEqual(signal.recipientIdentityId, ownerIdentityId) ||
+                !MessageDigest.isEqual(signal.callId, receipt.callId) ||
+                signal.kind != receipt.kind ||
+                signal.expiresAtEpochSeconds != receipt.expiresAtEpochSeconds
+            ) {
+                throw VoiceInboundPersistenceException(
+                    "Recovered M5 ACK has mismatched authenticated replay and semantic metadata",
+                )
+            }
+            VoiceSignalReplayAck(receipt.peerIdentityId.copyOf(), receipt.messageId.copyOf())
+        }
+    }
+
     @Synchronized
     fun importCommittedHandoff(
         ownerIdentityId: ByteArray,
