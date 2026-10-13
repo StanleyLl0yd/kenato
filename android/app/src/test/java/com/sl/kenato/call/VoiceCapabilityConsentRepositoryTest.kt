@@ -42,6 +42,37 @@ class VoiceCapabilityConsentRepositoryTest {
     }
 
     @Test
+    fun sameOneTimeChallengeCannotBeConfirmedByTwoRepositoryInstances() {
+        val f = Fixture()
+        val challenge = f.issue()
+        val proof = f.sign(challenge)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val requests = (1..2).map {
+                executor.submit<Boolean> {
+                    release.await()
+                    try {
+                        f.newRepository().confirmSignedProof(
+                            OWNER, f.peer, f.keys.public.encoded, proof, true,
+                        )
+                        true
+                    } catch (_: VoiceCapabilityConsentException) {
+                        false
+                    }
+                }
+            }
+            release.countDown()
+            val outcomes = requests.map { it.get(10, java.util.concurrent.TimeUnit.SECONDS) }
+            assertEquals(1, outcomes.count { it })
+            assertEquals(1, outcomes.count { !it })
+            assertTrue(f.repository.isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded))
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun consentIsExplicitAndUnsignedOrWrongChallengeCannotAuthorizeSupport() {
         val f = Fixture()
         val challenge = f.issue()
