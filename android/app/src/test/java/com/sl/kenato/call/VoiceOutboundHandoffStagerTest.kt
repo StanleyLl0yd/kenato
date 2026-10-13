@@ -132,6 +132,46 @@ class VoiceOutboundHandoffStagerTest {
     }
 
     @Test
+    fun concurrentHandoffWithSameMessageIdFailsInsideSerializedCommit() {
+        val f = Fixture()
+        f.approve()
+        f.sessions.beforeBuilder = {
+            f.sessions.commits += SessionMessageHandoff(
+                localContactId = CONTACT_ID.copyOf(),
+                peerIdentityId = f.peer.copyOf(),
+                messageId = f.messageId.copyOf(),
+                direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                encodedPlaintext = byteArrayOf(0x08, 0x01),
+                encodedEnvelope = byteArrayOf(1),
+            )
+        }
+        assertThrows(VoiceOutboundStagingException::class.java) {
+            f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+        }
+        assertEquals(1, f.sessions.commits.size)
+    }
+
+    @Test
+    fun concurrentVoicePendingFailsInsideSerializedCommit() {
+        val f = Fixture()
+        f.approve()
+        f.sessions.beforeBuilder = {
+            f.sessions.commits += SessionMessageHandoff(
+                localContactId = CONTACT_ID.copyOf(),
+                peerIdentityId = f.peer.copyOf(),
+                messageId = ByteArray(16) { 8 },
+                direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                encodedPlaintext = byteArrayOf(0x08, 0x02),
+                encodedEnvelope = byteArrayOf(1),
+            )
+        }
+        assertThrows(VoiceOutboundStagingException::class.java) {
+            f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+        }
+        assertEquals(1, f.sessions.commits.size)
+    }
+
+    @Test
     fun exhaustionOfUniqueMessageIdsFailsBeforeEncryption() {
         val f = Fixture()
         f.approve()
