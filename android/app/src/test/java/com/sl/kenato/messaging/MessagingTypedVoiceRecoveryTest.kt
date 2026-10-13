@@ -184,6 +184,31 @@ class MessagingTypedVoiceRecoveryTest {
     }
 
     @Test
+    fun differentReplayAdaptersWithEqualKeysButDifferentCiphertextDigestFailClosed() {
+        val f = Fixture()
+        val original = voiceHandoff(29)
+        f.semanticSink.persistAuthenticatedVoiceEvent(OWNER, original)
+        f.voice.reconcileCommittedHandoff(OWNER, original, NOW)
+
+        val substitutedEnvelope = MessagingWire.encodeEnvelope(
+            MessagingWire.decodeEnvelope(original.encodedEnvelope).copy(
+                ciphertext = byteArrayOf(9, 9, 9, 9),
+            ),
+        )
+        val wrongJournal = VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(MemoryVoiceStore()))
+        wrongJournal.reconcileCommittedHandoff(
+            OWNER, original.copy(encodedEnvelope = substitutedEnvelope), NOW,
+        )
+        val mismatched = MessagingRecoveryCoordinator(
+            f.sessions, f.history, wrongJournal, f.semanticSink,
+            MessagingRecoveryClock { NOW }, f.verified,
+        )
+        assertThrows(MessagingRecoveryException::class.java) {
+            mismatched.recover(OWNER)
+        }
+    }
+
+    @Test
     fun voiceMetadataOnlyRecoveryAdapterFailsClosed() {
         val f = Fixture()
         f.sessions.handoffs += voiceHandoff(25)

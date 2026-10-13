@@ -7,6 +7,7 @@ import com.sl.kenato.call.VoiceInboundPersistenceFacade
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
+import java.security.MessageDigest
 import java.time.Instant
 
 internal data class MessagingRecoveredSend(
@@ -115,25 +116,39 @@ internal class MessagingRecoveryCoordinator(
         if (voice != null) {
             val now = clock.nowEpochSeconds()
             if (now < 0L) throw MessagingRecoveryException("Voice ACK recovery clock is invalid")
-            val replayCandidates = voice.pendingLiveAcknowledgements(ownerIdentityId, now)
+            val replayCandidates = voice.pendingLiveReceipts(ownerIdentityId, now)
             if (replayCandidates.isNotEmpty()) {
                 val verifier = verifiedVoiceAcks ?: throw MessagingRecoveryException(
                     "Voice replay receipts have no independently encrypted semantic ACK verifier",
                 )
-                val verified = verifier.verifiedPendingLiveAcknowledgements(ownerIdentityId, now)
-                // An adapter may never silently omit or add an ACK relative to the raw
-                // bounded journal. Validate the exact set before exposing the plan.
-                val candidates = replayCandidates.map {
+                val verified = verifier.verifiedPendingLiveReceipts(ownerIdentityId, now)
+                // Fail closed even when a miswired adapter has the same peer/message IDs
+                // but a different authenticated encrypted envelope or call metadata.
+                val raw = replayCandidates.associateBy {
                     MessageKey(it.peerIdentityId, it.messageId)
-                }.toSet()
-                val confirmed = verified.map {
+                }
+                val confirmed = verified.associateBy {
                     MessageKey(it.peerIdentityId, it.messageId)
-                }.toSet()
-                if (candidates.size != replayCandidates.size ||
+                }
+                if (raw.size != replayCandidates.size ||
                     confirmed.size != verified.size ||
-                    candidates != confirmed
+                    raw.keys != confirmed.keys
                 ) {
                     throw MessagingRecoveryException("Verified voice ACK keys differ from replay journal")
+                }
+                for ((key, receipt) in confirmed) {
+                    val original = raw[key] ?: throw MessagingRecoveryException(
+                        "Verified voice ACK missing authenticated replay receipt",
+                    )
+                    if (!MessageDigest.isEqual(receipt.envelopeDigest, original.envelopeDigest) ||
+                        !MessageDigest.isEqual(receipt.callId, original.callId) ||
+                        receipt.kind != original.kind ||
+                        receipt.expiresAtEpochSeconds != original.expiresAtEpochSeconds
+                    ) {
+                        throw MessagingRecoveryException(
+                            "Verified voice ACK disagrees with original authenticated replay metadata",
+                        )
+                    }
                 }
                 recoveredAcks += verified.map {
                     MessagingRecoveredAck(it.peerIdentityId.copyOf(), it.messageId.copyOf())

@@ -60,10 +60,10 @@ internal class VoiceInboundPersistenceFacade(
      * fails the ENTIRE recovery plan closed, without sending even earlier ACKs.
      */
     @Synchronized
-    fun verifiedPendingLiveAcknowledgements(
+    fun verifiedPendingLiveReceipts(
         ownerIdentityId: ByteArray,
         nowEpochSeconds: Long,
-    ): List<VoiceSignalReplayAck> {
+    ): List<VoiceSignalReplayReceipt> {
         val receipts = recovery.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
         val events = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
         return receipts.map { receipt ->
@@ -88,7 +88,7 @@ internal class VoiceInboundPersistenceFacade(
                     "Recovered M5 ACK has mismatched authenticated replay and semantic metadata",
                 )
             }
-            VoiceSignalReplayAck(receipt.peerIdentityId.copyOf(), receipt.messageId.copyOf())
+            receipt
         }
     }
 
