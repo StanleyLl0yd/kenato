@@ -45,6 +45,10 @@ internal class VoiceOutboundHandoffStager(
         ttlSeconds: Long,
     ): SessionMessageHandoff {
         if (ttlSeconds !in 1L..90L) throw VoiceOutboundStagingException("Invalid M5 outbound TTL")
+        // Reject oversized caller input before making an avoidable plaintext copy.
+        if (payload.size > 16 * 1024) {
+            throw VoiceOutboundStagingException("M5 outbound signal payload is oversized")
+        }
         if (callId.size != 16 || callId.all { it == 0.toByte() }) {
             throw VoiceOutboundStagingException("Invalid M5 outbound call id")
         }
@@ -98,6 +102,20 @@ internal class VoiceOutboundHandoffStager(
             // before persisting the advanced ratchet. A revoked capability must fail
             // without creating a deliverable v2 record.
             val latest = guard.requireEligiblePeer(ownerIdentityId, peerIdentityId)
+            // Close the gap between initial ID/queue preflight and serialized M3 commit.
+            // Production adapters must share the same LocalSessionRepository lock.
+            val livePending = handoffs.pendingMessageHandoffs(ownerIdentityId)
+            if (livePending.size >= SessionStateCodec.MAX_MESSAGE_HANDOFFS ||
+                livePending.any { MessageDigest.isEqual(it.messageId, messageId) } ||
+                livePending.any {
+                    it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                        it.encodedPlaintext.size >= 2 &&
+                        it.encodedPlaintext[0] == 0x08.toByte() &&
+                        it.encodedPlaintext[1] == 0x02.toByte()
+                }
+            ) {
+                throw VoiceOutboundStagingException("M5 outbound handoff admission changed")
+            }
             if (!MessageDigest.isEqual(latest.localContactId, permitted.localContactId) ||
                 !MessageDigest.isEqual(context.ownerIdentityId, ownerIdentityId) ||
                 !MessageDigest.isEqual(context.peerIdentityId, peerIdentityId) ||
