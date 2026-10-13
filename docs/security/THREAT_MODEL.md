@@ -310,6 +310,7 @@ Mitigations:
 - prekey private material persisted only as AES-256-GCM authenticated ciphertext bound to its kind, id, and public key;
 - M2 contact pins and pending invite secrets remain app-private and are covered by the existing all-domain backup/device-transfer denial;
 - M3 account/session state is app-private and covered by the same backup/device-transfer denial;
+- M3's bounded atomic application handoff journal (including M4 text and an opt-in M5 voice v2 application plaintext record) is stored as plaintext inside the app-sandboxed `noBackupFilesDir` state file, **not separately AES-GCM encrypted**; wrapped native session pickle keys do not encrypt the journal. Before activation of the draft M5 outbound stager, review the local-device threat of recoverable SDP/ICE (including network addresses) and whether Keystore encryption of committed handoff payloads is required. Neither no-backup nor the app sandbox protects against a compromised OS or an app-private file disclosure. This is explicitly not a claim of at-rest E2EE.
 - every M3 native account/session snapshot uses a fresh random 32-byte pickle key, protected by a non-exportable Android Keystore AES-GCM wrapping key with context AAD;
 - temporary native JNI copies of pickle keys and application/control/decrypted plaintext are stored in zeroizing buffers and erased when those buffers leave scope, including native error paths where the backing buffer is under Kenato's control;
 - M4 ordinary text remains inside M3 ciphertext on the network/server boundary;
