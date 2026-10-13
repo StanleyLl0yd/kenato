@@ -4,6 +4,7 @@ import com.sl.kenato.call.EncryptedApplicationPayload
 import com.sl.kenato.call.EncryptedApplicationPayloadClassifier
 import com.sl.kenato.call.VoiceInboundHandoffRecovery
 import com.sl.kenato.call.VoiceInboundPersistenceFacade
+import com.sl.kenato.call.VoiceOutboundHandoffRecovery
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
@@ -97,6 +98,8 @@ internal class MessagingRecoveryCoordinator(
      * may not authorize ACK without its matching Keystore-authenticated SDP/ICE.
      */
     private val verifiedVoiceAcks: VoiceInboundPersistenceFacade? = null,
+    /** Opt-in: no change to M4 outbound recovery until this adapter is supplied. */
+    private val outboundVoice: VoiceOutboundHandoffRecovery? = null,
 ) {
     @Synchronized
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
@@ -192,6 +195,14 @@ internal class MessagingRecoveryCoordinator(
         nowEpochSeconds: Long,
     ): Boolean {
         requireIdentity(ownerIdentityId)
+        val staged = pendingOutboundHandoff(ownerIdentityId, peerIdentityId, messageId)
+        if (staged != null && applicationVersion(staged) == 2) {
+            requireNoTextOutboundCollision(ownerIdentityId, peerIdentityId, messageId)
+            val typed = outboundVoice ?: throw MessagingRecoveryException(
+                "M5 outbound expiry requires typed voice recovery",
+            )
+            return typed.expireIfDue(ownerIdentityId, peerIdentityId, messageId, nowEpochSeconds)
+        }
         val before = history.currentState(ownerIdentityId)
             ?.messages
             ?.singleOrNull {
@@ -248,6 +259,17 @@ internal class MessagingRecoveryCoordinator(
         accepted: MessagingSendAccepted,
     ) {
         requireIdentity(ownerIdentityId)
+        val staged = pendingOutboundHandoff(
+            ownerIdentityId, accepted.recipientIdentityId, accepted.messageId,
+        )
+        if (staged != null && applicationVersion(staged) == 2) {
+            requireNoTextOutboundCollision(ownerIdentityId, accepted.recipientIdentityId, accepted.messageId)
+            val typed = outboundVoice ?: throw MessagingRecoveryException(
+                "M5 outbound acceptance requires typed voice recovery",
+            )
+            typed.recordAccepted(ownerIdentityId, accepted, clock.nowEpochSeconds())
+            return
+        }
         val before = history.currentState(ownerIdentityId)
             ?.messages
             ?.singleOrNull {
@@ -277,34 +299,60 @@ internal class MessagingRecoveryCoordinator(
         val recoveredSends = ArrayList<MessagingRecoveredSend>()
         val pendingSendKeys = HashSet<MessageKey>()
 
+        // Reject mixed text/voice duplicate transport keys BEFORE an earlier text
+        // handoff can be imported into visible conversation history.
+        handoffs.filter { it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND }
+            .forEach { handoff ->
+                if (!pendingSendKeys.add(MessageKey(handoff.peerIdentityId, handoff.messageId))) {
+                    throw MessagingRecoveryException("Duplicate cross-type outbound recovery key")
+                }
+            }
+        pendingSendKeys.clear()
+
         handoffs.forEach { handoff ->
             when (handoff.direction) {
                 SessionStateCodec.HANDOFF_DIRECTION_INBOUND -> {
                     if (includeInbound) recoverInbound(ownerIdentityId, handoff)
                 }
                 SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
-                    if (applicationVersion(handoff) != 1) {
-                        throw MessagingRecoveryException(
-                            "Voice or unknown outbound application handoff requires typed recovery",
-                        )
-                    }
-                    val record = history.importOutboundPendingAcceptance(ownerIdentityId, handoff)
-                    when (record.deliveryState) {
-                        ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> {
-                            val key = MessageKey(record.peerIdentityId, record.messageId)
-                            if (!pendingSendKeys.add(key)) {
-                                throw MessagingRecoveryException("Duplicate outbound recovery handoff")
-                            }
-                            recoveredSends += MessagingRecoveredSend(
-                                peerIdentityId = handoff.peerIdentityId.copyOf(),
-                                messageId = handoff.messageId.copyOf(),
-                                encodedEnvelope = handoff.encodedEnvelope.copyOf(),
+                    when (applicationVersion(handoff)) {
+                        2 -> {
+                            val adapter = outboundVoice ?: throw MessagingRecoveryException(
+                                "M5 outbound handoff requires typed recovery",
                             )
+                            requireNoTextOutboundCollision(
+                                ownerIdentityId, handoff.peerIdentityId, handoff.messageId,
+                            )
+                            val now = clock.nowEpochSeconds()
+                            val recovered = adapter.recover(ownerIdentityId, handoff, now)
+                            if (!pendingSendKeys.add(MessageKey(recovered.peerIdentityId, recovered.messageId))) {
+                                throw MessagingRecoveryException("Duplicate typed outbound recovery handoff")
+                            }
+                            recoveredSends += recovered
                         }
-                        ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
-                        ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
-                        -> completeRequired(ownerIdentityId, handoff)
-                        else -> throw MessagingRecoveryException("Outbound recovery history state is invalid")
+                        1 -> {
+                            val record = history.importOutboundPendingAcceptance(ownerIdentityId, handoff)
+                            when (record.deliveryState) {
+                                ConversationHistoryStateCodec.DELIVERY_STATE_PENDING_ACCEPTANCE -> {
+                                    val key = MessageKey(record.peerIdentityId, record.messageId)
+                                    if (!pendingSendKeys.add(key)) {
+                                        throw MessagingRecoveryException("Duplicate outbound recovery handoff")
+                                    }
+                                    recoveredSends += MessagingRecoveredSend(
+                                        peerIdentityId = handoff.peerIdentityId.copyOf(),
+                                        messageId = handoff.messageId.copyOf(),
+                                        encodedEnvelope = handoff.encodedEnvelope.copyOf(),
+                                    )
+                                }
+                                ConversationHistoryStateCodec.DELIVERY_STATE_ACCEPTED,
+                                ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED,
+                                -> completeRequired(ownerIdentityId, handoff)
+                                else -> throw MessagingRecoveryException(
+                                    "Outbound recovery history state is invalid",
+                                )
+                            }
+                        }
+                        else -> throw MessagingRecoveryException("Unsupported outbound application version")
                     }
                 }
                 else -> throw MessagingRecoveryException("Recovery handoff direction is invalid")
@@ -319,6 +367,32 @@ internal class MessagingRecoveryCoordinator(
             }
         }
         return recoveredSends
+    }
+
+    private fun pendingOutboundHandoff(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+    ): SessionMessageHandoff? = sessions.pendingMessageHandoffs(ownerIdentityId)
+        .singleOrNull {
+            it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                it.peerIdentityId.contentEquals(peerIdentityId) &&
+                it.messageId.contentEquals(messageId)
+        }
+
+    private fun requireNoTextOutboundCollision(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+    ) {
+        if (history.currentState(ownerIdentityId)?.messages?.any {
+                it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
+                    it.peerIdentityId.contentEquals(peerIdentityId) &&
+                    it.messageId.contentEquals(messageId)
+            } == true
+        ) {
+            throw MessagingRecoveryException("M5 outbound voice id collides with M4 text history")
+        }
     }
 
     private fun recoverInbound(ownerIdentityId: ByteArray, handoff: SessionMessageHandoff) {
