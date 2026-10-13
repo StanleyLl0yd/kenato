@@ -229,7 +229,7 @@ class MessagingTypedOutboundVoiceRecoveryTest {
         val CALL_ID = ByteArray(16) { 4 }
         val CONTACT = ByteArray(16) { 5 }
 
-        fun outboundVoice(): SessionMessageHandoff {
+        internal fun outboundVoice(): SessionMessageHandoff {
             val plaintext = VoiceSignalingWire.encode(
                 VoiceSignalPlaintext(
                     senderIdentityId = OWNER.copyOf(),
