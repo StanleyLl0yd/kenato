@@ -9,6 +9,7 @@ import com.sl.kenato.messaging.MessagingOutboundSessionDriver
 import com.sl.kenato.messaging.MessagingProtocol
 import com.sl.kenato.messaging.MessagingSessionHandoffRepository
 import com.sl.kenato.messaging.MessagingWire
+import com.sl.kenato.messaging.MessagingWssCoordinator
 import com.sl.kenato.messaging.SecureMessagingMessageIdGenerator
 import com.sl.kenato.session.SessionCiphertext
 import com.sl.kenato.session.SessionCiphertextWire
@@ -58,7 +59,7 @@ internal class VoiceOutboundHandoffStager(
         }
         val existing = handoffs.pendingMessageHandoffs(ownerIdentityId)
         val outbound = existing.filter { it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND }
-        if (outbound.size >= 32) {
+        if (outbound.size >= MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS) {
             throw VoiceOutboundStagingException("M4/M5 staged transport send capacity reached")
         }
         // This isolated slice permits one uncompleted voice event, until the typed
