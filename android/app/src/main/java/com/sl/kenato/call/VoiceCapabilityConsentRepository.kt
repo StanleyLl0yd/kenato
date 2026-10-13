@@ -311,7 +311,7 @@ internal class DurableVoiceCapabilityConsentRepository(
         peerIdentityId: ByteArray,
     ) = synchronized(STATE_WRITE_LOCK) {
         validateIdentityPair(ownerIdentityId, peerIdentityId)
-        val state = load(ownerIdentityId) ?: return
+        val state = load(ownerIdentityId) ?: return@synchronized
         persist(ownerIdentityId, state.entries.filterNot {
             it.peerIdentityId.contentEquals(peerIdentityId)
         })
