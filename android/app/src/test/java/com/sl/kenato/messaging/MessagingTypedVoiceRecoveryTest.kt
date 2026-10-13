@@ -127,7 +127,9 @@ class MessagingTypedVoiceRecoveryTest {
         val f = Fixture()
         val handoff = voiceHandoff(23)
         f.voice.reconcileCommittedHandoff(OWNER, handoff, NOW)
-        assertThrows(MessagingRecoveryException::class.java) {
+        // The concrete encrypted-store verifier throws a fail-closed persistence
+        // exception; the coordinator must not translate it into a recoverable ACK.
+        assertThrows(IllegalStateException::class.java) {
             f.coordinator.recover(OWNER)
         }
         assertEquals(0, f.semanticStore.writes)
