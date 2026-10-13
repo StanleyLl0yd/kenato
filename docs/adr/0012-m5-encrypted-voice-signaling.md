@@ -252,3 +252,43 @@ ACK-eligible but have no semantic call-effect permission.
 The default M4 recovery remains text-only, and production still does not
 supply the optional voice adapter. This change does not enable WSS voice,
 outgoing voice, WebRTC, ringing or release packaging.
+
+
+## Durable, explicit signed peer voice capability consent (isolated)
+
+`DurableVoiceCapabilityConsentRepository` is a **client-only, opt-in** store
+for a future verified-contact, out-of-band capability exchange. Its data
+must be written to a **separate** Android no-backup AtomicFile, encrypted
+with AES-GCM, an independent owner-bound AAD domain, and an Android Keystore
+non-exportable key. This codec does not configure that file or connect a
+production call flow.
+
+To request an attestation, the owner chooses an already pinned M2 peer
+identity and generates a CSPRNG 128-bit single-use challenge valid for at
+most five minutes. Only a canonical, pinned-peer P-256 signature binding
+both identities, the outstanding challenge and the signed window, plus an
+explicit user approval, can atomically replace that pending challenge
+with durable positive v2 support. Confirmation **erases** the challenge;
+a replay, wrong owner/peer/key, expired/rotated challenge or torn write
+never grants capability. The 128-contact encrypted state is bounded,
+identity-recovery clearable, revocable per peer and fail-closed on
+authentication or storage faults. Unknown M4 peers are never probed by
+sending them a v2 call payload.
+
+Only a future audited UI/QR transport may surface these challenges and
+attestations, source pinned keys from M2 contacts, and gate outbound
+voice staging with the persisted positive result. **A capability does not
+grant consent to any individual call**, does not bypass M3 E2EE, and never
+starts ringing or media by itself.
+
+The standalone Android adapter is available with dedicated
+`kenato_m5_voice_capabilities_v1.enc` under `noBackupFilesDir` and
+`com.sl.kenato.m5.voice-capability.v1` Keystore alias. It is not installed
+in the application's live dependency graph. Initialization must use this
+adapter rather than the semantic-event storage instance.
+
+On destructive identity recovery, the Android adapter also deletes its
+dedicated Keystore alias **before** removing the atomic file. Old encrypted
+capability grants then cannot be restored by replaying a stale file under
+the previous key. A failed key deletion aborts the reset without reporting
+success; the app must never continue treating those grants as authorized.
