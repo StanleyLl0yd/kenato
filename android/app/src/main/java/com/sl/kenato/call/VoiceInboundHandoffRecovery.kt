@@ -108,6 +108,12 @@ internal class VoiceInboundHandoffRecovery(
         messageId: ByteArray,
     ): Boolean = journal.hasPersistedInboundMessageKey(ownerIdentityId, peerIdentityId, messageId)
 
+    fun pendingLiveReceipts(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VoiceSignalReplayReceipt> =
+        journal.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
+
     fun pendingLiveAcknowledgements(
         ownerIdentityId: ByteArray,
         nowEpochSeconds: Long,

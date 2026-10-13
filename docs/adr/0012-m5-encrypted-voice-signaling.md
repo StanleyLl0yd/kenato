@@ -234,3 +234,21 @@ this handler refuses to re-decrypt and leaves the M3 handoff for deterministic
 restart recovery. A valid cached ACK must never mean the associated OFFER is
 eligible for ringtone or media; replay suppression and one-time semantic
 dispatch are independently required.
+
+
+## Verified voice ACK recovery after a crash
+
+A replay receipt is **not sufficient** to resume ACK transmission. The M4
+recovery coordinator now requires an explicitly supplied M5
+`VoiceInboundPersistenceFacade` whenever live voice replay receipts exist;
+otherwise it fails closed. The facade reads the Keystore AES-GCM semantic
+record and authenticates its exact replay identity, message, call, kind,
+expiry and SHA-256 digest of the originally encrypted M4 envelope under one
+clock snapshot. A partial write (replay committed but semantic missing),
+corrupt ciphertext, wrong owner, or mismatched metadata aborts the entire
+recovery plan without returning ACKs. Authenticated suppressed OFFERs remain
+ACK-eligible but have no semantic call-effect permission.
+
+The default M4 recovery remains text-only, and production still does not
+supply the optional voice adapter. This change does not enable WSS voice,
+outgoing voice, WebRTC, ringing or release packaging.
