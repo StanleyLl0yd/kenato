@@ -34,10 +34,15 @@ recovery is independently implemented. The M4 text recovery intentionally
 fails closed if it sees an outbound v2 record.
 
 Signed consent is not inferred from relay behavior and no plaintext SDP/ICE
-leaves M3/M4 ciphertext. The M3 handoff temporarily contains authenticated
-plaintext protected by device-local session storage: that is a restorable
-local persistence boundary, not a new server-visible field. Only one pending
-voice event is allowed during this foundation phase.
+leaves M3/M4 ciphertext. The current M3 handoff retains a temporary
+plaintext copy of the exact application record in an Android no-backup
+AtomicFile. This file is isolated by the app sandbox but **is not itself
+AES-GCM encrypted at rest** (unlike the separate durable M5 semantic event
+store). This inherited M3 trust boundary needs explicit threat-model/owner
+review before live voice staging is enabled, especially because SDP can
+contain private local-network addresses. The ciphertext sent to the server
+never includes this plaintext outside M3 encryption. Only one pending voice
+event is allowed during this foundation phase.
 
 No app runtime uses this guard/stager yet; no backend endpoints, server
 components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
