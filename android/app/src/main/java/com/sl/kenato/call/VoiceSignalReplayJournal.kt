@@ -142,6 +142,50 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
     }
 
     /**
+     * Validate an already persisted live M5 receipt using the exact encrypted
+     * envelope hash, not untrusted claimed message ids alone. Suppressed offers
+     * are still ACK-eligible when their encrypted semantic payload also exists.
+     */
+    @Synchronized
+    fun exactLiveInboundReceipt(
+        ownerIdentityId: ByteArray,
+        envelope: com.sl.kenato.messaging.MessagingEnvelope,
+        nowEpochSeconds: Long,
+    ): VoiceSignalReplayReceipt? {
+        if (ownerIdentityId.size != VOICE_REPLAY_IDENTITY_BYTES ||
+            ownerIdentityId.all { it == 0.toByte() } ||
+            !ownerIdentityId.contentEquals(envelope.recipientIdentityId)
+        ) {
+            throw VoiceSignalReplayException("Voice receipt owner mismatch")
+        }
+        MessagingProtocol.validateEnvelope(envelope, nowEpochSeconds)
+        val state = store.read()?.let(VoiceSignalReplayStateCodec::decode) ?: return null
+        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+            throw VoiceSignalReplayException("Voice receipt belongs to another owner")
+        }
+        val record = state.records.singleOrNull {
+            it.peerIdentityId.contentEquals(envelope.senderIdentityId) &&
+                it.messageId.contentEquals(envelope.messageId)
+        } ?: return null
+        val exactDigest = MessageDigest.getInstance("SHA-256").digest(
+            MessagingWire.encodeEnvelope(envelope),
+        )
+        if (!MessageDigest.isEqual(exactDigest, record.envelopeDigest) ||
+            record.expiresAtEpochSeconds != envelope.expiresAtEpochSeconds
+        ) {
+            throw VoiceSignalReplayException("Conflicting encrypted M5 receipt at a persisted message id")
+        }
+        return VoiceSignalReplayReceipt(
+            record.peerIdentityId.copyOf(),
+            record.messageId.copyOf(),
+            record.callId.copyOf(),
+            record.kind,
+            record.expiresAtEpochSeconds,
+            record.envelopeDigest.copyOf(),
+        )
+    }
+
+    /**
      * A voice receipt must never share an authenticated sender/message id with M4 text.
      * Include expired retained records: expiry revokes ACK, not message-id provenance.
      */
@@ -227,6 +271,16 @@ internal class VoiceSignalReplayJournal(private val store: VoiceSignalReplayStor
 internal class VoiceSignalReplayAck(
     val peerIdentityId: ByteArray,
     val messageId: ByteArray,
+)
+
+/** A prior authenticated/durable message receipt, not a relay-side voice flag. */
+internal class VoiceSignalReplayReceipt(
+    val peerIdentityId: ByteArray,
+    val messageId: ByteArray,
+    val callId: ByteArray,
+    val kind: VoiceSignalKind,
+    val expiresAtEpochSeconds: Long,
+    val envelopeDigest: ByteArray,
 )
 
 /** Permitted semantic dispatch key, not the authenticated SDP/ICE event payload. */

@@ -1,5 +1,8 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.call.EncryptedApplicationPayload
+import com.sl.kenato.call.EncryptedApplicationPayloadClassifier
+import com.sl.kenato.call.VoiceInboundPersistenceFacade
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionCiphertext
 import com.sl.kenato.session.SessionCiphertextWire
@@ -72,6 +75,8 @@ internal class LocalMessagingInboundSessionDriver(
 internal class DurableMessagingInboundDeliveryHandler(
     private val sessions: MessagingInboundSessionDriver,
     private val history: ConversationHistoryRepository,
+    /** Explicit opt-in: the default M4 text handler remains completely unchanged. */
+    private val voice: VoiceInboundPersistenceFacade? = null,
 ) : MessagingInboundDeliveryHandler {
     @Synchronized
     override fun handle(
@@ -84,8 +89,15 @@ internal class DurableMessagingInboundDeliveryHandler(
 
         val encodedEnvelope = MessagingWire.encodeEnvelope(envelope)
 
-        // At-least-once redelivery must not touch the ratchet after this exact envelope is durable.
+        // Exact voice receipt must also have its encrypted semantic event. A replay
+        // receipt with missing/corrupt AES-GCM payload is NOT grounds to ACK.
+        // This preflight is opt-in; old M4 clients do not read M5 storage.
+        val duplicateVoice = voice?.hasDurableDuplicate(envelope, receivedAtEpochSeconds) == true
+        // At-least-once redelivery must not touch the ratchet after durable import.
         if (history.matchesAuthenticatedInboundEnvelope(ownerIdentityId, encodedEnvelope)) {
+            if (duplicateVoice) {
+                throw MessagingInboundDeliveryException("M4 and M5 durable receipt keys collide")
+            }
             return acknowledgement(envelope)
         }
 
@@ -95,6 +107,11 @@ internal class DurableMessagingInboundDeliveryHandler(
             throw MessagingInboundDeliveryException(
                 "M4 inbound message id conflicts with an already authenticated history record",
             )
+        }
+        if (duplicateVoice) {
+            // Persisted exact encrypted M5 event and replay permit both exist.
+            // ACK without a second irreversible M3 ratchet decrypt.
+            return acknowledgement(envelope)
         }
 
         // Parse and bind the opaque M3 wrapper before consulting local session state. Malformed,
@@ -132,20 +149,29 @@ internal class DurableMessagingInboundDeliveryHandler(
             ciphertext = ciphertext,
         ) { context, decryptedPlaintext ->
             requireCryptoContext(context, ownerIdentityId, localContactId, envelope.senderIdentityId)
-            val plaintext = try {
-                MessagingWire.decodePlaintext(decryptedPlaintext)
-            } catch (error: Exception) {
-                throw MessagingInboundDeliveryException("M4 decrypted plaintext is invalid", error)
+            val encodedPlaintext = if (voice != null) {
+                // Version information is available ONLY after authenticated M3 decrypt.
+                EncryptedApplicationPayloadClassifier.classify(
+                    decryptedPlaintext, envelope, receivedAtEpochSeconds,
+                )
+                decryptedPlaintext.copyOf()
+            } else {
+                val plaintext = try {
+                    MessagingWire.decodePlaintext(decryptedPlaintext)
+                } catch (error: Exception) {
+                    throw MessagingInboundDeliveryException("M4 decrypted plaintext is invalid", error)
+                }
+                val canonical = try {
+                    MessagingWire.encodePlaintext(plaintext)
+                } catch (error: Exception) {
+                    throw MessagingInboundDeliveryException("M4 decrypted plaintext is invalid", error)
+                }
+                if (!canonical.contentEquals(decryptedPlaintext)) {
+                    throw MessagingInboundDeliveryException("M4 decrypted plaintext is not canonical")
+                }
+                MessagingProtocol.validateDeliveryContext(envelope, plaintext, receivedAtEpochSeconds)
+                canonical
             }
-            val encodedPlaintext = try {
-                MessagingWire.encodePlaintext(plaintext)
-            } catch (error: Exception) {
-                throw MessagingInboundDeliveryException("M4 decrypted plaintext is invalid", error)
-            }
-            if (!encodedPlaintext.contentEquals(decryptedPlaintext)) {
-                throw MessagingInboundDeliveryException("M4 decrypted plaintext is not canonical")
-            }
-            MessagingProtocol.validateDeliveryContext(envelope, plaintext, receivedAtEpochSeconds)
             SessionMessageHandoff(
                 localContactId = context.localContactId.copyOf(),
                 peerIdentityId = context.peerIdentityId.copyOf(),
@@ -156,11 +182,20 @@ internal class DurableMessagingInboundDeliveryHandler(
             )
         }
 
-        // History must become durable before ACK eligibility. If this write fails, the atomic M3
-        // handoff remains for restart recovery and this call emits no ACK.
-        history.importInboundPendingAck(ownerIdentityId, handoff)
+        // Any failure retains the ratchet-coupled M3 handoff and emits NO ACK.
+        // Neither the relay nor the text history ever sees SDP/ICE payloads.
+        val application = if (voice != null) {
+            EncryptedApplicationPayloadClassifier.classify(
+                handoff.encodedPlaintext, envelope, receivedAtEpochSeconds,
+            )
+        } else null
+        if (application is EncryptedApplicationPayload.Voice) {
+            voice!!.importCommittedHandoff(ownerIdentityId, handoff, receivedAtEpochSeconds)
+        } else {
+            history.importInboundPendingAck(ownerIdentityId, handoff)
+        }
 
-        // Once history is durable it is sufficient to authorize an idempotent duplicate ACK. The
+        // Once the appropriate application store is durable, the
         // crypto-coupled handoff can therefore be removed; a failure leaves it for recovery.
         if (
             !sessions.completeInboundMessageHandoff(
