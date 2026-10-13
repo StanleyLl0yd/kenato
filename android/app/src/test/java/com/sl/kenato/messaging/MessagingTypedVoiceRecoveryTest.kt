@@ -148,6 +148,42 @@ class MessagingTypedVoiceRecoveryTest {
     }
 
     @Test
+    fun twoAuthenticatedOffersWithReusedCallIdRetainBothAcksButOnlyOneDispatchPermit() {
+        val f = Fixture()
+        f.sessions.handoffs += voiceHandoff(26)
+        f.sessions.handoffs += voiceHandoff(27)
+        val plan = f.coordinator.recover(OWNER)
+        assertEquals(2, plan.inboundAcks.size)
+        assertEquals(
+            1,
+            VoiceSignalReplayJournal(f.voiceStore).pendingLiveDispatchPermits(OWNER, NOW).size,
+        )
+        assertEquals(2, f.semanticSink.pendingLiveEvents(OWNER).size)
+    }
+
+    @Test
+    fun twoIndependentlyValidStoresWithDifferentEncryptedEnvelopeDigestCannotAuthorizeAck() {
+        val f = Fixture()
+        val recorded = voiceHandoff(28)
+        f.voice.reconcileCommittedHandoff(OWNER, recorded, NOW)
+        val changedEnvelope = MessagingWire.encodeEnvelope(
+            MessagingWire.decodeEnvelope(recorded.encodedEnvelope).copy(
+                ciphertext = byteArrayOf(9, 8, 7, 6),
+            ),
+        )
+        f.semanticSink.persistAuthenticatedVoiceEvent(
+            OWNER,
+            recorded.copy(encodedEnvelope = changedEnvelope),
+        )
+        assertThrows(IllegalStateException::class.java) {
+            f.coordinator.recover(OWNER)
+        }
+        assertEquals(1, f.voiceStore.writes)
+        assertEquals(1, f.semanticStore.writes)
+        assertEquals(0, f.sessions.completed.size)
+    }
+
+    @Test
     fun voiceMetadataOnlyRecoveryAdapterFailsClosed() {
         val f = Fixture()
         f.sessions.handoffs += voiceHandoff(25)
