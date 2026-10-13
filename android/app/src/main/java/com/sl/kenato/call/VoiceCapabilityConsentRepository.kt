@@ -197,12 +197,18 @@ internal class DurableVoiceCapabilityConsentRepository(
     private val random: SecureRandom = SecureRandom(),
     private val clock: VoiceCapabilityConsentClock = SystemVoiceCapabilityConsentClock,
 ) {
+    private companion object {
+        // One lock per process, including multiple repository instances over one AtomicFile.
+        // A future multiprocess application must add an interprocess transaction boundary.
+        val STATE_WRITE_LOCK = Any()
+    }
+
     @Synchronized
     fun issueChallenge(
         ownerIdentityId: ByteArray,
         peerIdentityId: ByteArray,
         pinnedPeerPublicKey: ByteArray,
-    ): VoiceCapabilityChallenge {
+    ): VoiceCapabilityChallenge = synchronized(STATE_WRITE_LOCK) {
         validateOwnerPeer(ownerIdentityId, peerIdentityId, pinnedPeerPublicKey)
         val now = now()
         if (now > Long.MAX_VALUE - VoiceCapabilityProofWire.MAX_LIFETIME_SECONDS) {
@@ -230,7 +236,7 @@ internal class DurableVoiceCapabilityConsentRepository(
             approvedAt = 0L,
         )
         persist(ownerIdentityId, remaining + entry)
-        return VoiceCapabilityChallenge(
+        VoiceCapabilityChallenge(
             ownerIdentityId.copyOf(),
             peerIdentityId.copyOf(),
             challenge.copyOf(),
@@ -245,7 +251,7 @@ internal class DurableVoiceCapabilityConsentRepository(
         pinnedPeerPublicKey: ByteArray,
         encodedProof: ByteArray,
         explicitUserApproval: Boolean,
-    ) {
+    ) = synchronized(STATE_WRITE_LOCK) {
         validateOwnerPeer(ownerIdentityId, peerIdentityId, pinnedPeerPublicKey)
         if (!explicitUserApproval) {
             throw VoiceCapabilityConsentException("Explicit user approval is required")
@@ -303,7 +309,7 @@ internal class DurableVoiceCapabilityConsentRepository(
     fun revoke(
         ownerIdentityId: ByteArray,
         peerIdentityId: ByteArray,
-    ) {
+    ) = synchronized(STATE_WRITE_LOCK) {
         validateIdentityPair(ownerIdentityId, peerIdentityId)
         val state = load(ownerIdentityId) ?: return
         persist(ownerIdentityId, state.entries.filterNot {
@@ -313,7 +319,7 @@ internal class DurableVoiceCapabilityConsentRepository(
 
     /** Must be called together with explicit destructive local identity recovery. */
     @Synchronized
-    fun clearForIdentityRecovery() {
+    fun clearForIdentityRecovery() = synchronized(STATE_WRITE_LOCK) {
         // Deleting the key first makes an old encrypted blob undecryptable even
         // if a destructive file clear fails or a stale file is restored later.
         cipher.deleteCapabilityKeyForIdentityRecovery()
