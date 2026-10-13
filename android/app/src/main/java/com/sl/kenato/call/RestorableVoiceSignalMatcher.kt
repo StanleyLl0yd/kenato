@@ -36,16 +36,14 @@ internal class RestorableVoiceSignalMatcher(
         if (peerIdentityId.size != 32 || messageId.size != 16) {
             throw RestorableVoiceSignalMismatchException("Invalid requested voice dispatch key")
         }
-        val verified = restorableCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
-            MessageDigest.isEqual(it.senderIdentityId, peerIdentityId) &&
-                MessageDigest.isEqual(it.messageId, messageId)
+        val matched = verifiedCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.signal.senderIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.signal.messageId, messageId)
         } ?: return null
-        val permit = replay.pendingLiveDispatchPermits(ownerIdentityId, nowEpochSeconds).singleOrNull {
-            MessageDigest.isEqual(it.peerIdentityId, peerIdentityId) &&
-                MessageDigest.isEqual(it.messageId, messageId)
-        } ?: return null
-        return if (replay.claimLiveDispatchPermit(ownerIdentityId, permit, nowEpochSeconds)) {
-            verified
+        // Claim the exact permit that was paired with these semantic bytes. Re-reading
+        // permits here could claim a changed receipt but return a stale different event.
+        return if (replay.claimLiveDispatchPermit(ownerIdentityId, matched.permit, nowEpochSeconds)) {
+            matched.signal
         } else null
     }
 
@@ -53,7 +51,18 @@ internal class RestorableVoiceSignalMatcher(
     fun restorableCandidates(
         ownerIdentityId: ByteArray,
         nowEpochSeconds: Long,
-    ): List<VoiceSignalPlaintext> {
+    ): List<VoiceSignalPlaintext> =
+        verifiedCandidates(ownerIdentityId, nowEpochSeconds).map { it.signal }
+
+    private class VerifiedCandidate(
+        val permit: VoiceSignalReplayDispatchPermit,
+        val signal: VoiceSignalPlaintext,
+    )
+
+    private fun verifiedCandidates(
+        ownerIdentityId: ByteArray,
+        nowEpochSeconds: Long,
+    ): List<VerifiedCandidate> {
         if (ownerIdentityId.size != 32 ||
             ownerIdentityId.all { it == 0.toByte() } ||
             nowEpochSeconds < 0
@@ -90,7 +99,7 @@ internal class RestorableVoiceSignalMatcher(
                     "Admitted M5 replay and semantic event disagree about authenticated call context",
                 )
             }
-            event
+            VerifiedCandidate(permit, event)
         }
     }
 }
