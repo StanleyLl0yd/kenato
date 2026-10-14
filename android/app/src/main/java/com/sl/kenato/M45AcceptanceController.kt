@@ -43,6 +43,12 @@ internal data class M45AcceptanceUiState(
     val messagingState: MessagingWssState = MessagingWssState.STOPPED,
     val messages: List<M45UiMessage> = emptyList(),
     val diagnostics: List<String> = emptyList(),
+    /** Ephemeral challenge/proof text, never written to preferences or SavedState. */
+    val voiceChallengeQr: String? = null,
+    val voiceProofQr: String? = null,
+    val voiceCapabilityConfirmed: Boolean = false,
+    /** Volatile UI generation forces pasted QR text to be cleared after background. */
+    val voiceUiEpoch: Long = 0L,
     val busy: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
@@ -53,6 +59,12 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val identityRepository = LocalIdentityRepository.create(appContext)
     private val diagnosticJournal = M45DiagnosticJournal(appContext)
     private val contactState = ContactLocalState(SharedPreferencesContactStateStore(appContext))
+    private val voiceCapability by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        M5VoiceCapabilityLocalBridge(appContext, identityRepository, contactState)
+    }
+    private var ephemeralVoiceChallenge: String? = null
+    private var ephemeralVoiceProof: String? = null
+    private var ephemeralVoicePeerId: String? = null
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val worker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "kenato-m45-acceptance").apply { isDaemon = true }
@@ -110,7 +122,14 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     fun onAppBackground() {
         foreground = false
         mainHandler.removeCallbacks(pollRunnable)
+        // Even a paused Activity must not retain a transferable QR proof in Compose state.
+        state = state.copy(
+            voiceChallengeQr = null,
+            voiceProofQr = null,
+            voiceUiEpoch = state.voiceUiEpoch + 1,
+        )
         worker.execute {
+            clearEphemeralVoiceQr()
             runCatching { runtime?.stopMessaging() }
         }
     }
@@ -155,6 +174,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     fun selectContact(peerIdentityId: String) = launchOperation("Contact selected") {
+        clearEphemeralVoiceQr()
         val owner = requireOwnerIdentityId()
         val peer = decodeM45IdentityId(peerIdentityId)
         val exists = contactState.contacts(owner).any { it.identityId.contentEquals(peer) }
@@ -183,6 +203,34 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         val peer = selectedPeerBytes()
         requireRuntime().sendText(peer, text)
     }
+
+    /**
+     * These three explicit local UI gestures form an offline challenge / signature /
+     * proof flow. None of them starts a call or probes an M4 text-only client.
+     */
+    fun issueVoiceCapabilityChallenge() = launchOperation("Voice capability challenge ready to share") {
+        val peer = selectedPeerBytes()
+        val challenge = voiceCapability.issueChallengeQr(peer)
+        ephemeralVoiceChallenge = challenge
+        ephemeralVoiceProof = null
+        ephemeralVoicePeerId = encodePeerId(peer)
+    }
+
+    fun approveAndSignVoiceCapabilityChallenge(qr: String) =
+        launchOperation("Signed voice capability proof ready to share") {
+            val peer = selectedPeerBytes()
+            val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
+            ephemeralVoiceChallenge = null
+            ephemeralVoiceProof = proof
+            ephemeralVoicePeerId = encodePeerId(peer)
+        }
+
+    fun approveAndImportVoiceCapabilityProof(qr: String) =
+        launchOperation("Pinned voice capability proof accepted") {
+            val peer = selectedPeerBytes()
+            voiceCapability.approveAndImportProofQr(peer, qr.trim())
+            clearEphemeralVoiceQr()
+        }
 
     fun refresh() = launchOperation("State refreshed") { }
 
@@ -274,6 +322,15 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         return peer
     }
 
+    private fun encodePeerId(value: ByteArray): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(value)
+
+    private fun clearEphemeralVoiceQr() {
+        ephemeralVoiceChallenge = null
+        ephemeralVoiceProof = null
+        ephemeralVoicePeerId = null
+    }
+
     private fun buildSnapshot(): M45AcceptanceUiState {
         val origin = preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty()
         val identity = identityRepository.current()
@@ -329,6 +386,17 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             emptyList()
         }
 
+        val selectedVoicePeer = selectedPeer?.let(::decodeM45IdentityId)
+        // A damaged/invalidated M5 Keystore key may revoke local voice consent.
+        // It MUST NOT break the unrelated M4 text acceptance screen/transport.
+        // Fail closed for M5: show unconfirmed; signing/import still validates normally.
+        val confirmedVoice = selectedVoicePeer?.let { peer ->
+            M5VoiceUiSnapshotGuard.confirmedOrUnavailable {
+                voiceCapability.isConfirmed(owner, peer)
+            }
+        } ?: false
+        val showVoiceQr = foreground && ephemeralVoicePeerId == selectedPeer
+
         return M45AcceptanceUiState(
             serviceOrigin = origin,
             identityId = identity.identityId,
@@ -339,6 +407,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
             messages = messages,
             diagnostics = diagnosticJournal.snapshot(),
+            voiceChallengeQr = ephemeralVoiceChallenge.takeIf { showVoiceQr },
+            voiceProofQr = ephemeralVoiceProof.takeIf { showVoiceQr },
+            voiceCapabilityConfirmed = confirmedVoice,
+            voiceUiEpoch = state.voiceUiEpoch,
         )
     }
 
@@ -347,10 +419,13 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         notice: String? = state.notice,
         error: String? = state.error,
     ) {
-        state = snapshot.copy(
-            busy = false,
-            notice = notice,
-            error = error,
+        // Work on the serialized worker may produce a snapshot *before* background or a
+        // contact change, then post it *after* the UI has resumed. The epoch can only
+        // advance on the UI thread: stale callbacks must never resurrect a shareable QR.
+        state = M5VoiceUiSnapshotGuard.redactStaleProofs(
+            current = state,
+            incoming = snapshot.copy(busy = false, notice = notice, error = error),
+            foreground = foreground,
         )
     }
 

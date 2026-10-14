@@ -83,3 +83,37 @@ JVM tests use real P-256 signatures and encrypted consent state.
 No app runtime uses this guard/stager, QR codec or offline coordinator yet; no backend endpoints, server
 components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
 by this ADR.
+
+## Manual offline acceptance interface (isolated M5 development slice)
+
+The Android M4.5 acceptance activity may expose an explicit, local-only
+M5 consent test section for the already pinned selected peer: issue and
+share a one-time challenge, explicitly approve signing a challenge from
+that selected pinned peer, and explicitly approve importing the signed
+proof. All mutations use the existing non-exportable M1 identity key,
+M2 pinned contact state and separate Keystore-protected M5 consent
+AtomicFile. No service-origin/network availability is required for
+this local exchange; no v2 signal, call, microphone, WebRTC peer or
+unapproved endpoint is created.
+
+The view intentionally displays *text encodings* that can be copied
+or shared by explicit user action. It is **not** a camera/QR scanner and
+does not automate contacting the peer. Challenge/proof text is ephemeral,
+not saved in preferences, Android saved instance state, history or logs;
+it is cleared on background and peer selection changes. The UI exposes
+only positive consent for a pinned peer, not a calling feature. A user
+must independently inspect the selected peer identity before approving
+a signature or proof import. App version and published APK do not change.
+
+The Compose state redacts QR/proof text at pause. Asynchronous controller
+snapshots also pass a **foreground epoch and selected-peer guard** before
+reaching the UI thread; a callback created before background or for a
+different pinned contact cannot resurrect a QR after foreground resumption.
+This is verified by focused JVM regression tests. Android clipboard and
+explicit external Share targets remain **user-controlled external surfaces**,
+so the app does not promise to erase QR text after an intentional copy/share.
+
+A failed or invalidated optional M5 consent store is displayed as **not
+confirmed**. It never blocks existing M4 text messaging or implicitly accepts
+voice support; any later explicit import/sign action still performs full
+independent pinned-identity and cryptographic validation.
