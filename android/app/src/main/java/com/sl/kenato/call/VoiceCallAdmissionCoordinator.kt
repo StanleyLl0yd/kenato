@@ -175,7 +175,8 @@ internal class VoiceCallAdmissionCoordinator(
 
     /**
      * Local accept requires a fresh user gesture and current pinned consent.
-     * Rejection/hangup remain possible even after a peer's consent is revoked.
+     * Rejection/hangup remain possible *locally* after a peer's consent is
+     * revoked; the future effect runner must independently enforce this boundary.
      */
     @Synchronized
     fun userAction(
@@ -192,6 +193,11 @@ internal class VoiceCallAdmissionCoordinator(
         if (kind == VoiceCallEventKind.LOCAL_ACCEPT) {
             if (!explicitUserApproval) throw VoiceCallAdmissionException("User approval required to accept")
             approved.requireApproved(owner.copyOf(), decode(key.peerIdentityId))
+        } else if (key == state.active) {
+            // Hangup/reject still work locally when trust is revoked, but must not
+            // propose another encrypted signal to a no-longer-approved contact.
+            val revalidated = revalidateActiveCall()
+            if (revalidated.next.phase == VoiceCallPhase.IDLE) return revalidated
         }
         return commit(VoiceCallReducer.apply(state, VoiceCallEvent(kind, key)))
     }
@@ -229,9 +235,9 @@ internal class VoiceCallAdmissionCoordinator(
                 VoiceCallEventKind.CONNECT_TIMEOUT,
             )
         ) throw VoiceCallAdmissionException("Unclaimed network event supplied through callback")
-        if (kind == VoiceCallEventKind.MEDIA_CONNECTED && key == state.active &&
-            state.phase in setOf(VoiceCallPhase.CONNECTING, VoiceCallPhase.ACTIVE)
-        ) {
+        if (key == state.active) {
+            // MEDIA_FAILED and timeouts also propose SEND_HANGUP/REJECT. A revoked
+            // contact is entitled to no further outbound effect, including teardown.
             val revalidated = revalidateActiveCall()
             if (revalidated.next.phase == VoiceCallPhase.IDLE) return revalidated
         }
