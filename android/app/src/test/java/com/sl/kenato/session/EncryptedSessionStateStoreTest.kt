@@ -102,6 +102,77 @@ class EncryptedSessionStateStoreTest {
         assertNull(store.read())
     }
 
+
+    @Test
+    fun corruptedEncryptedFormatAndAuthenticatedNoncanonicalPlaintextFailClosed() {
+        val disk = MemoryDisk()
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertTrue(store.write(rawState()))
+        val original = disk.bytes!!.copyOf()
+
+        // No legacy fallback is allowed once the stored envelope identifies KSAE.
+        disk.bytes = original.copyOfRange(0, 5)
+        assertThrows(SessionStateException::class.java) { store.read() }
+        disk.bytes = original.copyOf().also { it[0] = 0 }
+        assertThrows(SessionStateException::class.java) { store.read() }
+        disk.bytes = original.copyOf().also { it[4] = 0 }
+        assertThrows(SessionStateException::class.java) { store.read() }
+
+        // Even valid AEAD cannot authorize malformed or noncanonical M3 state.
+        val aad = "KENATO-M3-SESSION-STATE-AT-REST-V1\u0000".toByteArray(Charsets.UTF_8)
+        val authenticatedButInvalid = crypto.encrypt(byteArrayOf(1, 2, 3, 4), aad)
+        disk.bytes = byteArrayOf('K'.code.toByte(), 'S'.code.toByte(), 'A'.code.toByte(),
+            'E'.code.toByte(), 1) + authenticatedButInvalid
+        assertThrows(SessionStateException::class.java) { store.read() }
+        assertEquals(1, disk.writes)
+    }
+
+    @Test
+    fun unsupportedOldReaderCannotSilentlyDowngradeProtectedFile() {
+        val disk = MemoryDisk()
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertTrue(store.write(rawState(includeVoice = true)))
+        val encryptedBefore = disk.bytes!!.copyOf()
+        assertThrows(SessionStateException::class.java) {
+            SessionStateCodec.decode(encryptedBefore)
+        }
+        assertArrayEquals(encryptedBefore, disk.bytes)
+        assertArrayEquals(rawState(includeVoice = true), store.read()!!)
+    }
+
+    @Test
+    fun failedEncryptedReplacementNeverWritesLegacyBytesOrReturnsDecryptedState() {
+        val disk = MemoryDisk().also { it.failWrites = true }
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertFalse(store.write(rawState(includeVoice = true)))
+        assertNull(disk.bytes)
+        assertEquals(0, disk.writes)
+
+        disk.bytes = rawState(includeVoice = true)
+        assertThrows(SessionStateException::class.java) { store.read() }
+        assertEquals("KNS3", disk.bytes!!.copyOfRange(0, 4).toString(Charsets.UTF_8))
+        assertEquals(0, disk.writes)
+    }
+
+    @Test
+    fun failureToRemoveKeyAfterFileDeletionMustSurfaceAndRemainRecoverable() {
+        val disk = MemoryDisk()
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertTrue(store.write(rawState()))
+        crypto.failDelete = true
+        assertThrows(SessionStateException::class.java) { store.clear() }
+        assertNull(disk.bytes)
+        assertEquals(0, crypto.deleted)
+        crypto.failDelete = false
+        assertTrue(store.clear())
+        assertEquals(1, crypto.deleted)
+        assertNull(store.read())
+    }
+
     private class MemoryDisk : SessionStateStore {
         var bytes: ByteArray? = null
         var writes = 0
@@ -125,6 +196,7 @@ class EncryptedSessionStateStoreTest {
         private var key = SecretKeySpec(ByteArray(32) { 0x37.toByte() }, "AES")
         private val random = SecureRandom()
         var deleted = 0
+        var failDelete = false
         fun rotateKey() {
             key = SecretKeySpec(ByteArray(32) { 0x48.toByte() }, "AES")
         }
@@ -142,7 +214,10 @@ class EncryptedSessionStateStoreTest {
                 updateAAD(aad)
                 doFinal(envelope.copyOfRange(13, envelope.size))
             }
-        override fun deleteKeyForExplicitIdentityRecovery() { deleted++ }
+        override fun deleteKeyForExplicitIdentityRecovery() {
+            if (failDelete) throw SessionStateException("Simulated Keystore deletion failure")
+            deleted++
+        }
     }
 
     private fun rawState(includeVoice: Boolean = false): ByteArray {
