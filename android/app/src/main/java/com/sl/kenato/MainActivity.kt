@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -73,6 +74,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     var originInput by rememberSaveable { mutableStateOf(state.serviceOrigin) }
     var inviteInput by rememberSaveable { mutableStateOf("") }
     var messageInput by rememberSaveable { mutableStateOf("") }
+    // QR inputs are deliberately not saveable/restored across activity/process recreation.
+    var voiceChallengeInput by remember { mutableStateOf("") }
+    var voiceProofInput by remember { mutableStateOf("") }
+
+    LaunchedEffect(state.voiceUiEpoch, state.selectedPeerIdentityId) {
+        voiceChallengeInput = ""
+        voiceProofInput = ""
+    }
 
     LaunchedEffect(state.serviceOrigin) {
         originInput = state.serviceOrigin
@@ -361,6 +370,86 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                         }
                     }
                 }
+            }
+
+            AcceptanceSection(title = "5B. M5 offline voice capability (calls disabled)") {
+                Text(
+                    "Use only with the selected, independently verified pinned M2 contact. " +
+                        "QR/text records are not automatically transmitted and do not start a call.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    if (state.voiceCapabilityConfirmed) {
+                        "Voice-v2 signed proof: confirmed for selected contact"
+                    } else {
+                        "Voice-v2 signed proof: not yet confirmed"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                state.selectedPeerIdentityId?.let { peer ->
+                    Text("Verify selected peer identity before approving:", style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer { Text(peer, style = MaterialTheme.typography.bodySmall) }
+                    Button(
+                        onClick = controller::issueVoiceCapabilityChallenge,
+                        enabled = !state.busy && !state.voiceCapabilityConfirmed,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("1. Issue one-time challenge for this peer") }
+                    state.voiceChallengeQr?.let { qr ->
+                        Text("Share this challenge with the selected peer (expires in 5 minutes):")
+                        SelectionContainer { Text(qr, style = MaterialTheme.typography.bodySmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { copyText(context, qr, "Kenato voice challenge") }) { Text("Copy challenge") }
+                            TextButton(onClick = { shareText(context, qr) }) { Text("Share") }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = voiceChallengeInput,
+                        onValueChange = { voiceChallengeInput = it.take(512) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.busy,
+                        minLines = 2,
+                        maxLines = 5,
+                        label = { Text("Challenge received from selected peer") },
+                    )
+                    Button(
+                        onClick = {
+                            controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput)
+                            voiceChallengeInput = ""
+                        },
+                        enabled = !state.busy && voiceChallengeInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("2. Verify pinned identity and explicitly approve signing") }
+                    state.voiceProofQr?.let { proof ->
+                        Text("Share the signed proof back to the requesting peer:")
+                        SelectionContainer { Text(proof, style = MaterialTheme.typography.bodySmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { copyText(context, proof, "Kenato voice signed proof") }) { Text("Copy proof") }
+                            TextButton(onClick = { shareText(context, proof) }) { Text("Share") }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = voiceProofInput,
+                        onValueChange = { voiceProofInput = it.take(512) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.busy,
+                        minLines = 2,
+                        maxLines = 5,
+                        label = { Text("Signed proof returned by selected peer") },
+                    )
+                    Button(
+                        onClick = {
+                            controller.approveAndImportVoiceCapabilityProof(voiceProofInput)
+                            voiceProofInput = ""
+                        },
+                        enabled = !state.busy && !state.voiceCapabilityConfirmed && voiceProofInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("3. Verify signature and explicitly approve import") }
+                } ?: Text("Select a pinned contact to enable offline exchange.")
+                Text(
+                    "A successful proof does not enable microphone, send signaling or start WebRTC. " +
+                        "Do not treat this as a phone-call test.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
             AcceptanceSection(title = "6. Local diagnostics") {
