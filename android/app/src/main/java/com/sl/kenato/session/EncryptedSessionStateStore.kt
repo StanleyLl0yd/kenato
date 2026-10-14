@@ -77,6 +77,36 @@ internal class EncryptedSessionStateStore(
             throw SessionStateException("M3 plaintext state exceeds original codec bound")
         }
         SessionStateCodec.decode(value)
+        // An inaccessible existing KSAE must never be replaced by fresh ciphertext
+        // under a newly generated alias, even when a caller bypassed read().
+        val previous = backing.read()
+        if (previous != null) {
+            if (previous.size !in HEADER_BYTES..MAX_PERSISTED_BYTES) {
+                throw SessionStateException("Existing protected M3 state length invalid")
+            }
+            when {
+                previous.take(4).toByteArray().contentEquals(encryptedMagic) -> {
+                    if (previous[4] != FORMAT_VERSION) {
+                        throw SessionStateException("Existing M3 state format is unsupported")
+                    }
+                    val decrypted = try {
+                        cipher.decrypt(previous.copyOfRange(HEADER_BYTES, previous.size), aad)
+                    } catch (error: Exception) {
+                        throw SessionStateException("Cannot replace unauthenticated M3 state", error)
+                    }
+                    try {
+                        SessionStateCodec.decode(decrypted)
+                    } finally {
+                        decrypted.fill(0)
+                    }
+                }
+                previous.take(4).toByteArray().contentEquals(legacyMagic) -> {
+                    // Migration still requires a canonical legacy snapshot.
+                    SessionStateCodec.decode(previous)
+                }
+                else -> throw SessionStateException("Cannot replace unknown M3 state format")
+            }
+        }
         val encrypted = try {
             cipher.encrypt(value, aad)
         } catch (error: Exception) {
