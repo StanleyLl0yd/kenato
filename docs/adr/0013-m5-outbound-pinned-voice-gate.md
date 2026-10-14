@@ -55,6 +55,20 @@ adapter absent, pre-existing M4 recovery rejects outbound v2 records.
 This recovery is still **not production wired** and is not call/media
 integration or proof of user consent at the runtime call-admission point.
 
-No app runtime uses this guard/stager yet; no backend endpoints, server
+A separate, not-yet-wired `VoiceCapabilityQrWire` carries the existing
+single-use challenge and signed proof as bounded canonical base64url QR/text
+records. Its `kenato-voice-v2:challenge:` and `kenato-voice-v2:proof:`
+prefixes are explicitly out-of-band data strings, not Android deep links or
+an authenticated network protocol. The binary challenge record contains
+`KVQ2`, version 2, intended verifier identity, intended signer identity,
+16-byte nonce, and absolute expiry; the proof QR carries the existing
+canonical `VoiceCapabilityProofWire` bytes unchanged. The challenge is
+**not signed**: before producing a proof, the signer must verify the
+requesting contact's pinned M2 identity and explicitly approve signing.
+After import, the verifier must validate the P-256 signature and consume
+its previously durably stored one-time challenge with explicit local user
+approval. Importing a QR record alone NEVER grants voice permission.
+
+No app runtime uses this guard/stager or QR codec yet; no backend endpoints, server
 components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
 by this ADR.
