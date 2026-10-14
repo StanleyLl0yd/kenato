@@ -10,7 +10,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 internal interface SessionStateAtRestCipher {
     /** Fresh IV for every write, authenticated using the domain-separated AAD. */
-    fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray
+    fun encrypt(plaintext: ByteArray, aad: ByteArray, allowKeyCreation: Boolean): ByteArray
     fun decrypt(envelope: ByteArray, aad: ByteArray): ByteArray
     /** Call only after the local state file has been durably cleared. */
     fun deleteKeyForExplicitIdentityRecovery()
@@ -107,8 +107,10 @@ internal class EncryptedSessionStateStore(
                 else -> throw SessionStateException("Cannot replace unknown M3 state format")
             }
         }
+        val mayCreateKey = previous == null ||
+            previous.take(4).toByteArray().contentEquals(legacyMagic)
         val encrypted = try {
-            cipher.encrypt(value, aad)
+            cipher.encrypt(value, aad, allowKeyCreation = mayCreateKey)
         } catch (error: Exception) {
             throw SessionStateException("Unable to encrypt M3 session state at rest", error)
         }
@@ -134,11 +136,11 @@ internal class EncryptedSessionStateStore(
 internal class AndroidKeystoreSessionStateAtRestCipher : SessionStateAtRestCipher {
     private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+    override fun encrypt(plaintext: ByteArray, aad: ByteArray, allowKeyCreation: Boolean): ByteArray {
         validateAad(aad)
         return try {
             val cipher = Cipher.getInstance(AES_GCM)
-            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+            cipher.init(Cipher.ENCRYPT_MODE, if (allowKeyCreation) getOrCreateKey() else existingKey())
             cipher.updateAAD(aad)
             val ciphertext = cipher.doFinal(plaintext)
             val iv = cipher.iv
