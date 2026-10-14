@@ -33,3 +33,20 @@ M5 signaling, WebRTC media, audio permissions, background calling and
 device acceptance are not implemented in this PR.
 
 Checks: Android unit tests, full repository CI and security review.
+
+## Pinned-consent revocation during a proposed call
+
+The isolated `VoiceCallAdmissionCoordinator` exposes `revalidateActiveCall()`
+for a future serialized runtime boundary to call after contact-pinning,
+consent or Keystore changes and immediately before executing call effects.
+A failed check silently retires the exact call ID without proposing an
+outbound signal to an unapproved peer. When media could already exist
+(`CONNECTING` or `ACTIVE`), the only proposed effect is a keyed, local
+`STOP_MEDIA`. The `MEDIA_CONNECTED` callback also revalidates current
+consent and retires instead of entering `ACTIVE` after revocation.
+
+The coordinator itself does not execute `STOP_MEDIA`. A production adapter
+must reliably apply this local teardown even when encryption, network,
+consent storage or the Keystore fails, and must check the same exact
+peer/call key before creating or retaining media. This is JVM-only
+call-control verification, not Android lifecycle, audio or device acceptance.
