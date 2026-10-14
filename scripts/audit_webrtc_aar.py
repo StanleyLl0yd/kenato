@@ -146,16 +146,17 @@ def _validate_required_content(
     # Names and first four signature bytes alone do not authenticate nested ZIPs.
     with zipped.open(files["classes.jar"]) as stream:
         jar_prefix = stream.read(4)
-    if jar_prefix != b"PK\\x03\\x04":
+    if jar_prefix != b"PK\x03\x04":
         raise AarAuditError("AAR classes.jar is not a JAR/ZIP")
     class_versions = _audit_classes_jar(zipped, files["classes.jar"])
     with zipped.open(files["AndroidManifest.xml"]) as stream:
-        manifest = stream.read(4096).lstrip(b"\\xef\\xbb\\xbf\\x09\\x0a\\x0d\\x20")
-    binary_xml = manifest.startswith(b"\\x03\\x00\\x08\\x00")
+        manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
+    binary_xml = manifest.startswith(b"\x03\x00\x08\x00")
     text_xml = manifest.startswith(b"<") and b"<manifest" in manifest
     if not binary_xml and not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
     return class_versions
+
 
 def audit_aar(
     path: Path,
