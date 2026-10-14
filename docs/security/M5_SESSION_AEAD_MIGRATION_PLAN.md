@@ -32,6 +32,16 @@ old strict plaintext bound for ordinary M4 installations.
 | Unknown/corrupt/truncated/oversized | any | Throw; do not parse as fallback legacy state | Fail closed |
 | Existing `KSAE` then older APK | old APK cannot parse | Require update to supporting release; **no plaintext downgrade** | Roll-forward-only policy |
 
+Protected-state replacement has a separate fail-closed invariant:
+`EncryptedSessionStateStore.write` authenticates and decodes an existing
+`KSAE` snapshot **before** encrypting replacement bytes. An invalidated or
+lost alias cannot create a fresh key and overwrite inaccessible ratchet or
+pending handoff state merely because a caller invokes `write` without
+invoking `read` first. Unknown and corrupt prior formats similarly block
+replacement until explicit identity recovery. JVM regression tests cover
+key rotation, modified ciphertext and invalid file version. This does not
+prove Android Keystore device behavior or rollback resistance.
+
 **No automatic downgrade or rollback to `KNS3` is allowed.** A version
 rollback after migration would make plaintext SDP/ICE reappear and risks M3
 ratchet replay. Current older APKs cannot read `KSAE` and may become unable
