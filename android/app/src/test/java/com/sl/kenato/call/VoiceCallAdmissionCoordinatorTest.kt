@@ -183,6 +183,59 @@ class VoiceCallAdmissionCoordinatorTest {
         ).next.phase)
     }
 
+    @Test
+    fun revokedConsentAtMediaConnectionRetiresCallAndStopsOnlyLocalMedia() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        f.next = event(VoiceSignalKind.ANSWER, 11)
+        assertEquals(
+            VoiceCallPhase.CONNECTING,
+            f.coordinator.receiveClaimedControl(PEER, id(11))!!.next.phase,
+        )
+        f.permissionAllowed = false
+        val stopped = f.coordinator.callback(VoiceCallEventKind.MEDIA_CONNECTED, key)
+        assertEquals(VoiceCallPhase.IDLE, stopped.next.phase)
+        assertEquals(listOf(VoiceCallEffectKind.STOP_MEDIA), stopped.effects.map { it.kind })
+        assertEquals(listOf(key.callId), stopped.next.retiredCallIds)
+        assertTrue(f.coordinator.callback(VoiceCallEventKind.MEDIA_CONNECTED, key).effects.isEmpty())
+        f.permissionAllowed = true
+        assertEquals(VoiceCallPhase.IDLE, f.coordinator.snapshot().phase)
+    }
+
+    @Test
+    fun revokedConsentDuringRingingRetiresCallWithoutSendingNewSignal() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        f.permissionAllowed = false
+        val stopped = f.coordinator.revalidateActiveCall()
+        assertEquals(VoiceCallPhase.IDLE, stopped.next.phase)
+        assertTrue(stopped.effects.isEmpty())
+        assertEquals(listOf(key.callId), stopped.next.retiredCallIds)
+        assertTrue(f.coordinator.revalidateActiveCall().effects.isEmpty())
+        f.permissionAllowed = true
+        f.next = event(VoiceSignalKind.ANSWER, 12)
+        val late = f.coordinator.receiveClaimedControl(PEER, id(12))!!
+        assertEquals(VoiceCallPhase.IDLE, late.next.phase)
+        assertTrue(late.effects.isEmpty())
+    }
+
+    @Test
+    fun revalidationKeepsApprovedActiveCallAndClosesItAfterConsentLoss() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        f.next = event(VoiceSignalKind.ANSWER, 13)
+        f.coordinator.receiveClaimedControl(PEER, id(13))
+        f.coordinator.callback(VoiceCallEventKind.MEDIA_CONNECTED, key)
+        assertEquals(VoiceCallPhase.ACTIVE, f.coordinator.revalidateActiveCall().next.phase)
+        assertTrue(f.coordinator.revalidateActiveCall().effects.isEmpty())
+        f.permissionAllowed = false
+        val stopped = f.coordinator.revalidateActiveCall()
+        assertEquals(VoiceCallPhase.IDLE, stopped.next.phase)
+        assertEquals(listOf(VoiceCallEffectKind.STOP_MEDIA), stopped.effects.map { it.kind })
+        assertTrue(f.coordinator.revalidateActiveCall().effects.isEmpty())
+        assertTrue(f.coordinator.callback(VoiceCallEventKind.MEDIA_FAILED, key).effects.isEmpty())
+    }
+
     private class Fixture {
         var permissionAllowed = true
         var next: VoiceSignalPlaintext? = null
