@@ -88,6 +88,21 @@ class EncryptedSessionStateStoreTest {
     }
 
     @Test
+    fun lostKeyBetweenAuthenticationAndReplacementCannotCreateNewAlias() {
+        val disk = MemoryDisk()
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertTrue(store.write(rawState(includeVoice = true)))
+        val original = disk.bytes!!.copyOf()
+        crypto.simulateKeyLossAtEncrypt = true
+        assertThrows(SessionStateException::class.java) {
+            store.write(rawState(includeVoice = false))
+        }
+        assertArrayEquals(original, disk.bytes)
+        assertEquals(1, disk.writes)
+    }
+
+    @Test
     fun corruptOrUnknownExistingStateCannotBeOverwrittenWithoutRecovery() {
         val disk = MemoryDisk()
         val store = EncryptedSessionStateStore(disk, JvmAesGcm())
@@ -156,7 +171,7 @@ class EncryptedSessionStateStoreTest {
 
         // Even valid AEAD cannot authorize malformed or noncanonical M3 state.
         val aad = "KENATO-M3-SESSION-STATE-AT-REST-V1\u0000".toByteArray(Charsets.UTF_8)
-        val authenticatedButInvalid = crypto.encrypt(byteArrayOf(1, 2, 3, 4), aad)
+        val authenticatedButInvalid = crypto.encrypt(byteArrayOf(1, 2, 3, 4), aad, allowKeyCreation = true)
         disk.bytes = byteArrayOf('K'.code.toByte(), 'S'.code.toByte(), 'A'.code.toByte(),
             'E'.code.toByte(), 1) + authenticatedButInvalid
         assertThrows(SessionStateException::class.java) { store.read() }
@@ -232,10 +247,16 @@ class EncryptedSessionStateStoreTest {
         private val random = SecureRandom()
         var deleted = 0
         var failDelete = false
+        var simulateKeyLossAtEncrypt = false
         fun rotateKey() {
             key = SecretKeySpec(ByteArray(32) { 0x48.toByte() }, "AES")
         }
-        override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+        override fun encrypt(
+            plaintext: ByteArray, aad: ByteArray, allowKeyCreation: Boolean,
+        ): ByteArray {
+            if (simulateKeyLossAtEncrypt && !allowKeyCreation) {
+                throw SessionStateException("Simulated missing Keystore alias after preflight")
+            }
             val nonce = ByteArray(12).also(random::nextBytes)
             return Cipher.getInstance("AES/GCM/NoPadding").run {
                 init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
