@@ -39,8 +39,13 @@ lost alias cannot create a fresh key and overwrite inaccessible ratchet or
 pending handoff state merely because a caller invokes `write` without
 invoking `read` first. Unknown and corrupt prior formats similarly block
 replacement until explicit identity recovery. JVM regression tests cover
-key rotation, modified ciphertext and invalid file version. This does not
-prove Android Keystore device behavior or rollback resistance.
+key rotation, modified ciphertext and invalid file version. The
+cipher also receives an explicit key-creation policy for each write:
+a pre-existing `KSAE` MUST encrypt using only the existing alias, so alias
+loss **between** old-state authentication and replacement cannot silently
+generate a different key. Only first-write or canonical `KNS3` migration
+may create an alias. This does not prove Android Keystore device behavior
+or rollback resistance.
 
 **No automatic downgrade or rollback to `KNS3` is allowed.** A version
 rollback after migration would make plaintext SDP/ICE reappear and risks M3
