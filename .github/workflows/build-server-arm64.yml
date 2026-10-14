@@ -1,0 +1,94 @@
+name: Verified Go ARM64 backend artifact
+
+on:
+  # Bootstrap the artifact automatically on the reviewed merge that adds this recipe.
+  # Later rebuilds are opt-in; routine server changes do not trigger uploads.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-server-arm64.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Source-verified Linux ARM64 binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enforce reviewed main-only dispatch
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+
+      - name: Verify workflow supply-chain policy
+        working-directory: .
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Set up patched Go 1.27.2
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache: false
+
+      - name: Verify source and runtime
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          go version | grep -Eq '^go version go1[.]27[.]2 linux/amd64$'
+          go mod verify
+          go test ./...
+          test -z "$(git status --porcelain)"
+
+      - name: Build verified Linux ARM64 server
+        env:
+          GOTOOLCHAIN: local
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          # Build outside the Git worktree: untracked output could otherwise mark
+          # vcs.modified=true and invalidate the clean-source provenance check.
+          go build -trimpath -buildvcs=true -ldflags=-buildid= \
+            -o "$RUNNER_TEMP/kenato-server-linux-arm64" ./cmd/kenato-server
+          mkdir -p dist
+          mv "$RUNNER_TEMP/kenato-server-linux-arm64" dist/kenato-server-linux-arm64
+          readelf -h dist/kenato-server-linux-arm64 | grep -Eq 'Machine:[[:space:]]*AArch64'
+          go version -m dist/kenato-server-linux-arm64 > dist/GO_BUILD_INFO.txt
+          grep -F "vcs.revision=$GITHUB_SHA" dist/GO_BUILD_INFO.txt
+          grep -F 'vcs.modified=false' dist/GO_BUILD_INFO.txt
+          grep -F 'GOOS=linux' dist/GO_BUILD_INFO.txt
+          grep -F 'GOARCH=arm64' dist/GO_BUILD_INFO.txt
+          grep -F 'CGO_ENABLED=0' dist/GO_BUILD_INFO.txt
+          (cd dist && sha256sum kenato-server-linux-arm64 > SHA256SUMS && sha256sum --check SHA256SUMS)
+          {
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'source_ref=%s\n' "$GITHUB_REF"
+            printf 'toolchain=%s\n' "$(go version)"
+            printf 'goos=linux\ngoarch=arm64\ncgo_enabled=0\n'
+            printf 'note=Not deployed or release-signed; owner-controlled rollout required\n'
+          } > dist/PROVENANCE.txt
+
+      - name: Upload unsigned verified binary for reviewed rollout
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kenato-server-linux-arm64
+          path: |
+            server/dist/kenato-server-linux-arm64
+            server/dist/SHA256SUMS
+            server/dist/GO_BUILD_INFO.txt
+            server/dist/PROVENANCE.txt
+          if-no-files-found: error
+          retention-days: 14
