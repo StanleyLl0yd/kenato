@@ -69,6 +69,17 @@ After import, the verifier must validate the P-256 signature and consume
 its previously durably stored one-time challenge with explicit local user
 approval. Importing a QR record alone NEVER grants voice permission.
 
-No app runtime uses this guard/stager or QR codec yet; no backend endpoints, server
+The isolated `VoiceCapabilityOutOfBandService` now connects the
+three offline operations without enabling transport: an existing M2 pinned
+contact issues the persisted one-time challenge, a responder with the
+selected pinned verifier key explicitly approves signing it with their
+non-exportable Android M1 identity, and the verifier explicitly approves
+the imported signed proof before consuming its stored challenge and
+persisting capability consent. A replacement key or a mismatched verifier,
+nonce or expired record fails closed. The QR alone never grants permission;
+caller UI must independently show and confirm the pinned contact identity.
+JVM tests use real P-256 signatures and encrypted consent state.
+
+No app runtime uses this guard/stager, QR codec or offline coordinator yet; no backend endpoints, server
 components, TURN/coturn, UI, WebRTC, release or M6 additions are permitted
 by this ADR.
