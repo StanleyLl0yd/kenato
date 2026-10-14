@@ -42,6 +42,27 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
+        val f = Fixture()
+        f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))
+        val source = MatcherVoiceCallClaimedControlSource(f.matcher())
+        assertEquals(null, source.claimControl(OWNER, PEER, id(91), NOW))
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(
+            VoiceSignalKind.ICE_CANDIDATE,
+            f.matcher().claimRestorableCandidate(OWNER, PEER, id(91), NOW)!!.kind,
+        )
+
+        f.accept(handoff(92))
+        assertEquals(
+            VoiceSignalKind.OFFER,
+            source.claimControl(OWNER, PEER, id(92), NOW)!!.kind,
+        )
+        assertEquals(null, source.claimControl(OWNER, PEER, id(92), NOW))
+        assertEquals(2, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
     fun receiptChangedAfterSemanticPairingCannotClaimDifferentCall() {
         val f = Fixture()
         f.accept(handoff(61, call = 77))
@@ -221,6 +242,7 @@ class RestorableVoiceSignalMatcherTest {
         call: Int = 77,
         expiry: Long = NOW + 60,
         ciphertext: ByteArray = byteArrayOf(1, 2, 3),
+        kind: VoiceSignalKind = VoiceSignalKind.OFFER,
     ): SessionMessageHandoff {
         val signal = VoiceSignalPlaintext(
             senderIdentityId = PEER.copyOf(),
@@ -229,8 +251,12 @@ class RestorableVoiceSignalMatcherTest {
             callId = id(call),
             sentAtEpochSeconds = NOW,
             expiresAtEpochSeconds = expiry,
-            kind = VoiceSignalKind.OFFER,
-            payload = "v=0\r\n".toByteArray(),
+            kind = kind,
+            payload = if (kind == VoiceSignalKind.ICE_CANDIDATE) {
+                "candidate:0 1 udp 1 192.0.2.1 5000 typ host".toByteArray()
+            } else {
+                "v=0\r\n".toByteArray()
+            },
         )
         val envelope = MessagingEnvelope(
             senderIdentityId = PEER.copyOf(),

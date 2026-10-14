@@ -167,3 +167,34 @@ Publisher/source lineage, exact dependency closure, embedded notices and
 third-party licenses, native vulnerability evaluation and physical
 Android loader/ABI tests remain separate release gates. The candidate
 AAR hash has not yet been verified; no WebRTC library was added to Gradle.
+
+
+## Isolated call-control admission coordinator (not activated)
+
+A non-UI `VoiceCallAdmissionCoordinator` now proposes, but does **not
+execute**, reducer effects for explicitly user-approved outgoing/local
+acceptance and one-time durably claimed authenticated incoming OFFER,
+ANSWER, REJECT, BUSY and HANGUP. A production adapter delegates pinned M2,
+M3 session and signed consumed consent checks to
+`VoiceOutboundCapabilityGuard`. The incoming adapter reads only fully
+matched encrypted semantic and replay records, and durably claims one
+control event before passing it to the reducer. ICE_CANDIDATE and
+END_OF_CANDIDATES remain unclaimed for a future reviewed media owner.
+
+The call-key, exact owner/peer/message identity, TTL and positive consent
+are checked before reducer state changes. Stale media callbacks/timeouts
+and network events passed through the wrong channel cannot mutate an
+unrelated call. Simultaneous offers use the pre-existing deterministic
+pinned-identity glare resolution. No proposed effect itself authorizes
+network send, ringing or a microphone: production execution additionally
+requires a synchronized lifecycle, E2EE outbound stage, fresh permission
+and exact call-key check at effect-commit time.
+
+This adapter is **volatile only and not wired** into M4 WSS, Compose,
+WebRTC, audio or foreground services. No Android permissions or Gradle
+dependencies were added. #116, #88 and #87 remain open.
+
+Call identifiers for explicit local dial proposals come from an internal
+cryptographically secure 128-bit generator, never from the UI, relay or
+wall-clock. Invalid or all-zero generator output fails closed. This is
+not a substitute for durable anti-replay and one-time M3 outbound staging.
