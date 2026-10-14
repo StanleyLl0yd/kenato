@@ -19,26 +19,43 @@ audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
 
 
-def elf(elf_class: int, machine: int) -> bytes:
-    header = bytearray(64)
+def elf(elf_class: int, machine: int, *, truncated: bool = False) -> bytes:
+    hdr_size = 52 if elf_class == 1 else 64
+    ph_size = 32 if elf_class == 1 else 56
+    header = bytearray(hdr_size + ph_size)
     header[:4] = b"\x7fELF"
     header[4] = elf_class
     header[5] = 1
-    struct.pack_into("<H", header, 18, machine)
-    return bytes(header)
+    header[6] = 1
+    struct.pack_into("<HHI", header, 16, 3, machine, 1)
+    if elf_class == 1:
+        struct.pack_into("<I", header, 28, hdr_size)
+        struct.pack_into("<HHH", header, 40, hdr_size, ph_size, 1)
+    else:
+        struct.pack_into("<Q", header, 32, hdr_size)
+        struct.pack_into("<HHH", header, 52, hdr_size, ph_size, 1)
+    return bytes(header[:20] if truncated else header)
 
 
 def aar_file(folder: Path, *, missing: str | None = None,
-             tampered_elf: bool = False, traversal: bool = False,
+             tampered_elf: bool = False, truncated_elf: bool = False,
+             fake_jar: bool = False, fake_manifest: bool = False,
+             traversal: bool = False,
              symlink: bool = False, duplicates: bool = False) -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
-        output.writestr("classes.jar", b"fake jar payload")
-        output.writestr("AndroidManifest.xml", b"manifest")
+        jar_output = io.BytesIO()
+        with zipfile.ZipFile(jar_output, "w") as jar:
+            jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+        output.writestr("classes.jar", b"fake jar payload" if fake_jar else jar_output.getvalue())
+        output.writestr(
+            "AndroidManifest.xml",
+            b"manifest" if fake_manifest else b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>',
+        )
         output.writestr("LICENSE", b"test fixture; no upstream license claims")
         for abi, (kind, machine) in audit.REQUIRED_ABIS.items():
             if abi != missing:
-                value = elf(kind, machine)
+                value = elf(kind, machine, truncated=truncated_elf and abi == "arm64-v8a")
                 if tampered_elf and abi == "arm64-v8a":
                     value = b"not-elf"
                 output.writestr(f"jni/{abi}/libjingle_peerconnection_so.so", value)
@@ -78,6 +95,17 @@ class AarAuditTests(unittest.TestCase):
     def test_missing_abi_and_invalid_native_elf_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             for kwargs in ({"missing": "x86_64"}, {"tampered_elf": True}):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_placeholder_elf_jar_and_manifest_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for kwargs in (
+                {"truncated_elf": True},
+                {"fake_jar": True},
+                {"fake_manifest": True},
+            ):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
