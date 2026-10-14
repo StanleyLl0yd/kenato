@@ -143,3 +143,27 @@ plaintext fallback.
 This document remains **PROPOSED** after merging. Approval of a
 specific, reproducibly audited AAR and explicit Android media/security
 acceptance are independent future decisions under #88/#87/#116.
+
+
+## Offline AAR acceptance inspection (tooling only)
+
+`scripts/audit_webrtc_aar.py` performs a bounded **offline** structural
+review of an explicitly supplied AAR: SHA-256, canonical ZIP paths,
+duplicate/symlink/compression abuse, CRC, mandatory Android layout,
+ELF machine/class, and exact native-library parity for the currently
+required `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABIs.
+No binary is downloaded, installed or executed by this tool.
+
+For discovery only (never an approval):
+`python3 scripts/audit_webrtc_aar.py candidate.aar --report-only`.
+For independently verified input:
+`python3 scripts/audit_webrtc_aar.py candidate.aar --expected-sha256 <64-hex-digest>`.
+The expected digest must be obtained and reviewed **independently**
+of the downloaded file. Offline synthetic regression fixtures are
+included in repository security verification.
+
+**Passing this structural tool is insufficient to accept a dependency.**
+Publisher/source lineage, exact dependency closure, embedded notices and
+third-party licenses, native vulnerability evaluation and physical
+Android loader/ABI tests remain separate release gates. The candidate
+AAR hash has not yet been verified; no WebRTC library was added to Gradle.
