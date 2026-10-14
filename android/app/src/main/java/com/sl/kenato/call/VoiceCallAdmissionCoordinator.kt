@@ -196,6 +196,29 @@ internal class VoiceCallAdmissionCoordinator(
         return commit(VoiceCallReducer.apply(state, VoiceCallEvent(kind, key)))
     }
 
+    /**
+     * A changed M2 pin, revoked v2 consent or inaccessible Keystore state must
+     * retire the current call before another effect is executed. Do not send
+     * even a teardown signal to an identity that is no longer approved.
+     * The future media owner must execute STOP_MEDIA locally and atomically
+     * correlate it with the returned call key.
+     */
+    @Synchronized
+    fun revalidateActiveCall(): VoiceCallTransition {
+        val active = state.active ?: return VoiceCallTransition(state)
+        return try {
+            approved.requireApproved(owner.copyOf(), decode(active.peerIdentityId))
+            VoiceCallTransition(state)
+        } catch (_: Exception) {
+            val stopped = VoiceCallReducer.apply(
+                state, VoiceCallEvent(VoiceCallEventKind.LOCAL_HANGUP, active),
+            )
+            commit(stopped.copy(
+                effects = stopped.effects.filter { it.kind == VoiceCallEffectKind.STOP_MEDIA },
+            ))
+        }
+    }
+
     /** All asynchronous media/timeouts must carry the originally admitted exact call key. */
     @Synchronized
     fun callback(kind: VoiceCallEventKind, key: VoiceCallKey): VoiceCallTransition {
@@ -206,8 +229,11 @@ internal class VoiceCallAdmissionCoordinator(
                 VoiceCallEventKind.CONNECT_TIMEOUT,
             )
         ) throw VoiceCallAdmissionException("Unclaimed network event supplied through callback")
-        if (kind == VoiceCallEventKind.MEDIA_CONNECTED && key == state.active) {
-            approved.requireApproved(owner.copyOf(), decode(key.peerIdentityId))
+        if (kind == VoiceCallEventKind.MEDIA_CONNECTED && key == state.active &&
+            state.phase in setOf(VoiceCallPhase.CONNECTING, VoiceCallPhase.ACTIVE)
+        ) {
+            val revalidated = revalidateActiveCall()
+            if (revalidated.next.phase == VoiceCallPhase.IDLE) return revalidated
         }
         return commit(VoiceCallReducer.apply(state, VoiceCallEvent(kind, key)))
     }
