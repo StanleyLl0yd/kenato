@@ -236,6 +236,84 @@ class VoiceCallAdmissionCoordinatorTest {
         assertTrue(f.coordinator.callback(VoiceCallEventKind.MEDIA_FAILED, key).effects.isEmpty())
     }
 
+
+    @Test
+    fun revokedConsentAtLocalHangupOrRejectSuppressesAllOutboundEffects() {
+        val outgoing = Fixture()
+        val outgoingKey = outgoing.coordinator.userDial(PEER, true).next.active!!
+        outgoing.permissionAllowed = false
+        val hangup = outgoing.coordinator.userAction(VoiceCallEventKind.LOCAL_HANGUP, outgoingKey)
+        assertEquals(VoiceCallPhase.IDLE, hangup.next.phase)
+        assertTrue(hangup.effects.isEmpty())
+        assertEquals(listOf(outgoingKey.callId), hangup.next.retiredCallIds)
+
+        val incoming = Fixture()
+        incoming.next = event(VoiceSignalKind.OFFER, 21)
+        val incomingKey = incoming.coordinator.receiveClaimedControl(PEER, id(21))!!.next.active!!
+        incoming.permissionAllowed = false
+        val reject = incoming.coordinator.userAction(VoiceCallEventKind.LOCAL_REJECT, incomingKey)
+        assertEquals(VoiceCallPhase.IDLE, reject.next.phase)
+        assertTrue(reject.effects.isEmpty())
+        assertEquals(listOf(incomingKey.callId), reject.next.retiredCallIds)
+    }
+
+    @Test
+    fun revokedConsentAtMediaFailureTimeoutAndLocalHangupStopsMediaWithoutSending() {
+        val events = listOf(
+            VoiceCallEventKind.MEDIA_FAILED,
+            VoiceCallEventKind.CONNECT_TIMEOUT,
+            VoiceCallEventKind.LOCAL_HANGUP,
+        )
+        for (eventKind in events) {
+            val f = Fixture()
+            val key = f.coordinator.userDial(PEER, true).next.active!!
+            f.next = event(VoiceSignalKind.ANSWER, 22)
+            assertEquals(
+                VoiceCallPhase.CONNECTING,
+                f.coordinator.receiveClaimedControl(PEER, id(22))!!.next.phase,
+            )
+            f.permissionAllowed = false
+            val stopped = if (eventKind == VoiceCallEventKind.LOCAL_HANGUP) {
+                f.coordinator.userAction(eventKind, key)
+            } else {
+                f.coordinator.callback(eventKind, key)
+            }
+            assertEquals(VoiceCallPhase.IDLE, stopped.next.phase)
+            assertEquals(listOf(VoiceCallEffectKind.STOP_MEDIA), stopped.effects.map { it.kind })
+            assertEquals(key, stopped.effects.single().key)
+            assertTrue(f.coordinator.callback(VoiceCallEventKind.MEDIA_FAILED, key).effects.isEmpty())
+        }
+    }
+
+    @Test
+    fun revokedConsentAtRingTimeoutClosesWithoutSendingHangup() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        f.permissionAllowed = false
+        val timedOut = f.coordinator.callback(VoiceCallEventKind.RING_TIMEOUT, key)
+        assertEquals(VoiceCallPhase.IDLE, timedOut.next.phase)
+        assertTrue(timedOut.effects.isEmpty())
+        assertEquals(listOf(key.callId), timedOut.next.retiredCallIds)
+    }
+
+    @Test
+    fun stillApprovedTimeOutAndLocalHangupRetainNormalControlEffects() {
+        val ringing = Fixture()
+        val ringingKey = ringing.coordinator.userDial(PEER, true).next.active!!
+        val timeout = ringing.coordinator.callback(VoiceCallEventKind.RING_TIMEOUT, ringingKey)
+        assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP), timeout.effects.map { it.kind })
+
+        val connected = Fixture()
+        val connectedKey = connected.coordinator.userDial(PEER, true).next.active!!
+        connected.next = event(VoiceSignalKind.ANSWER, 23)
+        connected.coordinator.receiveClaimedControl(PEER, id(23))
+        val hangup = connected.coordinator.userAction(VoiceCallEventKind.LOCAL_HANGUP, connectedKey)
+        assertEquals(
+            listOf(VoiceCallEffectKind.SEND_HANGUP, VoiceCallEffectKind.STOP_MEDIA),
+            hangup.effects.map { it.kind },
+        )
+    }
+
     private class Fixture {
         var permissionAllowed = true
         var next: VoiceSignalPlaintext? = null
