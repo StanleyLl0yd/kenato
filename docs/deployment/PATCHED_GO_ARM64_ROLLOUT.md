@@ -5,9 +5,11 @@ feature change, new Kenato server, release signing, TURN, or M6.
 
 ## Produce and verify a reviewed-source binary
 
-After this workflow is reviewed, merged and its exact-main CI/security checks
-pass, run **Verified Go ARM64 backend artifact** manually on `main`.
-The job rejects non-`main` refs; its checkout is checked against
+The reviewed merge that adds this workflow triggers one build on `main`;
+later rebuilds may be run manually from **Verified Go ARM64 backend artifact**.
+A push upload is never deployment approval. Require successful exact-main
+CI/security checks before trusting its output. The job rejects non-`main`
+refs; its checkout is checked against
 `GITHUB_SHA`. The pinned Go 1.27.2 toolchain builds with
 `GOTOOLCHAIN=local`, `GOOS=linux`, `GOARCH=arm64`, `CGO_ENABLED=0`,
 `-trimpath`, and embedded VCS revision. Go unit tests, module verification,

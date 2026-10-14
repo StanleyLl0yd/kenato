@@ -5,6 +5,7 @@ from pathlib import Path
 workflow = Path(".github/workflows/build-server-arm64.yml").read_text(encoding="utf-8")
 required = (
     "workflow_dispatch:",
+    "push:\\n    branches: [main]\\n    paths:\\n      - \\".github/workflows/build-server-arm64.yml\\"",
     "permissions: {}",
     'test "$GITHUB_REF" = "refs/heads/main"',
     'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',

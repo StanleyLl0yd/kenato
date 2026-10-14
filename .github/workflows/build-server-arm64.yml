@@ -1,6 +1,12 @@
 name: Verified Go ARM64 backend artifact
 
 on:
+  # Bootstrap the artifact automatically on the reviewed merge that adds this recipe.
+  # Later rebuilds are opt-in; routine server changes do not trigger uploads.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-server-arm64.yml"
   workflow_dispatch:
 
 permissions: {}
