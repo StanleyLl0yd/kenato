@@ -291,14 +291,19 @@ internal class DurableVoiceCapabilityConsentRepository(
     }
 
     /** Verified only for this currently pinned public key; never consult relay hints. */
+    /**
+     * Consent is an admission boundary. A cross-instance read must wait for any
+     * pending revoke/confirm/identity-clear commit against the same AtomicFile;
+     * the instance-level @Synchronized monitor alone does not provide this.
+     */
     @Synchronized
     fun isVoiceVersion2Confirmed(
         ownerIdentityId: ByteArray,
         peerIdentityId: ByteArray,
         pinnedPeerPublicKey: ByteArray,
-    ): Boolean {
+    ): Boolean = synchronized(STATE_WRITE_LOCK) {
         validateOwnerPeer(ownerIdentityId, peerIdentityId, pinnedPeerPublicKey)
-        return load(ownerIdentityId)?.entries?.any {
+        load(ownerIdentityId)?.entries?.any {
             it.approvedAt > 0L &&
                 it.peerIdentityId.contentEquals(peerIdentityId) &&
                 MessageDigest.isEqual(it.peerPublicKeyDigest, peerIdentityId)

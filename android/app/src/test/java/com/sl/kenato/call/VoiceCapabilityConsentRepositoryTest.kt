@@ -73,6 +73,61 @@ class VoiceCapabilityConsentRepositoryTest {
     }
 
     @Test
+    fun crossInstanceReadWaitsForRevocationCommitBeforeCheckingConsent() {
+        val f = Fixture()
+        val challenge = f.issue()
+        f.repository.confirmSignedProof(
+            OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true,
+        )
+        assertTrue(f.repository.isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded))
+
+        val writeEntered = java.util.concurrent.CountDownLatch(1)
+        val allowWrite = java.util.concurrent.CountDownLatch(1)
+        val readStarted = java.util.concurrent.CountDownLatch(1)
+        val readerReachedStore = java.util.concurrent.CountDownLatch(1)
+        val writerStore = object : VoiceCapabilityEncryptedStore {
+            override fun read(): ByteArray? = f.store.read()
+            override fun write(bytes: ByteArray): Boolean {
+                writeEntered.countDown()
+                check(allowWrite.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                return f.store.write(bytes)
+            }
+            override fun clear(): Boolean = f.store.clear()
+        }
+        val readerStore = object : VoiceCapabilityEncryptedStore {
+            override fun read(): ByteArray? {
+                readerReachedStore.countDown()
+                return f.store.read()
+            }
+            override fun write(bytes: ByteArray): Boolean = f.store.write(bytes)
+            override fun clear(): Boolean = f.store.clear()
+        }
+        val writer = DurableVoiceCapabilityConsentRepository(writerStore, f.cipher)
+        val reader = DurableVoiceCapabilityConsentRepository(readerStore, f.cipher)
+        val workers = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val revoke = workers.submit<Unit> { writer.revoke(OWNER, f.peer) }
+            assertTrue(writeEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+
+            val read = workers.submit<Boolean> {
+                readStarted.countDown()
+                reader.isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded)
+            }
+            assertTrue(readStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            // A different repository instance must not observe a stale approved
+            // snapshot while the corresponding revocation write is in flight.
+            assertFalse(readerReachedStore.await(250, java.util.concurrent.TimeUnit.MILLISECONDS))
+            allowWrite.countDown()
+            revoke.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            assertFalse(read.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(readerReachedStore.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        } finally {
+            allowWrite.countDown()
+            workers.shutdownNow()
+        }
+    }
+
+    @Test
     fun consentIsExplicitAndUnsignedOrWrongChallengeCannotAuthorizeSupport() {
         val f = Fixture()
         val challenge = f.issue()
