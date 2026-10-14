@@ -41,13 +41,36 @@ def aar_file(folder: Path, *, missing: str | None = None,
              tampered_elf: bool = False, truncated_elf: bool = False,
              fake_jar: bool = False, fake_manifest: bool = False,
              traversal: bool = False,
-             symlink: bool = False, duplicates: bool = False) -> Path:
+             symlink: bool = False, duplicates: bool = False,
+             class_major: int = 61, fake_class: bool = False,
+             preview_class: bool = False, nested_traversal: bool = False,
+             nested_duplicates: bool = False, nested_symlink: bool = False,
+             empty_classes: bool = False, corrupt_jar: bool = False) -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
         jar_output = io.BytesIO()
         with zipfile.ZipFile(jar_output, "w") as jar:
             jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-        output.writestr("classes.jar", b"fake jar payload" if fake_jar else jar_output.getvalue())
+            if not empty_classes:
+                klass = (b"badclass" if fake_class else
+                         struct.pack(">IHH", 0xCAFEBABE,
+                                     65535 if preview_class else 0, class_major))
+                jar.writestr("org/webrtc/PeerConnection.class", klass)
+            if nested_traversal:
+                jar.writestr("../escape.class", b"forbidden")
+            if nested_duplicates:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    jar.writestr("org/webrtc/PeerConnection.class", b"duplicate")
+            if nested_symlink:
+                entry = zipfile.ZipInfo("META-INF/link")
+                entry.create_system = 3
+                entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+                jar.writestr(entry, b"elsewhere")
+        jar_bytes = jar_output.getvalue()
+        if corrupt_jar:
+            jar_bytes = jar_bytes[:24]
+        output.writestr("classes.jar", b"fake jar payload" if fake_jar else jar_bytes)
         output.writestr(
             "AndroidManifest.xml",
             b"manifest" if fake_manifest else b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>',
@@ -115,6 +138,34 @@ class AarAuditTests(unittest.TestCase):
             for kwargs in ({"traversal": True}, {"symlink": True}, {"duplicates": True}):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_java_17_nested_classfile_gate_and_major_version_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), class_major=61)
+            result = audit.audit_aar(path, report_only=True)
+            self.assertEqual({"61": 1}, result["java_classfile_major_counts"])
+            for kwargs in (
+                {"class_major": 65},
+                {"class_major": 44},
+                {"fake_class": True},
+                {"preview_class": True},
+                {"empty_classes": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_nested_jar_path_alias_symlink_and_truncation_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for kwargs in (
+                {"nested_traversal": True},
+                {"nested_duplicates": True},
+                {"nested_symlink": True},
+                {"corrupt_jar": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
 
     def test_truncated_archive_and_unknown_format_are_rejected(self):

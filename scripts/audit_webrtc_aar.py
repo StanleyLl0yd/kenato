@@ -12,6 +12,7 @@ import hmac
 import json
 import re
 import stat
+import tempfile
 import struct
 import sys
 import zipfile
@@ -23,6 +24,11 @@ MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MAX_ENTRY_BYTES = 200 * 1024 * 1024
 MAX_ENTRIES = 20000
 MAX_COMPRESSION_RATIO = 1000
+MAX_JAR_ENTRIES = 50000
+MAX_JAR_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
+MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
+# The pinned application build runs JDK 17. Classfile major 61 is Java 17.
+MAX_CLASSFILE_MAJOR = 61
 
 
 class AarAuditError(ValueError):
@@ -72,19 +78,84 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
         raise AarAuditError(f"Invalid ELF program-header table for {abi}")
 
 
-def _validate_required_content(zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]) -> None:
-    # Check content signatures; ZIP names alone do not prove a usable AAR.
-    # Avoid loading a large untrusted classes.jar into memory.
+def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[int, int]:
+    """Inspect the nested JAR, not just its ZIP signature.
+
+    This proves bounded ZIP/classfile structure, NOT that lowering a Java 21
+    major-version header to Java 17 produces valid compatible bytecode.
+    """
+    majors: dict[int, int] = {}
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as spool:
+        with zipped.open(info) as source:
+            transferred = 0
+            while block := source.read(128 * 1024):
+                transferred += len(block)
+                if transferred > MAX_ENTRY_BYTES:
+                    raise AarAuditError("Nested classes.jar exceeds bounded input")
+                spool.write(block)
+        spool.seek(0)
+        with zipfile.ZipFile(spool) as jar:
+            entries = jar.infolist()
+            if len(entries) > MAX_JAR_ENTRIES:
+                raise AarAuditError("Too many nested JAR entries")
+            seen: set[str] = set()
+            total = 0
+            for item in entries:
+                _require_name(item.filename.rstrip("/") if item.is_dir() else item.filename)
+                canonical = item.filename.rstrip("/").lower()
+                if canonical in seen:
+                    raise AarAuditError("Duplicate/case-aliased nested JAR entry")
+                seen.add(canonical)
+                if item.flag_bits & 1:
+                    raise AarAuditError("Encrypted nested JAR entry")
+                if stat.S_IFMT(item.external_attr >> 16) == stat.S_IFLNK:
+                    raise AarAuditError("Symlink in nested JAR")
+                if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise AarAuditError("Unsupported nested JAR compression")
+                if item.file_size < 0 or item.file_size > MAX_JAR_ENTRY_BYTES:
+                    raise AarAuditError("Oversized nested JAR entry")
+                total += item.file_size
+                if total > MAX_JAR_UNCOMPRESSED_BYTES:
+                    raise AarAuditError("Nested JAR exceeds uncompressed bound")
+                if item.file_size and (
+                    item.compress_size <= 0 or
+                    item.file_size / item.compress_size > MAX_COMPRESSION_RATIO
+                ):
+                    raise AarAuditError("Implausible nested JAR compression ratio")
+                if not item.is_dir() and item.filename.endswith(".class"):
+                    if item.file_size < 8:
+                        raise AarAuditError("Truncated Java classfile")
+                    with jar.open(item) as klass:
+                        header = klass.read(8)
+                    magic, minor, major = struct.unpack(">IHH", header)
+                    if magic != 0xCAFEBABE or minor == 65535 or not 45 <= major <= MAX_CLASSFILE_MAJOR:
+                        raise AarAuditError(
+                            f"Unsupported Java classfile version {major}.{minor}"
+                        )
+                    majors[major] = majors.get(major, 0) + 1
+            if not majors:
+                raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
+            if jar.testzip() is not None:
+                raise AarAuditError("Nested JAR CRC verification failed")
+    return majors
+
+
+def _validate_required_content(
+    zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
+) -> dict[int, int]:
+    # Names and first four signature bytes alone do not authenticate nested ZIPs.
     with zipped.open(files["classes.jar"]) as stream:
         jar_prefix = stream.read(4)
     if jar_prefix != b"PK\x03\x04":
         raise AarAuditError("AAR classes.jar is not a JAR/ZIP")
+    class_versions = _audit_classes_jar(zipped, files["classes.jar"])
     with zipped.open(files["AndroidManifest.xml"]) as stream:
         manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
     binary_xml = manifest.startswith(b"\x03\x00\x08\x00")
     text_xml = manifest.startswith(b"<") and b"<manifest" in manifest
     if not binary_xml and not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
+    return class_versions
 
 
 def audit_aar(
@@ -112,6 +183,7 @@ def audit_aar(
     libnames: dict[str, set[str]] = {name: set() for name in REQUIRED_ABIS}
     native_paths = []
     license_paths = []
+    class_versions: dict[int, int] = {}
     total_size = 0
     seen: set[str] = set()
     try:
@@ -157,7 +229,7 @@ def audit_aar(
             files = {i.filename: i for i in entries if not i.is_dir()}
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
-            _validate_required_content(zipped, files)
+            class_versions = _validate_required_content(zipped, files)
             if not all(libnames.values()) or len({frozenset(x) for x in libnames.values()}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
             if zipped.testzip() is not None:
@@ -172,9 +244,11 @@ def audit_aar(
         "uncompressed_bytes": total_size,
         "required_abis": sorted(REQUIRED_ABIS),
         "native_paths": sorted(native_paths),
+        "java_classfile_major_counts": {str(k): class_versions[k] for k in sorted(class_versions)},
         "embedded_license_or_notice_paths": sorted(license_paths),
         "remaining_reviews": [
             "source lineage and publisher",
+            "classfile major-version rewriting versus actual JVM/D8 compatibility",
             "full native and third-party licenses",
             "binary CVEs and dependency graph",
             "Android 10/13/14+ loader tests and microphone lifecycle",

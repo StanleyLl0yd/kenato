@@ -162,6 +162,17 @@ The expected digest must be obtained and reviewed **independently**
 of the downloaded file. Offline synthetic regression fixtures are
 included in repository security verification.
 
+The offline audit also opens the nested `classes.jar` as a bounded ZIP,
+rejects traversal, duplicate/case-aliased paths, symlinks, malformed Java
+class headers, preview classes and classfile majors above Java 17 (61),
+and reports observed classfile major versions. The pinned Kenato build
+uses JDK 17. A release that rewrites only a Java 21 classfile header
+from 65 to 61 may still contain incompatible instructions or API
+requirements; **passing the major-version gate does not prove such a
+rewrite is valid**. Independently compare upstream and Maven AAR
+provenance, then run real D8/AGP and device loader checks. This nested
+ZIP scan is offline only and does not imply binary approval.
+
 **Passing this structural tool is insufficient to accept a dependency.**
 Publisher/source lineage, exact dependency closure, embedded notices and
 third-party licenses, native vulnerability evaluation and physical
