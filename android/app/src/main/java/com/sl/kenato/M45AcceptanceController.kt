@@ -387,8 +387,13 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         }
 
         val selectedVoicePeer = selectedPeer?.let(::decodeM45IdentityId)
+        // A damaged/invalidated M5 Keystore key may revoke local voice consent.
+        // It MUST NOT break the unrelated M4 text acceptance screen/transport.
+        // Fail closed for M5: show unconfirmed; signing/import still validates normally.
         val confirmedVoice = selectedVoicePeer?.let { peer ->
-            voiceCapability.isConfirmed(owner, peer)
+            M5VoiceUiSnapshotGuard.confirmedOrUnavailable {
+                voiceCapability.isConfirmed(owner, peer)
+            }
         } ?: false
         val showVoiceQr = foreground && ephemeralVoicePeerId == selectedPeer
 

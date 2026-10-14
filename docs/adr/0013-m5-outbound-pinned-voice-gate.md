@@ -112,3 +112,8 @@ different pinned contact cannot resurrect a QR after foreground resumption.
 This is verified by focused JVM regression tests. Android clipboard and
 explicit external Share targets remain **user-controlled external surfaces**,
 so the app does not promise to erase QR text after an intentional copy/share.
+
+A failed or invalidated optional M5 consent store is displayed as **not
+confirmed**. It never blocks existing M4 text messaging or implicitly accepts
+voice support; any later explicit import/sign action still performs full
+independent pinned-identity and cryptographic validation.

@@ -6,6 +6,15 @@ import org.junit.Test
 
 class M5VoiceUiSnapshotGuardTest {
     @Test
+    fun unavailableOrCorruptedVoiceConsentCannotBlockTextScreen() {
+        assertEquals(true, M5VoiceUiSnapshotGuard.confirmedOrUnavailable { true })
+        assertEquals(false, M5VoiceUiSnapshotGuard.confirmedOrUnavailable { false })
+        assertEquals(false, M5VoiceUiSnapshotGuard.confirmedOrUnavailable {
+            throw IllegalStateException("Android Keystore key unavailable")
+        })
+    }
+
+    @Test
     fun currentEpochCanShowOnlySelectedPeerProofInForeground() {
         val before = M45AcceptanceUiState(selectedPeerIdentityId = "contact-a", voiceUiEpoch = 7)
         val snapshot = before.copy(voiceChallengeQr = "challenge", voiceProofQr = "proof")

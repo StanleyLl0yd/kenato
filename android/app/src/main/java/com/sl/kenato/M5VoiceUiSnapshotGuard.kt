@@ -7,6 +7,14 @@ package com.sl.kenato
  * foreground was entered before the stale callback reaches the main thread.
  */
 internal object M5VoiceUiSnapshotGuard {
+    /** Failure of optional voice consent storage never blocks M4 text UI. */
+    fun confirmedOrUnavailable(check: () -> Boolean): Boolean =
+        try {
+            check()
+        } catch (_: Exception) {
+            false
+        }
+
     fun redactStaleProofs(
         current: M45AcceptanceUiState,
         incoming: M45AcceptanceUiState,
