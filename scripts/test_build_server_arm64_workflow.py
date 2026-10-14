@@ -16,6 +16,8 @@ required = (
     "go mod verify",
     "go test ./...",
     "-trimpath -buildvcs=true",
+    '-o "$RUNNER_TEMP/kenato-server-linux-arm64"',
+    'mv "$RUNNER_TEMP/kenato-server-linux-arm64" dist/kenato-server-linux-arm64',
     "readelf -h",
     "vcs.revision=$GITHUB_SHA",
     "sha256sum --check SHA256SUMS",
