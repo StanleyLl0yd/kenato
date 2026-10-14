@@ -42,6 +42,33 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun receiptChangedAfterSemanticPairingCannotClaimDifferentCall() {
+        val f = Fixture()
+        f.accept(handoff(61, call = 77))
+        f.replayStore.afterReadOnce = {
+            val state = VoiceSignalReplayStateCodec.decode(f.replayStore.read()!!)
+            val original = state.records.single()
+            val replacement = VoiceSignalReplayRecord(
+                peerIdentityId = original.peerIdentityId.copyOf(),
+                messageId = original.messageId.copyOf(),
+                callId = id(99),
+                kind = original.kind,
+                expiresAtEpochSeconds = original.expiresAtEpochSeconds,
+                envelopeDigest = original.envelopeDigest.copyOf(),
+            )
+            f.replayStore.write(VoiceSignalReplayStateCodec.encode(
+                VoiceSignalReplayState(OWNER.copyOf(), listOf(replacement)),
+            ))
+        }
+        assertThrows(VoiceSignalReplayException::class.java) {
+            f.matcher().claimRestorableCandidate(OWNER, PEER, id(61), NOW)
+        }
+        val state = VoiceSignalReplayStateCodec.decode(f.replayStore.read()!!)
+        assertArrayEquals(id(99), state.records.single().callId)
+        assertEquals(false, state.records.single().dispatchClaimed)
+    }
+
+    @Test
     fun noSemanticPayloadCannotClaimReplayPermission() {
         val f = Fixture()
         f.journal.importAuthenticatedInboundHandoff(OWNER, handoff(52), NOW)
@@ -146,7 +173,14 @@ class RestorableVoiceSignalMatcherTest {
 
     private class MemoryReplayStore : VoiceSignalReplayStore {
         private var bytes: ByteArray? = null
-        override fun read(): ByteArray? = bytes?.copyOf()
+        var afterReadOnce: (() -> Unit)? = null
+        override fun read(): ByteArray? {
+            val snapshot = bytes?.copyOf()
+            val callback = afterReadOnce
+            afterReadOnce = null
+            callback?.invoke()
+            return snapshot
+        }
         override fun write(bytes: ByteArray): Boolean {
             this.bytes = bytes.copyOf()
             return true
