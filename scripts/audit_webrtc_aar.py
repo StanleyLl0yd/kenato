@@ -46,13 +46,45 @@ def _require_name(name: str) -> None:
 
 
 def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> None:
+    # Validate an entire ELF header and the bounded program-header table,
+    # rather than trusting the first 20 bytes of an arbitrary file.
     with zipped.open(info) as stream:
-        header = stream.read(20)
+        header = stream.read(64)
     elf_class, expected_machine = REQUIRED_ABIS[abi]
-    if (len(header) < 20 or header[:4] != b"\x7fELF" or
-            header[4] != elf_class or header[5] != 1 or
-            struct.unpack_from("<H", header, 18)[0] != expected_machine):
-        raise AarAuditError(f"Invalid ELF class/architecture for {abi}")
+    header_size = 52 if elf_class == 1 else 64
+    if (len(header) < header_size or header[:4] != b"\x7fELF" or
+            header[4] != elf_class or header[5] != 1 or header[6] != 1):
+        raise AarAuditError(f"Invalid ELF header for {abi}")
+    e_type, e_machine, e_version = struct.unpack_from("<HHI", header, 16)
+    if e_type != 3 or e_machine != expected_machine or e_version != 1:
+        raise AarAuditError(f"Native library is not ELF ET_DYN for {abi}")
+    if elf_class == 1:
+        ph_offset = struct.unpack_from("<I", header, 28)[0]
+        eh_size, ph_size, ph_count = struct.unpack_from("<HHH", header, 40)
+        min_ph_size = 32
+    else:
+        ph_offset = struct.unpack_from("<Q", header, 32)[0]
+        eh_size, ph_size, ph_count = struct.unpack_from("<HHH", header, 52)
+        min_ph_size = 56
+    if (eh_size != header_size or ph_offset < header_size or
+            ph_size < min_ph_size or not 1 <= ph_count <= 4096 or
+            ph_offset + ph_size * ph_count > info.file_size):
+        raise AarAuditError(f"Invalid ELF program-header table for {abi}")
+
+
+def _validate_required_content(zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]) -> None:
+    # Check content signatures; ZIP names alone do not prove a usable AAR.
+    # Avoid loading a large untrusted classes.jar into memory.
+    with zipped.open(files["classes.jar"]) as stream:
+        jar_prefix = stream.read(4)
+    if jar_prefix != b"PK\x03\x04":
+        raise AarAuditError("AAR classes.jar is not a JAR/ZIP")
+    with zipped.open(files["AndroidManifest.xml"]) as stream:
+        manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
+    binary_xml = manifest.startswith(b"\x03\x00\x08\x00")
+    text_xml = manifest.startswith(b"<") and b"<manifest" in manifest
+    if not binary_xml and not text_xml:
+        raise AarAuditError("AAR manifest is not plausible XML")
 
 
 def audit_aar(
@@ -122,10 +154,10 @@ def audit_aar(
                 if ("license" in info.filename.lower() or
                         "notice" in info.filename.lower()):
                     license_paths.append(info.filename)
-            if not {"classes.jar", "AndroidManifest.xml"}.issubset(
-                {i.filename for i in entries if not i.is_dir()}
-            ):
+            files = {i.filename: i for i in entries if not i.is_dir()}
+            if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
+            _validate_required_content(zipped, files)
             if not all(libnames.values()) or len({frozenset(x) for x in libnames.values()}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
             if zipped.testzip() is not None:
