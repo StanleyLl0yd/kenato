@@ -117,3 +117,33 @@ A failed or invalidated optional M5 consent store is displayed as **not
 confirmed**. It never blocks existing M4 text messaging or implicitly accepts
 voice support; any later explicit import/sign action still performs full
 independent pinned-identity and cryptographic validation.
+
+## Full M3 session-state encryption at rest (isolated migration candidate)
+
+A pending v2 OFFER can leave SDP/ICE plaintext in the M3 crypto-coupled
+handoff record while native Olm state is persisted. An isolated
+`EncryptedSessionStateStore` is prepared for explicit migration to a complete
+AES-256-GCM Keystore-protected M3 state file, separate from the pre-existing
+pickle-key wrapping key. Its strict versioned envelope wraps the **entire**
+canonical state, not merely native account pickles, so temporary SDP/ICE,
+handshake context, peer identifiers and outbound payload copies receive
+the same authenticated local-disk protection. A distinct key and
+domain-separated AAD protect against accidental cross-store use.
+
+For a verified existing `KNS3` plaintext session file, the optional wrapper
+commits an **atomic encrypted replacement before returning** that file to
+the caller. Corrupt, unknown, tampered and inaccessible encrypted states
+fail closed: an unavailable Keystore key is never silently regenerated
+during decryption. Explicit identity recovery clears both the protected
+file and its dedicated key only after successful deletion of the file.
+Its backing AtomicFile can be given the bounded AEAD-envelope overhead
+without raising the canonical M3 serialization bound.
+
+**Migration is not activated in production** and is not approved for a
+release. The existing factory still uses the unchanged plaintext store,
+because older M4.5 installers cannot read a new encrypted state format
+without a reviewed rollback strategy. Integrating this protection
+requires exact-vintage Android 10/13 Keystore fault-injection, state
+migration / rollback decisions, device process-death tests and a full
+#87 security acceptance gate. No new backend, protocol wire or media
+component is introduced in this isolated slice.
