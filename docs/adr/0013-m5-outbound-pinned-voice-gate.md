@@ -104,3 +104,11 @@ it is cleared on background and peer selection changes. The UI exposes
 only positive consent for a pinned peer, not a calling feature. A user
 must independently inspect the selected peer identity before approving
 a signature or proof import. App version and published APK do not change.
+
+The Compose state redacts QR/proof text at pause. Asynchronous controller
+snapshots also pass a **foreground epoch and selected-peer guard** before
+reaching the UI thread; a callback created before background or for a
+different pinned contact cannot resurrect a QR after foreground resumption.
+This is verified by focused JVM regression tests. Android clipboard and
+explicit external Share targets remain **user-controlled external surfaces**,
+so the app does not promise to erase QR text after an intentional copy/share.

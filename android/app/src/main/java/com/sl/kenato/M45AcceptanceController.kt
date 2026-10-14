@@ -414,12 +414,13 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         notice: String? = state.notice,
         error: String? = state.error,
     ) {
-        state = snapshot.copy(
-            busy = false,
-            notice = notice,
-            error = error,
-            voiceChallengeQr = snapshot.voiceChallengeQr.takeIf { foreground },
-            voiceProofQr = snapshot.voiceProofQr.takeIf { foreground },
+        // Work on the serialized worker may produce a snapshot *before* background or a
+        // contact change, then post it *after* the UI has resumed. The epoch can only
+        // advance on the UI thread: stale callbacks must never resurrect a shareable QR.
+        state = M5VoiceUiSnapshotGuard.redactStaleProofs(
+            current = state,
+            incoming = snapshot.copy(busy = false, notice = notice, error = error),
+            foreground = foreground,
         )
     }
 
