@@ -53,9 +53,12 @@ jobs:
           GOARCH: arm64
           CGO_ENABLED: "0"
         run: |
-          mkdir -p dist
+          # Build outside the Git worktree: untracked output could otherwise mark
+          # vcs.modified=true and invalidate the clean-source provenance check.
           go build -trimpath -buildvcs=true -ldflags=-buildid= \
-            -o dist/kenato-server-linux-arm64 ./cmd/kenato-server
+            -o "$RUNNER_TEMP/kenato-server-linux-arm64" ./cmd/kenato-server
+          mkdir -p dist
+          mv "$RUNNER_TEMP/kenato-server-linux-arm64" dist/kenato-server-linux-arm64
           readelf -h dist/kenato-server-linux-arm64 | grep -Eq 'Machine:[[:space:]]*AArch64'
           go version -m dist/kenato-server-linux-arm64 > dist/GO_BUILD_INFO.txt
           grep -F "vcs.revision=$GITHUB_SHA" dist/GO_BUILD_INFO.txt
