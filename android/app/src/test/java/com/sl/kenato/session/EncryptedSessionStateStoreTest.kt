@@ -73,6 +73,41 @@ class EncryptedSessionStateStoreTest {
     }
 
     @Test
+    fun lostKeystoreKeyCannotOverwriteProtectedRatchetOrVoiceHandoffs() {
+        val disk = MemoryDisk()
+        val crypto = JvmAesGcm()
+        val store = EncryptedSessionStateStore(disk, crypto)
+        assertTrue(store.write(rawState(includeVoice = true)))
+        val protectedBefore = disk.bytes!!.copyOf()
+        crypto.rotateKey()
+        assertThrows(SessionStateException::class.java) {
+            store.write(rawState(includeVoice = false))
+        }
+        assertArrayEquals(protectedBefore, disk.bytes)
+        assertEquals(1, disk.writes)
+    }
+
+    @Test
+    fun corruptOrUnknownExistingStateCannotBeOverwrittenWithoutRecovery() {
+        val disk = MemoryDisk()
+        val store = EncryptedSessionStateStore(disk, JvmAesGcm())
+        assertTrue(store.write(rawState(includeVoice = true)))
+        val original = disk.bytes!!.copyOf()
+        for (corrupted in listOf(
+            original.copyOf().also { it[4] = 5 },
+            original.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() },
+            ByteArray(40) { 0x55.toByte() },
+        )) {
+            disk.bytes = corrupted.copyOf()
+            assertThrows(SessionStateException::class.java) {
+                store.write(rawState(includeVoice = false))
+            }
+            assertArrayEquals(corrupted, disk.bytes)
+        }
+        assertEquals(1, disk.writes)
+    }
+
+    @Test
     fun unknownOrCorruptedLegacyStateIsNeverMigrated() {
         val disk = MemoryDisk()
         val store = EncryptedSessionStateStore(disk, JvmAesGcm())
