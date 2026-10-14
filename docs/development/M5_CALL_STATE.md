@@ -50,3 +50,25 @@ must reliably apply this local teardown even when encryption, network,
 consent storage or the Keystore fails, and must check the same exact
 peer/call key before creating or retaining media. This is JVM-only
 call-control verification, not Android lifecycle, audio or device acceptance.
+
+## Fail-closed teardown after revoked consent
+
+All currently active, exact-key local hangup/reject requests and asynchronous
+media-failure/ring/connect timeout callbacks now revalidate the pinned M2
+identity and durable M5 v2 consent before reducing a transition. If approval
+has been revoked, the call is retired without proposing an outbound signaling
+effect. In CONNECTING/ACTIVE it proposes only keyed local `STOP_MEDIA`;
+during ringing it proposes no effect. Stale callbacks for a different call
+key are ignored without disturbing the current call.
+
+This fixes a JVM-only call-control proposal gap: before this check,
+`MEDIA_FAILED`, timeouts and user hangup/reject could still propose
+`SEND_HANGUP` or `SEND_REJECT` after consent revocation. An approved
+contact continues to receive normal proposed control effects.
+
+**Security boundary:** returned effects are never executed by this class.
+A future production effect runner must revalidate consent, active peer/call
+key and durable single-use claims *again, immediately before every effect*,
+including between `SEND_ACCEPT` and `START_MEDIA`; independent M2/M3
+storage and asynchronous revocation still lack a serialized commit boundary.
+No Android media, WebRTC, microphone or live voice transport is activated.
