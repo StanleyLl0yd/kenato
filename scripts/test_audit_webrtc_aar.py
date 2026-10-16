@@ -107,6 +107,17 @@ def aar_file(folder: Path, *, missing: str | None = None,
             manifest_bytes = b"<placeholder><manifest/></placeholder>"
         elif forged_manifest == "binary":
             manifest_bytes = b"\x03\x00\x08\x00" + struct.pack("<I", 4096) + b"fake"
+        elif forged_manifest == "truncated_source":
+            manifest_bytes = b"<manifest><application>"
+        elif forged_manifest == "mismatched_tags":
+            manifest_bytes = b"<manifest><application></manifest>"
+        elif forged_manifest == "trailing_junk":
+            manifest_bytes = b"<manifest/>garbage"
+        elif forged_manifest == "valid_source":
+            manifest_bytes = (b'<?xml version="1.0"?>\n'
+                              b'<!-- expected -->\n'
+                              b'<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+                              b'package="org.webrtc"/>')
         output.writestr("AndroidManifest.xml", manifest_bytes)
         if double_slash_dir:
             output.writestr("bad//", b"")
@@ -215,6 +226,30 @@ class AarAuditTests(unittest.TestCase):
                     audit.AarAuditError, "manifest is not plausible XML"
                 ):
                     audit.audit_aar(path, report_only=True)
+
+    def test_source_manifest_must_be_well_formed_xml_with_correct_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), forged_manifest="valid_source")
+            self.assertEqual(
+                3, len(audit.audit_aar(path, report_only=True)["native_paths"])
+            )
+            for forged in ("truncated_source", "mismatched_tags", "trailing_junk"):
+                path = aar_file(Path(tmp), forged_manifest=forged)
+                with self.subTest(forged=forged), self.assertRaisesRegex(
+                    audit.AarAuditError, "Malformed source-form AAR manifest XML"
+                ):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_source_manifest_parser_blocks_entities_and_excess_depth(self):
+        with self.assertRaisesRegex(audit.AarAuditError, "DTD or entity"):
+            audit._validate_source_manifest_xml(
+                b'<!DOCTYPE manifest [<!ENTITY payload "expanded">]>'
+                b'<manifest>&payload;</manifest>'
+            )
+        nested = b"<manifest>" + b"<application>" * 128
+        nested += b"</application>" * 128 + b"</manifest>"
+        with self.assertRaisesRegex(audit.AarAuditError, "nesting depth"):
+            audit._validate_source_manifest_xml(nested)
 
     def test_outer_aar_zip_requires_android_compatible_compression(self):
         with tempfile.TemporaryDirectory() as tmp:
