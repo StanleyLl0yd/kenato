@@ -104,6 +104,19 @@ class CandidateEvidenceTests(unittest.TestCase):
                     updated = jar.read("org/webrtc/PeerConnection.class")
             self.assertEqual(b"\xca\xfe\xba\xbe\x00\x00\x00\x3d" + b"payload", updated)
 
+    def test_stamping_refuses_oversized_nested_jar_entry_before_decoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "input.aar"
+            output = Path(directory) / "output.aar"
+            nested = io.BytesIO()
+            with zipfile.ZipFile(nested, "w") as jar:
+                jar.writestr("org/webrtc/PeerConnection.class", b"x" * 100)
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("classes.jar", nested.getvalue())
+            with mock.patch.object(evidence.audit, "MAX_JAR_ENTRY_BYTES", 8):
+                with self.assertRaisesRegex(evidence.EvidenceError, "Oversized"):
+                    evidence.reproduce_published_m150_stamping(source, output)
+
     def test_release_asset_digest_mismatch_blocks_collection(self):
         with tempfile.TemporaryDirectory() as directory:
             def untrusted_source(_url: str, target: Path) -> tuple[str, int]:
