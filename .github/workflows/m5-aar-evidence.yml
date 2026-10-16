@@ -7,6 +7,8 @@ on:
       - ".github/workflows/m5-aar-evidence.yml"
       - "scripts/collect_webrtc_candidate_evidence.py"
       - "scripts/test_collect_webrtc_candidate_evidence.py"
+      - "scripts/audit_webrtc_aar.py"
+      - "scripts/test_audit_webrtc_aar.py"
   workflow_dispatch:
 
 permissions: {}
