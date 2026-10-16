@@ -1,0 +1,56 @@
+name: M5 WebRTC AAR candidate evidence (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-aar-evidence.yml"
+      - "scripts/collect_webrtc_candidate_evidence.py"
+      - "scripts/test_collect_webrtc_candidate_evidence.py"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: m5-aar-evidence
+  cancel-in-progress: true
+
+jobs:
+  candidate-evidence:
+    name: Download and audit only; no vendor approval
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify CI supply-chain policy
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Offline evidence collector regression tests
+        run: python3 scripts/test_collect_webrtc_candidate_evidence.py
+
+      - name: Collect bounded candidate bytes and observations
+        run: |
+          python3 scripts/collect_webrtc_candidate_evidence.py \
+            --output /tmp/kenato-m5-webrtc-evidence.json
+          {
+            echo "### Research-only WebRTC AAR evidence"
+            echo "A successful workflow does not approve a vendor or enable voice."
+            echo '~~~json'
+            cat /tmp/kenato-m5-webrtc-evidence.json
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish JSON observations only, never downloaded AARs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-aar-observations
+          path: /tmp/kenato-m5-webrtc-evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
