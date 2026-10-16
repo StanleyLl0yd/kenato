@@ -53,6 +53,23 @@ def elf(elf_class: int, machine: int, *, truncated: bool = False,
     return bytes(header[:20] if truncated else header)
 
 
+
+def java_class(name: str, *, major: int = 61, preview: bool = False) -> bytes:
+    """Minimal real constant-pool/class declaration, not an executable SDK."""
+    def utf8(value: str) -> bytes:
+        encoded = value.encode("ascii")
+        return b"\x01" + struct.pack(">H", len(encoded)) + encoded
+
+    return (
+        struct.pack(">IHHH", 0xCAFEBABE, 65535 if preview else 0, major, 5)
+        + utf8(name)
+        + b"\x07" + struct.pack(">H", 1)
+        + utf8("java/lang/Object")
+        + b"\x07" + struct.pack(">H", 3)
+        + struct.pack(">HHHHHHH", 0x0021, 2, 4, 0, 0, 0, 0)
+    )
+
+
 def aar_file(folder: Path, *, missing: str | None = None,
              tampered_elf: bool = False, truncated_elf: bool = False,
              fake_jar: bool = False, fake_manifest: bool = False,
@@ -63,6 +80,9 @@ def aar_file(folder: Path, *, missing: str | None = None,
              class_major: int = 61, fake_class: bool = False,
              non_webrtc_class: bool = False,
              incorrect_api_case: bool = False,
+             wrong_declared_class: bool = False,
+             broken_constant_pool: bool = False,
+             truncated_class_declaration: bool = False,
              preview_class: bool = False, nested_traversal: bool = False,
              nested_duplicates: bool = False, nested_symlink: bool = False,
              empty_classes: bool = False, corrupt_jar: bool = False,
@@ -75,14 +95,23 @@ def aar_file(folder: Path, *, missing: str | None = None,
         with zipfile.ZipFile(jar_output, "w") as jar:
             jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
             if not empty_classes:
-                klass = (b"badclass" if fake_class else
-                         struct.pack(">IHH", 0xCAFEBABE,
-                                     65535 if preview_class else 0, class_major))
-                jar.writestr(
+                class_path = (
                     "org/example/Dummy.class" if non_webrtc_class else
                     "org/webrtc/peerconnection.class" if incorrect_api_case else
-                    "org/webrtc/PeerConnection.class", klass
+                    "org/webrtc/PeerConnection.class"
                 )
+                declared_name = (
+                    "org/example/OtherClass" if wrong_declared_class
+                    else class_path[:-6]
+                )
+                klass = (b"badclass" if fake_class else java_class(
+                    declared_name, major=class_major, preview=preview_class
+                ))
+                if broken_constant_pool:
+                    klass = klass[:10] + b"\x00" + klass[11:]
+                if truncated_class_declaration:
+                    klass = klass[:18]
+                jar.writestr(class_path, klass)
             if nested_double_slash_dir:
                 jar.writestr("META-INF//", b"")
             if nested_traversal:
@@ -293,6 +322,17 @@ class AarAuditTests(unittest.TestCase):
                 with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
                     audit.AarAuditError, "org/webrtc/PeerConnection.class"
                 ):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_webrtc_class_internal_identity_and_pool_are_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for kwargs in (
+                {"wrong_declared_class": True},
+                {"broken_constant_pool": True},
+                {"truncated_class_declaration": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
 
     def test_nested_jar_path_alias_symlink_and_truncation_rejected(self):
