@@ -37,12 +37,21 @@ class AarAuditError(ValueError):
     """Untrusted binary does not meet the proposed native prerequisite."""
 
 
-def _sha256(path: Path) -> str:
+def _snapshot_and_sha256(path: Path, snapshot) -> tuple[str, int]:
+    """Hash exactly the bytes later parsed; a path can be swapped after hashing."""
     digest = hashlib.sha256()
+    copied = 0
     with path.open("rb") as stream:
         while block := stream.read(128 * 1024):
+            copied += len(block)
+            if copied > MAX_AAR_BYTES:
+                raise AarAuditError("AAR changed size or exceeds disk limit")
+            snapshot.write(block)
             digest.update(block)
-    return digest.hexdigest()
+    if copied == 0:
+        raise AarAuditError("Empty AAR snapshot")
+    snapshot.seek(0)
+    return digest.hexdigest(), copied
 
 
 def _require_name(name: str) -> None:
@@ -201,14 +210,30 @@ def audit_aar(
     A verification requires independently obtained SHA-256. Report-only mode
     prints an observed digest but deliberately never claims a verified binary.
     """
-    path = Path(path)
+    # Keep the snapshot open through ZIP/classfile validation. Hash verification
+    # of path A followed by reopening path B would allow an artifact-swap race.
+    with tempfile.TemporaryFile() as snapshot:
+        return _audit_aar_snapshot(
+            Path(path), snapshot,
+            expected_sha256=expected_sha256,
+            report_only=report_only,
+        )
+
+
+def _audit_aar_snapshot(
+    path: Path,
+    snapshot,
+    *,
+    expected_sha256: str | None,
+    report_only: bool,
+) -> dict:
     if not report_only and expected_sha256 is None:
         raise AarAuditError("Expected SHA-256 is required for verification")
     if expected_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise AarAuditError("Expected SHA-256 must be exactly 64 lowercase hex digits")
     if not path.is_file() or path.stat().st_size not in range(1, MAX_AAR_BYTES + 1):
         raise AarAuditError("AAR file missing, empty or exceeds disk limit")
-    observed = _sha256(path)
+    observed, snapshot_bytes = _snapshot_and_sha256(path, snapshot)
     if expected_sha256 is not None and not hmac.compare_digest(expected_sha256, observed):
         raise AarAuditError("AAR SHA-256 does not match independently pinned digest")
 
@@ -219,7 +244,7 @@ def audit_aar(
     total_size = 0
     seen: set[str] = set()
     try:
-        with zipfile.ZipFile(path) as zipped:
+        with zipfile.ZipFile(snapshot) as zipped:
             entries = zipped.infolist()
             if len(entries) > MAX_ENTRIES:
                 raise AarAuditError("Too many archive entries")
@@ -272,7 +297,7 @@ def audit_aar(
     return {
         "sha256": observed,
         "verified_against_expected_sha256": expected_sha256 is not None,
-        "file_bytes": path.stat().st_size,
+        "file_bytes": snapshot_bytes,
         "uncompressed_bytes": total_size,
         "required_abis": sorted(REQUIRED_ABIS),
         "native_paths": sorted(native_paths),
