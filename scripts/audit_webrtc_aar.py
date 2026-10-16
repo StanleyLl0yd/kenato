@@ -31,6 +31,7 @@ MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
 MAX_SOURCE_MANIFEST_BYTES = 1024 * 1024
+MAX_BINARY_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_SOURCE_MANIFEST_DEPTH = 128
 # Bound decompression needed to reach ELF program headers.
 MAX_PROGRAM_HEADER_OFFSET = 1024 * 1024
@@ -299,6 +300,64 @@ def _validate_source_manifest_xml(manifest_xml: bytes) -> None:
         raise AarAuditError("Malformed source-form AAR manifest XML")
 
 
+
+def _validate_binary_manifest_chunks(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
+    """Check compiled Android XML chunk boundaries, not full XML semantics.
+
+    This does not validate ResStringPool encoding, attribute values, Android
+    resource references, JNI/D8 loading or any vendor binary provenance.
+    """
+    if info.file_size > MAX_BINARY_MANIFEST_BYTES:
+        raise AarAuditError("Binary AAR manifest exceeds XML size bound")
+    with zipped.open(info) as stream:
+        data = stream.read(MAX_BINARY_MANIFEST_BYTES + 1)
+    if len(data) != info.file_size:
+        raise AarAuditError("Incomplete binary AAR manifest")
+    if len(data) < 8 or struct.unpack_from("<HHI", data, 0) != (3, 8, len(data)):
+        raise AarAuditError("Invalid compiled Android XML document header")
+
+    offset = 8
+    seen_strings = False
+    element_depth = 0
+    start_seen = False
+    end_seen = False
+    while offset < len(data):
+        if len(data) - offset < 8:
+            raise AarAuditError("Truncated compiled Android XML chunk header")
+        kind, header_size, chunk_size = struct.unpack_from("<HHI", data, offset)
+        if (header_size < 8 or chunk_size < header_size or chunk_size % 4 or
+                offset + chunk_size > len(data)):
+            raise AarAuditError("Invalid compiled Android XML chunk bounds")
+        if not seen_strings:
+            if kind != 1 or header_size < 28:
+                raise AarAuditError("Compiled Android XML missing first string pool")
+            seen_strings = True
+        elif kind == 1:
+            raise AarAuditError("Duplicate compiled Android XML string pool")
+        elif kind == 0x0102:  # RES_XML_START_ELEMENT_TYPE
+            if header_size < 16 or chunk_size < header_size + 20:
+                raise AarAuditError("Invalid compiled Android XML start element")
+            start_seen = True
+            element_depth += 1
+            if element_depth > MAX_SOURCE_MANIFEST_DEPTH:
+                raise AarAuditError("Compiled Android XML element nesting exceeded")
+        elif kind == 0x0103:  # RES_XML_END_ELEMENT_TYPE
+            if header_size < 16 or chunk_size < header_size + 8 or element_depth == 0:
+                raise AarAuditError("Invalid compiled Android XML end element")
+            element_depth -= 1
+            end_seen = True
+        elif kind in (0x0180, 0x0100, 0x0101, 0x0104):
+            # Resource IDs, namespace start/end, and CDATA are permitted.
+            if kind != 0x0180 and header_size < 16:
+                raise AarAuditError("Truncated compiled Android XML node header")
+        else:
+            raise AarAuditError("Unexpected compiled Android XML chunk type")
+        offset += chunk_size
+
+    if not (seen_strings and start_seen and end_seen) or element_depth != 0:
+        raise AarAuditError("Compiled Android XML has no balanced element tree")
+
+
 def _validate_required_content(
     zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
 ) -> dict[int, int]:
@@ -327,6 +386,7 @@ def _validate_required_content(
         manifest, re.DOTALL,
     ))
     if binary_xml:
+        _validate_binary_manifest_chunks(zipped, files["AndroidManifest.xml"])
         return class_versions
     if not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")

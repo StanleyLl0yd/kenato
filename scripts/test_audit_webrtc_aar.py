@@ -70,6 +70,26 @@ def java_class(name: str, *, major: int = 61, preview: bool = False) -> bytes:
     )
 
 
+
+def binary_xml_stub() -> bytes:
+    """Synthetic chunk-coherent fixture; does not prove compiled-XML semantics."""
+    text = b"\x08\x08manifest\x00\x00"
+    string_pool = (
+        struct.pack("<HHIIIIII", 1, 28, 44, 1, 0, 0x100, 32, 0)
+        + struct.pack("<I", 0) + text
+    )
+    start_element = (
+        struct.pack("<HHIII", 0x0102, 16, 36, 1, 0xFFFFFFFF)
+        + struct.pack("<IIHHHHHH", 0xFFFFFFFF, 0, 20, 20, 0, 0, 0, 0)
+    )
+    end_element = (
+        struct.pack("<HHIII", 0x0103, 16, 24, 1, 0xFFFFFFFF)
+        + struct.pack("<II", 0xFFFFFFFF, 0)
+    )
+    inner = string_pool + start_element + end_element
+    return struct.pack("<HHI", 3, 8, len(inner) + 8) + inner
+
+
 def aar_file(folder: Path, *, missing: str | None = None,
              tampered_elf: bool = False, truncated_elf: bool = False,
              fake_jar: bool = False, fake_manifest: bool = False,
@@ -142,6 +162,18 @@ def aar_file(folder: Path, *, missing: str | None = None,
             manifest_bytes = b"<manifest><application></manifest>"
         elif forged_manifest == "trailing_junk":
             manifest_bytes = b"<manifest/>garbage"
+        elif forged_manifest == "valid_binary":
+            manifest_bytes = binary_xml_stub()
+        elif forged_manifest == "binary_no_chunks":
+            manifest_bytes = struct.pack("<HHI", 3, 8, 12) + b"\x00" * 4
+        elif forged_manifest == "binary_invalid_chunk":
+            manifest_bytes = bytearray(binary_xml_stub())
+            struct.pack_into("<I", manifest_bytes, 8 + 4, 4096)
+            manifest_bytes = bytes(manifest_bytes)
+        elif forged_manifest == "binary_no_elements":
+            valid = binary_xml_stub()
+            manifest_bytes = valid[:52]
+            manifest_bytes = manifest_bytes[:4] + struct.pack("<I", len(manifest_bytes)) + manifest_bytes[8:]
         elif forged_manifest == "valid_source":
             manifest_bytes = (b'<?xml version="1.0"?>\n'
                               b'<!-- expected -->\n'
@@ -279,6 +311,15 @@ class AarAuditTests(unittest.TestCase):
         nested += b"</application>" * 128 + b"</manifest>"
         with self.assertRaisesRegex(audit.AarAuditError, "nesting depth"):
             audit._validate_source_manifest_xml(nested)
+
+    def test_compiled_android_xml_chunks_must_be_bounded_and_contain_elements(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), forged_manifest="valid_binary")
+            self.assertEqual(3, len(audit.audit_aar(path, report_only=True)["native_paths"]))
+            for forged in ("binary_no_chunks", "binary_invalid_chunk", "binary_no_elements"):
+                path = aar_file(Path(tmp), forged_manifest=forged)
+                with self.subTest(forged=forged), self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
 
     def test_outer_aar_zip_requires_android_compatible_compression(self):
         with tempfile.TemporaryDirectory() as tmp:
