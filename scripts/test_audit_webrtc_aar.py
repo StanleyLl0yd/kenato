@@ -59,6 +59,7 @@ def aar_file(folder: Path, *, missing: str | None = None,
              traversal: bool = False,
              symlink: bool = False, duplicates: bool = False,
              class_major: int = 61, fake_class: bool = False,
+             non_webrtc_class: bool = False,
              preview_class: bool = False, nested_traversal: bool = False,
              nested_duplicates: bool = False, nested_symlink: bool = False,
              empty_classes: bool = False, corrupt_jar: bool = False,
@@ -74,7 +75,10 @@ def aar_file(folder: Path, *, missing: str | None = None,
                 klass = (b"badclass" if fake_class else
                          struct.pack(">IHH", 0xCAFEBABE,
                                      65535 if preview_class else 0, class_major))
-                jar.writestr("org/webrtc/PeerConnection.class", klass)
+                jar.writestr(
+                    "org/example/Dummy.class" if non_webrtc_class else
+                    "org/webrtc/PeerConnection.class", klass
+                )
             if nested_traversal:
                 jar.writestr("../escape.class", b"forbidden")
             if nested_duplicates:
@@ -224,6 +228,14 @@ class AarAuditTests(unittest.TestCase):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
+
+    def test_unrelated_java_class_cannot_impersonate_webrtc_aar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), non_webrtc_class=True)
+            with self.assertRaisesRegex(
+                audit.AarAuditError, "org/webrtc/PeerConnection.class"
+            ):
+                audit.audit_aar(path, report_only=True)
 
     def test_nested_jar_path_alias_symlink_and_truncation_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
