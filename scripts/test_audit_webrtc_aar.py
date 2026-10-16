@@ -63,9 +63,10 @@ def aar_file(folder: Path, *, missing: str | None = None,
              nested_duplicates: bool = False, nested_symlink: bool = False,
              empty_classes: bool = False, corrupt_jar: bool = False,
              malformed_segment: str | None = None,
-             malformed_abi: str = "arm64-v8a") -> Path:
+             malformed_abi: str = "arm64-v8a",
+             outer_compression: int = zipfile.ZIP_DEFLATED) -> Path:
     path = folder / "sample.aar"
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+    with zipfile.ZipFile(path, "w", compression=outer_compression) as output:
         jar_output = io.BytesIO()
         with zipfile.ZipFile(jar_output, "w") as jar:
             jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
@@ -188,6 +189,17 @@ class AarAuditTests(unittest.TestCase):
             ):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_outer_aar_zip_requires_android_compatible_compression(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), outer_compression=zipfile.ZIP_STORED)
+            self.assertEqual(3, len(audit.audit_aar(path, report_only=True)["native_paths"]))
+            for method in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+                path = aar_file(Path(tmp), outer_compression=method)
+                with self.subTest(method=method), self.assertRaisesRegex(
+                    audit.AarAuditError, "Unsupported AAR ZIP compression method"
+                ):
                     audit.audit_aar(path, report_only=True)
 
     def test_traversal_symlink_and_duplicate_zip_paths_are_rejected(self):
