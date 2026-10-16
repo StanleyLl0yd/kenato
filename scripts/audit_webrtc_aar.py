@@ -16,6 +16,7 @@ import tempfile
 import struct
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 REQUIRED_ABIS = {"armeabi-v7a": (1, 40), "arm64-v8a": (2, 183), "x86_64": (2, 62)}
@@ -29,6 +30,7 @@ MAX_JAR_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
 MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
+MAX_SOURCE_MANIFEST_BYTES = 1024 * 1024
 # Bound decompression needed to reach ELF program headers.
 MAX_PROGRAM_HEADER_OFFSET = 1024 * 1024
 
@@ -215,8 +217,28 @@ def _validate_required_content(
         rb"(?:<\?xml\s[^>]*\?>\s*)?(?:<!--.*?-->\s*)*<manifest(?=[\s/>])",
         manifest, re.DOTALL,
     ))
-    if not binary_xml and not text_xml:
+    if binary_xml:
+        return class_versions
+    if not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
+
+    # A matching <manifest prefix is insufficient: malformed closing tags,
+    # incomplete XML and trailing data must not count as valid source XML.
+    # Keep parsing bounded and reject DTD/entity declarations up front.
+    if manifest_size > MAX_SOURCE_MANIFEST_BYTES:
+        raise AarAuditError("Source-form AAR manifest exceeds XML size bound")
+    with zipped.open(files["AndroidManifest.xml"]) as stream:
+        manifest_xml = stream.read(MAX_SOURCE_MANIFEST_BYTES + 1)
+    if len(manifest_xml) > MAX_SOURCE_MANIFEST_BYTES:
+        raise AarAuditError("Source-form AAR manifest exceeds XML size bound")
+    if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", manifest_xml, re.IGNORECASE):
+        raise AarAuditError("DTD or entity declarations in AAR manifest")
+    try:
+        root = ET.fromstring(manifest_xml)
+    except (ET.ParseError, ValueError, LookupError) as error:
+        raise AarAuditError("Malformed source-form AAR manifest XML") from error
+    if root.tag != "manifest":
+        raise AarAuditError("Source-form AAR manifest root is not <manifest>")
     return class_versions
 
 
