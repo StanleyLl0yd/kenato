@@ -110,6 +110,8 @@ def aar_file(folder: Path, *, missing: str | None = None,
              malformed_abi: str = "arm64-v8a",
              outer_file_parent: bool = False, nested_file_parent: bool = False,
              outer_special_entry: bool = False, nested_special_entry: bool = False,
+             outer_deep_path: bool = False, nested_deep_path: bool = False,
+             outer_long_path: bool = False, nested_long_path: bool = False,
              outer_compression: int = zipfile.ZIP_DEFLATED) -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=outer_compression) as output:
@@ -154,6 +156,10 @@ def aar_file(folder: Path, *, missing: str | None = None,
                 entry.create_system = 3
                 entry.external_attr = (stat.S_IFIFO | 0o644) << 16
                 jar.writestr(entry, b"not a normal file")
+            if nested_deep_path:
+                jar.writestr("a/" * audit.MAX_ARCHIVE_PATH_COMPONENTS + "bad.txt", b"x")
+            if nested_long_path:
+                jar.writestr("a" * (audit.MAX_ARCHIVE_PATH_CHARS + 1), b"x")
         jar_bytes = jar_output.getvalue()
         if corrupt_jar:
             jar_bytes = jar_bytes[:24]
@@ -215,6 +221,10 @@ def aar_file(folder: Path, *, missing: str | None = None,
             item.create_system = 3
             item.external_attr = (stat.S_IFIFO | 0o644) << 16
             output.writestr(item, b"not a normal file")
+        if outer_deep_path:
+            output.writestr("a/" * audit.MAX_ARCHIVE_PATH_COMPONENTS + "bad.txt", b"x")
+        if outer_long_path:
+            output.writestr("a" * (audit.MAX_ARCHIVE_PATH_CHARS + 1), b"x")
         if duplicates:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
@@ -372,6 +382,18 @@ class AarAuditTests(unittest.TestCase):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
                     audit.AarAuditError, "Non-regular or inconsistent ZIP entry type"
+                ):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_archive_path_depth_and_length_are_bounded_in_both_zip_layers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for kwargs in (
+                {"outer_deep_path": True}, {"nested_deep_path": True},
+                {"outer_long_path": True}, {"nested_long_path": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
+                    audit.AarAuditError, "path exceeds (component|length) bound"
                 ):
                     audit.audit_aar(path, report_only=True)
 
