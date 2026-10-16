@@ -7,6 +7,7 @@ import importlib.util
 import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -55,6 +56,22 @@ class CandidateEvidenceTests(unittest.TestCase):
                     "https://example.invalid/fixture.aar", destination,
                     opener=lambda *_args, **_kwargs: FakeResponse(b""),
                 )
+
+    def test_native_inventory_is_bounded_and_does_not_extract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture.aar"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("jni/arm64-v8a/libx.so", b"not executable")
+                archive.writestr("jni/x86/libx.so", b"not executable")
+                archive.writestr("misc/file.txt", b"ignored")
+            observed = evidence.native_entry_inventory(path)
+            self.assertEqual(2, observed["total_so_paths"])
+            self.assertEqual(
+                ["jni/arm64-v8a/libx.so", "jni/x86/libx.so"],
+                observed["displayed_so_paths"],
+            )
+            self.assertFalse(observed["paths_truncated"])
+            self.assertFalse((Path(directory) / "jni").exists())
 
     def test_release_asset_digest_mismatch_blocks_collection(self):
         with tempfile.TemporaryDirectory() as directory:
