@@ -126,6 +126,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
     major-version header to Java 17 produces valid compatible bytecode.
     """
     majors: dict[int, int] = {}
+    found_webrtc_api = False
     with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as spool:
         with zipped.open(info) as source:
             transferred = 0
@@ -174,8 +175,14 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                             f"Unsupported Java classfile version {major}.{minor}"
                         )
                     majors[major] = majors.get(major, 0) + 1
+                    # JVM/Android class paths are case-sensitive: a lowercase alias
+                    # is not the actual org.webrtc.PeerConnection API.
+                    if item.filename == "org/webrtc/PeerConnection.class":
+                        found_webrtc_api = True
             if not majors:
                 raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
+            if not found_webrtc_api:
+                raise AarAuditError("WebRTC classes.jar has no org/webrtc/PeerConnection.class")
             if jar.testzip() is not None:
                 raise AarAuditError("Nested JAR CRC verification failed")
     return majors
