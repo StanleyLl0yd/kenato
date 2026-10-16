@@ -122,6 +122,72 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
         raise AarAuditError(f"ELF has no file-backed PT_LOAD for {abi}")
 
 
+
+def _require_webrtc_class_identity(contents: bytes) -> None:
+    """Confirm the named API class declares the same internal JVM class name.
+
+    This is a bounded constant-pool identity check, NOT full JVM/D8
+    verification, source provenance or proof of executable bytecode safety.
+    """
+    view = memoryview(contents)
+    size = len(view)
+    if size < 18:
+        raise AarAuditError("Truncated WebRTC Java class structure")
+
+    def take_u2(offset: int) -> int:
+        if offset + 2 > size:
+            raise AarAuditError("Truncated WebRTC Java constant pool")
+        return struct.unpack_from(">H", view, offset)[0]
+
+    pool_size = take_u2(8)
+    if pool_size < 5:
+        raise AarAuditError("Invalid WebRTC Java constant pool count")
+    strings: dict[int, bytes] = {}
+    classes: dict[int, int] = {}
+    index = 1
+    offset = 10
+    while index < pool_size:
+        if offset >= size:
+            raise AarAuditError("Truncated WebRTC Java constant pool")
+        tag = view[offset]
+        offset += 1
+        if tag == 1:  # CONSTANT_Utf8
+            length = take_u2(offset)
+            offset += 2
+            if offset + length > size:
+                raise AarAuditError("Truncated WebRTC Java UTF8 constant")
+            strings[index] = bytes(view[offset:offset + length])
+            offset += length
+        elif tag in (3, 4, 9, 10, 11, 12, 17, 18):
+            length = 4
+            if offset + length > size:
+                raise AarAuditError("Truncated WebRTC Java constant pool")
+            offset += length
+        elif tag in (5, 6):  # Long/Double occupy two constant-pool slots
+            if offset + 8 > size or index + 1 >= pool_size:
+                raise AarAuditError("Invalid WebRTC Java long/double constant")
+            offset += 8
+            index += 1
+        elif tag in (7, 8, 16, 19, 20):
+            value = take_u2(offset)
+            if tag == 7:
+                classes[index] = value
+            offset += 2
+        elif tag == 15:
+            if offset + 3 > size:
+                raise AarAuditError("Truncated WebRTC Java method handle")
+            offset += 3
+        else:
+            raise AarAuditError("Invalid WebRTC Java constant pool tag")
+        index += 1
+    if offset + 8 > size:
+        raise AarAuditError("Truncated WebRTC Java class declaration")
+    this_class = take_u2(offset + 2)
+    declared = strings.get(classes.get(this_class, -1))
+    if declared != b"org/webrtc/PeerConnection":
+        raise AarAuditError("WebRTC PeerConnection.class declares another class identity")
+
+
 def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[int, int]:
     """Inspect the nested JAR, not just its ZIP signature.
 
@@ -181,6 +247,11 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                     # JVM/Android class paths are case-sensitive: a lowercase alias
                     # is not the actual org.webrtc.PeerConnection API.
                     if item.filename == "org/webrtc/PeerConnection.class":
+                        with jar.open(item) as klass:
+                            class_bytes = klass.read(MAX_JAR_ENTRY_BYTES + 1)
+                        if len(class_bytes) != item.file_size:
+                            raise AarAuditError("Incomplete WebRTC classfile read")
+                        _require_webrtc_class_identity(class_bytes)
                         found_webrtc_api = True
             if not majors:
                 raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
