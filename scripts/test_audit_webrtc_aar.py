@@ -45,6 +45,9 @@ def elf(elf_class: int, machine: int, *, truncated: bool = False,
     else:
         struct.pack_into("<IIQQQQQQ", header, hdr_size,
                          kind, 5, 0, 0, 0, segment_size, segment_memory_size, alignment)
+    if malformed_segment == "noncanonical_stride":
+        header.extend(b"\\x00" * 4)
+        struct.pack_into("<H", header, 42 if elf_class == 1 else 54, ph_size + 4)
     return bytes(header[:20] if truncated else header)
 
 
@@ -139,7 +142,7 @@ class AarAuditTests(unittest.TestCase):
 
     def test_program_header_forgery_and_invalid_load_segments_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for fault in ("no_load", "out_of_bounds", "short_memory", "invalid_alignment"):
+            for fault in ("no_load", "out_of_bounds", "short_memory", "invalid_alignment", "noncanonical_stride"):
                 path = aar_file(Path(tmp), malformed_segment=fault)
                 with self.subTest(fault=fault), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
