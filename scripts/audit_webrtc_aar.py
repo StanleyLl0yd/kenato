@@ -16,7 +16,7 @@ import tempfile
 import struct
 import sys
 import zipfile
-import xml.etree.ElementTree as ET
+import pyexpat
 from pathlib import Path, PurePosixPath
 
 REQUIRED_ABIS = {"armeabi-v7a": (1, 40), "arm64-v8a": (2, 183), "x86_64": (2, 62)}
@@ -31,6 +31,7 @@ MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
 MAX_SOURCE_MANIFEST_BYTES = 1024 * 1024
+MAX_SOURCE_MANIFEST_DEPTH = 128
 # Bound decompression needed to reach ELF program headers.
 MAX_PROGRAM_HEADER_OFFSET = 1024 * 1024
 
@@ -190,6 +191,43 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
     return majors
 
 
+def _validate_source_manifest_xml(manifest_xml: bytes) -> None:
+    """Parse untrusted XML without loading an element tree or expanding DTDs."""
+    parser = pyexpat.ParserCreate()
+    parser.SetParamEntityParsing(pyexpat.XML_PARAM_ENTITY_PARSING_NEVER)
+    depth = 0
+    has_root = False
+
+    def start(name: str, _attributes: dict) -> None:
+        nonlocal depth, has_root
+        if not has_root:
+            if name != "manifest":
+                raise AarAuditError("Source-form AAR manifest root is not <manifest>")
+            has_root = True
+        depth += 1
+        if depth > MAX_SOURCE_MANIFEST_DEPTH:
+            raise AarAuditError("Source-form AAR manifest nesting depth exceeded")
+
+    def end(_name: str) -> None:
+        nonlocal depth
+        depth -= 1
+
+    def reject_declaration(*_args) -> None:
+        raise AarAuditError("DTD or entity declarations in AAR manifest")
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = reject_declaration
+    parser.EntityDeclHandler = reject_declaration
+    parser.ExternalEntityRefHandler = reject_declaration
+    try:
+        parser.Parse(manifest_xml, True)
+    except pyexpat.ExpatError as error:
+        raise AarAuditError("Malformed source-form AAR manifest XML") from error
+    if not has_root or depth != 0:
+        raise AarAuditError("Malformed source-form AAR manifest XML")
+
+
 def _validate_required_content(
     zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
 ) -> dict[int, int]:
@@ -233,12 +271,7 @@ def _validate_required_content(
         raise AarAuditError("Source-form AAR manifest exceeds XML size bound")
     if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", manifest_xml, re.IGNORECASE):
         raise AarAuditError("DTD or entity declarations in AAR manifest")
-    try:
-        root = ET.fromstring(manifest_xml)
-    except (ET.ParseError, ValueError, LookupError) as error:
-        raise AarAuditError("Malformed source-form AAR manifest XML") from error
-    if root.tag != "manifest":
-        raise AarAuditError("Source-form AAR manifest root is not <manifest>")
+    _validate_source_manifest_xml(manifest_xml)
     return class_versions
 
 
