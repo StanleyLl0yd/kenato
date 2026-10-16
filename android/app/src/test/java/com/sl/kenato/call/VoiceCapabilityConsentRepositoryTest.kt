@@ -221,6 +221,36 @@ class VoiceCapabilityConsentRepositoryTest {
     }
 
     @Test
+    fun keyLossBetweenAuthenticatedReadAndEveryConsentMutationMustNotReplaceState() {
+        for (mutation in listOf("rotate", "confirm", "revoke")) {
+            val f = Fixture()
+            val challenge = f.issue()
+            if (mutation == "revoke") {
+                f.repository.confirmSignedProof(
+                    OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true,
+                )
+            }
+            val committedBytes = f.store.bytes!!.copyOf()
+            f.cipher.loseKeyAfterNextDecrypt = true
+            assertThrows(VoiceCapabilityConsentException::class.java) {
+                when (mutation) {
+                    "rotate" -> f.repository.issueChallenge(OWNER, f.peer, f.keys.public.encoded)
+                    "confirm" -> f.repository.confirmSignedProof(
+                        OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true,
+                    )
+                    else -> f.repository.revoke(OWNER, f.peer)
+                }
+            }
+            assertArrayEquals("State overwritten after $mutation lost the key", committedBytes, f.store.bytes)
+            assertTrue("The key-loss injection did not fire", f.cipher.keyDestroyed)
+            assertFalse("Mutation silently regenerated the missing alias", f.cipher.createdNewKeyAfterLoss)
+            assertThrows(VoiceCapabilityConsentException::class.java) {
+                f.newRepository().isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded)
+            }
+        }
+    }
+
+    @Test
     fun restoredEncryptedGrantCannotSurviveIdentityKeyDeletion() {
         val f = Fixture()
         val challenge = f.issue()
@@ -349,25 +379,42 @@ class VoiceCapabilityConsentRepositoryTest {
     private class TestAesGcm : VoiceCapabilityPayloadCipher {
         var keyDestroyed = false
         var failKeyDeletion = false
+        var loseKeyAfterNextDecrypt = false
+        var createdNewKeyAfterLoss = false
         override fun deleteCapabilityKeyForIdentityRecovery() {
             if (failKeyDeletion) throw VoiceCapabilityConsentException("Keystore alias deletion failed")
             keyDestroyed = true
         }
-        private val key = SecretKeySpec(ByteArray(32) { 0x22.toByte() }, "AES")
+        private var key = SecretKeySpec(ByteArray(32) { 0x22.toByte() }, "AES")
         private val random = SecureRandom()
         override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+            if (keyDestroyed) {
+                // Model AndroidKeyStore's dangerous ensureKey() fallback.
+                key = SecretKeySpec(ByteArray(32).also(random::nextBytes), "AES")
+                keyDestroyed = false
+                createdNewKeyAfterLoss = true
+            }
             val nonce = ByteArray(12).also(random::nextBytes)
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
             c.updateAAD(aad)
             return byteArrayOf(1) + nonce + c.doFinal(plaintext)
         }
+        override fun encryptExisting(plaintext: ByteArray, aad: ByteArray): ByteArray {
+            if (keyDestroyed) throw VoiceCapabilityConsentException("Existing capability key unavailable")
+            return encrypt(plaintext, aad)
+        }
         override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
             if (keyDestroyed) throw VoiceCapabilityConsentException("Destroyed capability key unavailable")
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encrypted.copyOfRange(1, 13)))
             c.updateAAD(aad)
-            return c.doFinal(encrypted.copyOfRange(13, encrypted.size))
+            val plaintext = c.doFinal(encrypted.copyOfRange(13, encrypted.size))
+            if (loseKeyAfterNextDecrypt) {
+                loseKeyAfterNextDecrypt = false
+                keyDestroyed = true
+            }
+            return plaintext
         }
     }
 
