@@ -7,6 +7,7 @@ does NOT approve publisher/source lineage, licenses, native CVEs or device loadi
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import hashlib
 import hmac
 import json
@@ -84,13 +85,13 @@ def _require_regular_archive_type(info: zipfile.ZipInfo) -> None:
 
 
 def _reject_file_parent_collisions(entries: list[zipfile.ZipInfo]) -> None:
-    """A regular file cannot also serve as a parent directory."""
-    files = {item.filename.lower() for item in entries if not item.is_dir()}
+    """Detect file-as-parent with bounded sorted-prefix searches."""
+    files = sorted(item.filename.lower() for item in entries if not item.is_dir())
     for name in files:
-        parts = name.split("/")
-        for depth in range(1, len(parts)):
-            if "/".join(parts[:depth]) in files:
-                raise AarAuditError("Archive file/directory path collision")
+        prefix = name + "/"
+        pos = bisect_left(files, prefix)
+        if pos < len(files) and files[pos].startswith(prefix):
+            raise AarAuditError("Archive file/directory path collision")
 
 
 def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> None:
