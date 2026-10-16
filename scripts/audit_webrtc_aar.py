@@ -175,7 +175,9 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                             f"Unsupported Java classfile version {major}.{minor}"
                         )
                     majors[major] = majors.get(major, 0) + 1
-                    if canonical == "org/webrtc/peerconnection.class":
+                    # JVM/Android class paths are case-sensitive: a lowercase alias
+                    # is not the actual org.webrtc.PeerConnection API.
+                    if item.filename == "org/webrtc/PeerConnection.class":
                         found_webrtc_api = True
             if not majors:
                 raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
