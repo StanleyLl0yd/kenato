@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import stat
 import struct
@@ -11,6 +12,7 @@ import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 SOURCE = Path(__file__).with_name("audit_webrtc_aar.py")
 SPEC = importlib.util.spec_from_file_location("kenato_aar_audit", SOURCE)
@@ -125,6 +127,33 @@ class AarAuditTests(unittest.TestCase):
             verified = audit.audit_aar(path, expected_sha256=report["sha256"])
             self.assertTrue(verified["verified_against_expected_sha256"])
             self.assertEqual(4, len(verified["sha256"]) // 16)
+
+    def test_hash_and_validation_use_same_snapshot_after_path_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_dir, replacement_dir = root / "original", root / "replacement"
+            original_dir.mkdir()
+            replacement_dir.mkdir()
+            path = aar_file(original_dir)
+            expected = hashlib.sha256(path.read_bytes()).hexdigest()
+            replacement_bytes = aar_file(replacement_dir, class_major=60).read_bytes()
+            self.assertNotEqual(expected, hashlib.sha256(replacement_bytes).hexdigest())
+
+            original_snapshot = audit._snapshot_and_sha256
+
+            def swap_source_path_after_hash(source: Path, snapshot):
+                result = original_snapshot(source, snapshot)
+                source.write_bytes(replacement_bytes)
+                return result
+
+            with mock.patch.object(
+                audit, "_snapshot_and_sha256", side_effect=swap_source_path_after_hash
+            ):
+                report = audit.audit_aar(path, expected_sha256=expected)
+            self.assertTrue(report["verified_against_expected_sha256"])
+            self.assertEqual(expected, report["sha256"])
+            self.assertEqual({"61": 1}, report["java_classfile_major_counts"])
+            self.assertNotEqual(expected, hashlib.sha256(path.read_bytes()).hexdigest())
 
     def test_missing_digest_is_never_a_valid_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
