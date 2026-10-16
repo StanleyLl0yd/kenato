@@ -134,8 +134,10 @@ For a verified existing `KNS3` plaintext session file, the optional wrapper
 commits an **atomic encrypted replacement before returning** that file to
 the caller. Corrupt, unknown, tampered and inaccessible encrypted states
 fail closed: an unavailable Keystore key is never silently regenerated
-during decryption. Explicit identity recovery clears both the protected
-file and its dedicated key only after successful deletion of the file.
+during decryption. Explicit destructive identity recovery first invalidates
+the dedicated key, then clears the file. A failed file clear leaves the old
+ciphertext unreadable; a failed key deletion leaves the file untouched.
+This still does not protect against replay of valid snapshots before recovery.
 Its backing AtomicFile can be given the bounded AEAD-envelope overhead
 without raising the canonical M3 serialization bound.
 

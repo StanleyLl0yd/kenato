@@ -12,7 +12,7 @@ internal interface SessionStateAtRestCipher {
     /** Fresh IV for every write, authenticated using the domain-separated AAD. */
     fun encrypt(plaintext: ByteArray, aad: ByteArray, allowKeyCreation: Boolean): ByteArray
     fun decrypt(envelope: ByteArray, aad: ByteArray): ByteArray
-    /** Call only after the local state file has been durably cleared. */
+    /** Invalidate the old recovery key before clearing the file; restored ciphertext must stay unreadable. */
     fun deleteKeyForExplicitIdentityRecovery()
 }
 
@@ -123,9 +123,11 @@ internal class EncryptedSessionStateStore(
 
     @Synchronized
     override fun clear(): Boolean {
-        if (!backing.clear()) return false
+        // Explicit destructive recovery is fail-closed. Invalidate the alias first:
+        // if AtomicFile clear subsequently fails, a restored valid KSAE snapshot
+        // must not resurrect an old M3 ratchet or pending voice handoff.
         cipher.deleteKeyForExplicitIdentityRecovery()
-        return true
+        return backing.clear()
     }
 }
 

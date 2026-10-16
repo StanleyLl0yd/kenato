@@ -54,6 +54,19 @@ to send messages until updated. Before activating, users need a clear
 compatibility policy, upgrade/recovery UX and a demonstrated procedure to
 roll **forward** to the supported app, never to copy plaintext into backup.
 
+### Destructive identity recovery ordering (isolated proposal)
+
+The candidate `clear()` invalidates its dedicated Android Keystore alias
+**before** deleting the protected AtomicFile. A successful key invalidation
+must leave any restored old KSAE ciphertext unreadable, even when file
+deletion fails, process death interrupts recovery or old backup bytes return.
+If alias deletion fails, the file is left unchanged and the operation fails.
+The JVM cipher fixture models irreversible deletion and tests both partial
+failure directions and ciphertext restore; Android device proof is still
+mandatory. This is a fail-closed local recovery invariant, **not general
+cryptographic monotonicity**: replay of older valid KSAE while the original
+alias is still present *before* destructive recovery remains unresolved.
+
 ## Remaining design/security blockers before activation
 
 1. Confirm Android 10 and Android 13 (minimum), plus an Android 14+ device,

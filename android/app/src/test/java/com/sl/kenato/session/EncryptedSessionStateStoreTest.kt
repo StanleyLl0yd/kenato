@@ -136,22 +136,29 @@ class EncryptedSessionStateStoreTest {
     }
 
     @Test
-    fun explicitClearDeletesKeystoreKeyOnlyAfterDurableStoreDeletion() {
+    fun explicitClearInvalidatesKeyBeforeFileDeletionAndBlocksRestoredSnapshot() {
         val disk = MemoryDisk()
         val crypto = JvmAesGcm()
         val store = EncryptedSessionStateStore(disk, crypto)
-        store.write(rawState())
+        assertTrue(store.write(rawState()))
+        val prior = disk.bytes!!.copyOf()
+
         disk.failClear = true
         assertFalse(store.clear())
-        assertEquals(0, crypto.deleted)
-        assertTrue(disk.bytes != null)
+        assertEquals(1, crypto.deleted)
+        assertArrayEquals(prior, disk.bytes)
+        // A successful key deletion must render the still-present file unreadable.
+        assertThrows(SessionStateException::class.java) { store.read() }
+
         disk.failClear = false
         assertTrue(store.clear())
         assertNull(disk.bytes)
         assertEquals(1, crypto.deleted)
-        assertNull(store.read())
+        // Restoring an older authentic snapshot must not undo identity recovery.
+        disk.bytes = prior.copyOf()
+        assertThrows(SessionStateException::class.java) { store.read() }
+        assertThrows(SessionStateException::class.java) { store.write(rawState()) }
     }
-
 
     @Test
     fun corruptedEncryptedFormatAndAuthenticatedNoncanonicalPlaintextFailClosed() {
@@ -208,19 +215,24 @@ class EncryptedSessionStateStoreTest {
     }
 
     @Test
-    fun failureToRemoveKeyAfterFileDeletionMustSurfaceAndRemainRecoverable() {
+    fun failedKeystoreDeletionNeverClearsTheFileOrClaimsRecovery() {
         val disk = MemoryDisk()
         val crypto = JvmAesGcm()
         val store = EncryptedSessionStateStore(disk, crypto)
-        assertTrue(store.write(rawState()))
+        val raw = rawState()
+        assertTrue(store.write(raw))
+        val prior = disk.bytes!!.copyOf()
         crypto.failDelete = true
         assertThrows(SessionStateException::class.java) { store.clear() }
-        assertNull(disk.bytes)
+        assertArrayEquals(prior, disk.bytes)
         assertEquals(0, crypto.deleted)
+        assertArrayEquals(raw, store.read()!!)
         crypto.failDelete = false
         assertTrue(store.clear())
         assertEquals(1, crypto.deleted)
         assertNull(store.read())
+        disk.bytes = prior.copyOf()
+        assertThrows(SessionStateException::class.java) { store.read() }
     }
 
     private class MemoryDisk : SessionStateStore {
@@ -248,12 +260,18 @@ class EncryptedSessionStateStoreTest {
         var deleted = 0
         var failDelete = false
         var simulateKeyLossAtEncrypt = false
+        private var keyDestroyed = false
         fun rotateKey() {
             key = SecretKeySpec(ByteArray(32) { 0x48.toByte() }, "AES")
         }
         override fun encrypt(
             plaintext: ByteArray, aad: ByteArray, allowKeyCreation: Boolean,
         ): ByteArray {
+            if (keyDestroyed) {
+                if (!allowKeyCreation) throw SessionStateException("Deleted key cannot encrypt existing state")
+                key = SecretKeySpec(ByteArray(32).also(random::nextBytes), "AES")
+                keyDestroyed = false
+            }
             if (simulateKeyLossAtEncrypt && !allowKeyCreation) {
                 throw SessionStateException("Simulated missing Keystore alias after preflight")
             }
@@ -264,15 +282,20 @@ class EncryptedSessionStateStoreTest {
                 byteArrayOf(12) + nonce + doFinal(plaintext)
             }
         }
-        override fun decrypt(envelope: ByteArray, aad: ByteArray): ByteArray =
-            Cipher.getInstance("AES/GCM/NoPadding").run {
+        override fun decrypt(envelope: ByteArray, aad: ByteArray): ByteArray {
+            if (keyDestroyed) throw SessionStateException("Deleted key cannot decrypt restored KSAE")
+            return Cipher.getInstance("AES/GCM/NoPadding").run {
                 init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, envelope.copyOfRange(1, 13)))
                 updateAAD(aad)
                 doFinal(envelope.copyOfRange(13, envelope.size))
             }
+        }
         override fun deleteKeyForExplicitIdentityRecovery() {
             if (failDelete) throw SessionStateException("Simulated Keystore deletion failure")
-            deleted++
+            if (!keyDestroyed) {
+                keyDestroyed = true
+                deleted++
+            }
         }
     }
 
