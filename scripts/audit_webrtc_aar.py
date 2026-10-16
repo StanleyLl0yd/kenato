@@ -29,6 +29,8 @@ MAX_JAR_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
 MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
+# Bound decompression needed to reach ELF program headers.
+MAX_PROGRAM_HEADER_OFFSET = 1024 * 1024
 
 
 class AarAuditError(ValueError):
@@ -73,9 +75,39 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
         eh_size, ph_size, ph_count = struct.unpack_from("<HHH", header, 52)
         min_ph_size = 56
     if (eh_size != header_size or ph_offset < header_size or
-            ph_size < min_ph_size or not 1 <= ph_count <= 4096 or
+            ph_size != min_ph_size or not 1 <= ph_count <= 4096 or
+            ph_offset > MAX_PROGRAM_HEADER_OFFSET or
             ph_offset + ph_size * ph_count > info.file_size):
         raise AarAuditError(f"Invalid ELF program-header table for {abi}")
+
+    # The header's offsets alone do not prove this is a loadable native ELF:
+    # forged samples can point to an all-zero program-header table.
+    end = ph_offset + ph_size * ph_count
+    with zipped.open(info) as stream:
+        prefix = stream.read(end)
+    if len(prefix) != end:
+        raise AarAuditError(f"Truncated ELF program-header table for {abi}")
+    load_seen = False
+    for index in range(ph_count):
+        offset = ph_offset + index * ph_size
+        if elf_class == 1:
+            (kind, segment_offset, vaddr, _paddr, file_size, memory_size,
+             _flags, alignment) = struct.unpack_from("<IIIIIIII", prefix, offset)
+        else:
+            (kind, _flags, segment_offset, vaddr, _paddr, file_size,
+             memory_size, alignment) = struct.unpack_from("<IIQQQQQQ", prefix, offset)
+        if kind != 1:  # PT_LOAD
+            continue
+        if (file_size == 0 or memory_size < file_size or
+                segment_offset > info.file_size - file_size or
+                (alignment not in (0, 1) and (
+                    alignment & (alignment - 1) != 0 or
+                    (vaddr - segment_offset) % alignment != 0
+                ))):
+            raise AarAuditError(f"Invalid ELF PT_LOAD segment for {abi}")
+        load_seen = True
+    if not load_seen:
+        raise AarAuditError(f"ELF has no file-backed PT_LOAD for {abi}")
 
 
 def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[int, int]:

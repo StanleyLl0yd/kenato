@@ -19,7 +19,8 @@ audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
 
 
-def elf(elf_class: int, machine: int, *, truncated: bool = False) -> bytes:
+def elf(elf_class: int, machine: int, *, truncated: bool = False,
+        malformed_segment: str | None = None) -> bytes:
     hdr_size = 52 if elf_class == 1 else 64
     ph_size = 32 if elf_class == 1 else 56
     header = bytearray(hdr_size + ph_size)
@@ -34,6 +35,19 @@ def elf(elf_class: int, machine: int, *, truncated: bool = False) -> bytes:
     else:
         struct.pack_into("<Q", header, 32, hdr_size)
         struct.pack_into("<HHH", header, 52, hdr_size, ph_size, 1)
+    segment_size = len(header) + (1 if malformed_segment == "out_of_bounds" else 0)
+    segment_memory_size = segment_size - (1 if malformed_segment == "short_memory" else 0)
+    kind = 4 if malformed_segment == "no_load" else 1
+    alignment = 3 if malformed_segment == "invalid_alignment" else 1
+    if elf_class == 1:
+        struct.pack_into("<IIIIIIII", header, hdr_size,
+                         kind, 0, 0, 0, segment_size, segment_memory_size, 5, alignment)
+    else:
+        struct.pack_into("<IIQQQQQQ", header, hdr_size,
+                         kind, 5, 0, 0, 0, segment_size, segment_memory_size, alignment)
+    if malformed_segment == "noncanonical_stride":
+        header.extend(bytes(4))
+        struct.pack_into("<H", header, 42 if elf_class == 1 else 54, ph_size + 4)
     return bytes(header[:20] if truncated else header)
 
 
@@ -45,7 +59,9 @@ def aar_file(folder: Path, *, missing: str | None = None,
              class_major: int = 61, fake_class: bool = False,
              preview_class: bool = False, nested_traversal: bool = False,
              nested_duplicates: bool = False, nested_symlink: bool = False,
-             empty_classes: bool = False, corrupt_jar: bool = False) -> Path:
+             empty_classes: bool = False, corrupt_jar: bool = False,
+             malformed_segment: str | None = None,
+             malformed_abi: str = "arm64-v8a") -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
         jar_output = io.BytesIO()
@@ -78,7 +94,10 @@ def aar_file(folder: Path, *, missing: str | None = None,
         output.writestr("LICENSE", b"test fixture; no upstream license claims")
         for abi, (kind, machine) in audit.REQUIRED_ABIS.items():
             if abi != missing:
-                value = elf(kind, machine, truncated=truncated_elf and abi == "arm64-v8a")
+                value = elf(
+                    kind, machine, truncated=truncated_elf and abi == "arm64-v8a",
+                    malformed_segment=malformed_segment if abi == malformed_abi else None,
+                )
                 if tampered_elf and abi == "arm64-v8a":
                     value = b"not-elf"
                 output.writestr(f"jni/{abi}/libjingle_peerconnection_so.so", value)
@@ -121,6 +140,15 @@ class AarAuditTests(unittest.TestCase):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
+
+    def test_program_header_forgery_and_invalid_load_segments_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for abi in audit.REQUIRED_ABIS:
+                for fault in ("no_load", "out_of_bounds", "short_memory",
+                              "invalid_alignment", "noncanonical_stride"):
+                    path = aar_file(Path(tmp), malformed_segment=fault, malformed_abi=abi)
+                    with self.subTest(abi=abi, fault=fault), self.assertRaises(audit.AarAuditError):
+                        audit.audit_aar(path, report_only=True)
 
     def test_placeholder_elf_jar_and_manifest_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
