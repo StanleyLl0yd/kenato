@@ -150,8 +150,30 @@ def reproduce_published_m150_stamping(original: Path, output: Path) -> int:
     def rewrite_zip(source: zipfile.ZipFile, target: zipfile.ZipFile, *,
                     nested_classes: bool) -> int:
         count = 0
-        for info in source.infolist():
-            data = source.read(info.filename)
+        entries = source.infolist()
+        max_entries = audit.MAX_ENTRIES if nested_classes else audit.MAX_JAR_ENTRIES
+        max_total = (audit.MAX_UNCOMPRESSED_BYTES if nested_classes
+                     else audit.MAX_JAR_UNCOMPRESSED_BYTES)
+        max_entry = audit.MAX_ENTRY_BYTES if nested_classes else audit.MAX_JAR_ENTRY_BYTES
+        if len(entries) > max_entries:
+            raise EvidenceError("Too many entries in WebRTC stamping ZIP")
+        total = 0
+        for info in entries:
+            audit._require_name(info.filename[:-1] if info.is_dir() else info.filename)
+            audit._require_regular_archive_type(info)
+            if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                raise EvidenceError("Unsupported WebRTC stamping ZIP compression")
+            total += info.file_size
+            if info.file_size > max_entry or total > max_total:
+                raise EvidenceError("Oversized WebRTC stamping ZIP input")
+            if info.file_size and (not info.compress_size or
+                                   info.file_size / info.compress_size >
+                                   audit.MAX_COMPRESSION_RATIO):
+                raise EvidenceError("Unsafe WebRTC stamping ZIP compression ratio")
+            with source.open(info) as payload:
+                data = payload.read(max_entry + 1)
+            if len(data) != info.file_size:
+                raise EvidenceError("Incomplete or oversized ZIP entry read")
             if info.filename.endswith(".class"):
                 data, changed = stamped(data)
                 count += changed
@@ -223,7 +245,8 @@ def collect_evidence(directory: Path, *, candidates=CANDIDATES,
                 ),
                 "scope": "post-download class-major stamping only, NOT source reproducibility",
             }
-        except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+        except (zipfile.BadZipFile, OSError, RuntimeError, EvidenceError,
+                audit.AarAuditError) as error:
             stamping_result = {"error": type(error).__name__}
     return {
         "status": "RESEARCH_ONLY_NOT_VENDOR_APPROVAL",
