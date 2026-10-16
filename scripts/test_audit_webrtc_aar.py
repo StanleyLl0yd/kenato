@@ -112,6 +112,8 @@ def aar_file(folder: Path, *, missing: str | None = None,
              outer_special_entry: bool = False, nested_special_entry: bool = False,
              outer_deep_path: bool = False, nested_deep_path: bool = False,
              outer_long_path: bool = False, nested_long_path: bool = False,
+             optional_x86: bool = False, malformed_x86: bool = False,
+             inconsistent_x86: bool = False,
              outer_compression: int = zipfile.ZIP_DEFLATED) -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=outer_compression) as output:
@@ -207,6 +209,12 @@ def aar_file(folder: Path, *, missing: str | None = None,
                 if tampered_elf and abi == "arm64-v8a":
                     value = b"not-elf"
                 output.writestr(f"jni/{abi}/libjingle_peerconnection_so.so", value)
+        if optional_x86:
+            output.writestr("jni/x86/libjingle_peerconnection_so.so", elf(
+                1, 3, malformed_segment="no_load" if malformed_x86 else None
+            ))
+            if inconsistent_x86:
+                output.writestr("jni/x86/libextra.so", elf(1, 3))
         if traversal:
             output.writestr("../escape.so", b"forbidden")
         if symlink:
@@ -283,6 +291,21 @@ class AarAuditTests(unittest.TestCase):
             for kwargs in ({"missing": "x86_64"}, {"tampered_elf": True}):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_optional_x86_is_audited_without_dropping_required_three_abis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), optional_x86=True)
+            report = audit.audit_aar(path, report_only=True)
+            self.assertEqual(["x86"], report["optional_abis_present"])
+            self.assertEqual(4, len(report["native_paths"]))
+            self.assertEqual(3, len(report["required_abis"]))
+            for kwargs in (
+                {"optional_x86": True, "malformed_x86": True},
+                {"optional_x86": True, "inconsistent_x86": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
 
     def test_program_header_forgery_and_invalid_load_segments_fail_closed(self):
