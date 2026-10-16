@@ -75,7 +75,7 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
         eh_size, ph_size, ph_count = struct.unpack_from("<HHH", header, 52)
         min_ph_size = 56
     if (eh_size != header_size or ph_offset < header_size or
-            ph_size < min_ph_size or not 1 <= ph_count <= 4096 or
+            ph_size != min_ph_size or not 1 <= ph_count <= 4096 or
             ph_offset > MAX_PROGRAM_HEADER_OFFSET or
             ph_offset + ph_size * ph_count > info.file_size):
         raise AarAuditError(f"Invalid ELF program-header table for {abi}")
