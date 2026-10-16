@@ -7,6 +7,7 @@ does NOT approve publisher/source lineage, licenses, native CVEs or device loadi
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import hashlib
 import hmac
 import json
@@ -28,6 +29,9 @@ MAX_COMPRESSION_RATIO = 1000
 MAX_JAR_ENTRIES = 50000
 MAX_JAR_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
 MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
+# Bound path normalization and file-parent checks even for hostile ZIP filenames.
+MAX_ARCHIVE_PATH_CHARS = 4096
+MAX_ARCHIVE_PATH_COMPONENTS = 128
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
 MAX_SOURCE_MANIFEST_BYTES = 1024 * 1024
@@ -59,11 +63,35 @@ def _snapshot_and_sha256(path: Path, snapshot) -> tuple[str, int]:
 
 
 def _require_name(name: str) -> None:
-    path = PurePosixPath(name)
+    if len(name) > MAX_ARCHIVE_PATH_CHARS:
+        raise AarAuditError("Archive entry path exceeds length bound")
+    parts = name.split("/")
+    if len(parts) > MAX_ARCHIVE_PATH_COMPONENTS:
+        raise AarAuditError("Archive entry path exceeds component bound")
     if (not name or "\\" in name or name.startswith("/") or
-            any(part in ("", ".", "..") for part in name.split("/")) or
-            path.is_absolute() or "\x00" in name):
+            any(part in ("", ".", "..") for part in parts) or
+            PurePosixPath(name).is_absolute() or "\x00" in name):
         raise AarAuditError("Archive contains unsafe entry path")
+
+
+def _require_regular_archive_type(info: zipfile.ZipInfo) -> None:
+    """Fail closed on Unix FIFO/device/socket entries and inconsistent types."""
+    kind = stat.S_IFMT(info.external_attr >> 16)
+    if kind == stat.S_IFLNK:
+        raise AarAuditError("Symlink entry is not permitted")
+    allowed = (0, stat.S_IFDIR) if info.is_dir() else (0, stat.S_IFREG)
+    if kind not in allowed:
+        raise AarAuditError("Non-regular or inconsistent ZIP entry type")
+
+
+def _reject_file_parent_collisions(entries: list[zipfile.ZipInfo]) -> None:
+    """Detect file-as-parent with bounded sorted-prefix searches."""
+    files = sorted(item.filename.lower() for item in entries if not item.is_dir())
+    for name in files:
+        prefix = name + "/"
+        pos = bisect_left(files, prefix)
+        if pos < len(files) and files[pos].startswith(prefix):
+            raise AarAuditError("Archive file/directory path collision")
 
 
 def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> None:
@@ -220,8 +248,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                 seen.add(canonical)
                 if item.flag_bits & 1:
                     raise AarAuditError("Encrypted nested JAR entry")
-                if stat.S_IFMT(item.external_attr >> 16) == stat.S_IFLNK:
-                    raise AarAuditError("Symlink in nested JAR")
+                _require_regular_archive_type(item)
                 if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
                     raise AarAuditError("Unsupported nested JAR compression")
                 if item.file_size < 0 or item.file_size > MAX_JAR_ENTRY_BYTES:
@@ -258,6 +285,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                 raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
             if not found_webrtc_api:
                 raise AarAuditError("WebRTC classes.jar has no org/webrtc/PeerConnection.class")
+            _reject_file_parent_collisions(entries)
             if jar.testzip() is not None:
                 raise AarAuditError("Nested JAR CRC verification failed")
     return majors
@@ -467,9 +495,7 @@ def _audit_aar_snapshot(
                 # can decode BZIP2/LZMA but accepting them would be misleading.
                 if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
                     raise AarAuditError("Unsupported AAR ZIP compression method")
-                mode = info.external_attr >> 16
-                if stat.S_IFMT(mode) == stat.S_IFLNK:
-                    raise AarAuditError("Symlink entry is not permitted")
+                _require_regular_archive_type(info)
                 if info.file_size < 0 or info.file_size > MAX_ENTRY_BYTES:
                     raise AarAuditError("Archive entry exceeds size bound")
                 total_size += info.file_size
@@ -494,6 +520,7 @@ def _audit_aar_snapshot(
                 if ("license" in info.filename.lower() or
                         "notice" in info.filename.lower()):
                     license_paths.append(info.filename)
+            _reject_file_parent_collisions(entries)
             files = {i.filename: i for i in entries if not i.is_dir()}
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
