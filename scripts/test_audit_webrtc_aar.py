@@ -60,7 +60,8 @@ def aar_file(folder: Path, *, missing: str | None = None,
              preview_class: bool = False, nested_traversal: bool = False,
              nested_duplicates: bool = False, nested_symlink: bool = False,
              empty_classes: bool = False, corrupt_jar: bool = False,
-             malformed_segment: str | None = None) -> Path:
+             malformed_segment: str | None = None,
+             malformed_abi: str = "arm64-v8a") -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
         jar_output = io.BytesIO()
@@ -95,7 +96,7 @@ def aar_file(folder: Path, *, missing: str | None = None,
             if abi != missing:
                 value = elf(
                     kind, machine, truncated=truncated_elf and abi == "arm64-v8a",
-                    malformed_segment=malformed_segment if abi == "arm64-v8a" else None,
+                    malformed_segment=malformed_segment if abi == malformed_abi else None,
                 )
                 if tampered_elf and abi == "arm64-v8a":
                     value = b"not-elf"
@@ -142,10 +143,12 @@ class AarAuditTests(unittest.TestCase):
 
     def test_program_header_forgery_and_invalid_load_segments_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for fault in ("no_load", "out_of_bounds", "short_memory", "invalid_alignment", "noncanonical_stride"):
-                path = aar_file(Path(tmp), malformed_segment=fault)
-                with self.subTest(fault=fault), self.assertRaises(audit.AarAuditError):
-                    audit.audit_aar(path, report_only=True)
+            for abi in audit.REQUIRED_ABIS:
+                for fault in ("no_load", "out_of_bounds", "short_memory",
+                              "invalid_alignment", "noncanonical_stride"):
+                    path = aar_file(Path(tmp), malformed_segment=fault, malformed_abi=abi)
+                    with self.subTest(abi=abi, fault=fault), self.assertRaises(audit.AarAuditError):
+                        audit.audit_aar(path, report_only=True)
 
     def test_placeholder_elf_jar_and_manifest_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
