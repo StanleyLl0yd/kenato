@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -83,6 +84,97 @@ def native_entry_inventory(path: Path) -> dict:
         return {"error": "native inventory ZIP parsing failed"}
 
 
+
+def jar_entry_inventory(path: Path) -> dict:
+    """Bounded Java API layout hints, without treating a nested JAR as trusted."""
+    jars = []
+    try:
+        with zipfile.ZipFile(path) as aar:
+            entries = aar.infolist()
+            if len(entries) > audit.MAX_ENTRIES:
+                return {"error": "too many outer AAR entries"}
+            for item in entries:
+                if item.is_dir() or not item.filename.lower().endswith(".jar"):
+                    continue
+                record = {"jar_path": item.filename[:180]}
+                if item.file_size > audit.MAX_ENTRY_BYTES:
+                    record["error"] = "oversized nested JAR"
+                else:
+                    try:
+                        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as spool:
+                            transferred = 0
+                            with aar.open(item) as source:
+                                while chunk := source.read(128 * 1024):
+                                    transferred += len(chunk)
+                                    if transferred > audit.MAX_ENTRY_BYTES:
+                                        raise EvidenceError("Oversized nested JAR read")
+                                    spool.write(chunk)
+                            spool.seek(0)
+                            with zipfile.ZipFile(spool) as nested:
+                                nested_files = nested.namelist()
+                                if len(nested_files) > audit.MAX_JAR_ENTRIES:
+                                    record["error"] = "too many nested JAR entries"
+                                else:
+                                    class_paths = [name for name in nested_files
+                                                   if name.endswith(".class")]
+                                    record["class_count"] = len(class_paths)
+                                    record["exact_peer_connection_path"] = (
+                                        "org/webrtc/PeerConnection.class" in class_paths
+                                    )
+                                    record["sample_class_paths"] = [
+                                        name[:180] for name in class_paths[:6]
+                                    ]
+                    except (zipfile.BadZipFile, OSError, RuntimeError, EvidenceError):
+                        record["error"] = "nested JAR inventory parse/size failure"
+                jars.append(record)
+                if len(jars) >= 16:
+                    break
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        return {"error": "outer AAR ZIP inventory failed"}
+    return {"jars": jars, "display_limit": 16}
+
+
+def reproduce_published_m150_stamping(original: Path, output: Path) -> int:
+    """Model the reviewed upstream v150 tag's class-major-only ZIP rewrite.
+
+    This checks post-processing lineage only; it does not recompile or validate
+    Java 21 bytecode, reproduce WebRTC source builds, or execute vendor code.
+    """
+    def stamped(data: bytes) -> tuple[bytes, int]:
+        if data[:4] == b"\xca\xfe\xba\xbe" and len(data) >= 8:
+            major = int.from_bytes(data[6:8], "big")
+            if major > 61:
+                return data[:6] + (61).to_bytes(2, "big") + data[8:], 1
+        return data, 0
+
+    def rewrite_zip(source: zipfile.ZipFile, target: zipfile.ZipFile, *,
+                    nested_classes: bool) -> int:
+        count = 0
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename.endswith(".class"):
+                data, changed = stamped(data)
+                count += changed
+            elif nested_classes and info.filename == "classes.jar":
+                jar_input = io.BytesIO(data)
+                jar_output = io.BytesIO()
+                with zipfile.ZipFile(jar_input) as jar, zipfile.ZipFile(
+                    jar_output, "w", zipfile.ZIP_DEFLATED
+                ) as new_jar:
+                    count += rewrite_zip(jar, new_jar, nested_classes=False)
+                data = jar_output.getvalue()
+            new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            new_info.compress_type = info.compress_type
+            new_info.external_attr = info.external_attr
+            target.writestr(new_info, data)
+        return count
+
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(
+        output, "w", zipfile.ZIP_DEFLATED
+    ) as target:
+        return rewrite_zip(source, target, nested_classes=True)
+
+
 def collect_evidence(directory: Path, *, candidates=CANDIDATES,
                      downloader=download_snapshot) -> dict:
     records: dict[str, dict] = {}
@@ -112,10 +204,30 @@ def collect_evidence(directory: Path, *, candidates=CANDIDATES,
             "structural_status": status,
             "structural_details": details,
             "native_entry_inventory": native_entry_inventory(path),
+            "jar_entry_inventory": jar_entry_inventory(path),
             "vendor_approved": False,
         }
+    stamping_result = None
+    if {"m150_maven", "m150_github_original"} <= records.keys():
+        transformed_path = directory / "m150_transformed_probe.aar"
+        try:
+            changed = reproduce_published_m150_stamping(
+                directory / "m150_github_original.aar", transformed_path
+            )
+            transformed_sha = hashlib.sha256(transformed_path.read_bytes()).hexdigest()
+            stamping_result = {
+                "modelled_class_major_rewrites": changed,
+                "modelled_output_sha256": transformed_sha,
+                "matches_maven_sha256": (
+                    transformed_sha == records["m150_maven"]["observed_sha256"]
+                ),
+                "scope": "post-download class-major stamping only, NOT source reproducibility",
+            }
+        except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+            stamping_result = {"error": type(error).__name__}
     return {
         "status": "RESEARCH_ONLY_NOT_VENDOR_APPROVAL",
+        "m150_stamping_lineage_probe": stamping_result,
         "sha256_note": (
             "Maven digests are observations from downloaded bytes, not independently "
             "pinned. GitHub asset digest applies only to the original release AAR."
