@@ -231,6 +231,10 @@ def audit_aar(
                 seen.add(canonical)
                 if info.flag_bits & 1:
                     raise AarAuditError("Encrypted ZIP entries are not permitted")
+                # Android AAR tooling expects stored/deflated ZIP entries; Python
+                # can decode BZIP2/LZMA but accepting them would be misleading.
+                if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise AarAuditError("Unsupported AAR ZIP compression method")
                 mode = info.external_attr >> 16
                 if stat.S_IFMT(mode) == stat.S_IFLNK:
                     raise AarAuditError("Symlink entry is not permitted")
