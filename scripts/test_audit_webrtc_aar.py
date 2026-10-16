@@ -114,6 +114,9 @@ def aar_file(folder: Path, *, missing: str | None = None,
              outer_long_path: bool = False, nested_long_path: bool = False,
              optional_x86: bool = False, malformed_x86: bool = False,
              inconsistent_x86: bool = False,
+             api_in_libs: bool = False, duplicate_api_jar: bool = False,
+             missing_libs_api: bool = False, broken_libs_api: bool = False,
+             unreviewed_libs_path: bool = False,
              outer_compression: int = zipfile.ZIP_DEFLATED) -> Path:
     path = folder / "sample.aar"
     with zipfile.ZipFile(path, "w", compression=outer_compression) as output:
@@ -122,6 +125,7 @@ def aar_file(folder: Path, *, missing: str | None = None,
             jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
             if not empty_classes:
                 class_path = (
+                    "im/conversations/webrtc/NothingToSeeHere.class" if api_in_libs else
                     "org/example/Dummy.class" if non_webrtc_class else
                     "org/webrtc/peerconnection.class" if incorrect_api_case else
                     "org/webrtc/PeerConnection.class"
@@ -166,6 +170,15 @@ def aar_file(folder: Path, *, missing: str | None = None,
         if corrupt_jar:
             jar_bytes = jar_bytes[:24]
         output.writestr("classes.jar", b"fake jar payload" if fake_jar else jar_bytes)
+        if api_in_libs or duplicate_api_jar:
+            extra = io.BytesIO()
+            with zipfile.ZipFile(extra, "w") as library:
+                api_name = ("org/webrtc/Other.class" if missing_libs_api else
+                            "org/webrtc/PeerConnection.class")
+                api_bytes = (b"badclass" if broken_libs_api else java_class(api_name))
+                library.writestr(api_name, api_bytes)
+            library_path = "libs/unreviewed.jar" if unreviewed_libs_path else "libs/libwebrtc.jar"
+            output.writestr(library_path, extra.getvalue())
         manifest_bytes = b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>'
         if fake_manifest:
             manifest_bytes = b"manifest"
@@ -291,6 +304,22 @@ class AarAuditTests(unittest.TestCase):
             for kwargs in ({"missing": "x86_64"}, {"tampered_elf": True}):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True)
+
+    def test_exact_reviewed_nested_libwebrtc_jar_api_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), api_in_libs=True)
+            report = audit.audit_aar(path, report_only=True)
+            self.assertEqual("libs/libwebrtc.jar", report["webrtc_api_jar"])
+            self.assertEqual({"61": 2}, report["java_classfile_major_counts"])
+            for kwargs in (
+                {"api_in_libs": True, "missing_libs_api": True},
+                {"api_in_libs": True, "broken_libs_api": True},
+                {"duplicate_api_jar": True},
+                {"api_in_libs": True, "unreviewed_libs_path": True},
+            ):
+                path = aar_file(Path(tmp), **kwargs)
+                with self.subTest(kwargs=kwargs), self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
 
     def test_optional_x86_is_audited_without_dropping_required_three_abis(self):
