@@ -28,6 +28,9 @@ MAX_COMPRESSION_RATIO = 1000
 MAX_JAR_ENTRIES = 50000
 MAX_JAR_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
 MAX_JAR_ENTRY_BYTES = 32 * 1024 * 1024
+# Bound path normalization and file-parent checks even for hostile ZIP filenames.
+MAX_ARCHIVE_PATH_CHARS = 4096
+MAX_ARCHIVE_PATH_COMPONENTS = 128
 # The pinned application build runs JDK 17. Classfile major 61 is Java 17.
 MAX_CLASSFILE_MAJOR = 61
 MAX_SOURCE_MANIFEST_BYTES = 1024 * 1024
@@ -59,10 +62,14 @@ def _snapshot_and_sha256(path: Path, snapshot) -> tuple[str, int]:
 
 
 def _require_name(name: str) -> None:
-    path = PurePosixPath(name)
+    if len(name) > MAX_ARCHIVE_PATH_CHARS:
+        raise AarAuditError("Archive entry path exceeds length bound")
+    parts = name.split("/")
+    if len(parts) > MAX_ARCHIVE_PATH_COMPONENTS:
+        raise AarAuditError("Archive entry path exceeds component bound")
     if (not name or "\\" in name or name.startswith("/") or
-            any(part in ("", ".", "..") for part in name.split("/")) or
-            path.is_absolute() or "\x00" in name):
+            any(part in ("", ".", "..") for part in parts) or
+            PurePosixPath(name).is_absolute() or "\x00" in name):
         raise AarAuditError("Archive contains unsafe entry path")
 
 
