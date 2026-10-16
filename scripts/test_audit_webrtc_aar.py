@@ -240,6 +240,17 @@ class AarAuditTests(unittest.TestCase):
                 ):
                     audit.audit_aar(path, report_only=True)
 
+    def test_source_manifest_parser_blocks_entities_and_excess_depth(self):
+        with self.assertRaisesRegex(audit.AarAuditError, "DTD or entity"):
+            audit._validate_source_manifest_xml(
+                b'<!DOCTYPE manifest [<!ENTITY payload "expanded">]>'
+                b'<manifest>&payload;</manifest>'
+            )
+        nested = b"<manifest>" + b"<application>" * 128
+        nested += b"</application>" * 128 + b"</manifest>"
+        with self.assertRaisesRegex(audit.AarAuditError, "nesting depth"):
+            audit._validate_source_manifest_xml(nested)
+
     def test_outer_aar_zip_requires_android_compatible_compression(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = aar_file(Path(tmp), outer_compression=zipfile.ZIP_STORED)
