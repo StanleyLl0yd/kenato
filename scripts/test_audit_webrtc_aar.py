@@ -56,6 +56,8 @@ def elf(elf_class: int, machine: int, *, truncated: bool = False,
 def aar_file(folder: Path, *, missing: str | None = None,
              tampered_elf: bool = False, truncated_elf: bool = False,
              fake_jar: bool = False, fake_manifest: bool = False,
+             forged_manifest: str | None = None,
+             double_slash_dir: bool = False, nested_double_slash_dir: bool = False,
              traversal: bool = False,
              symlink: bool = False, duplicates: bool = False,
              class_major: int = 61, fake_class: bool = False,
@@ -81,6 +83,8 @@ def aar_file(folder: Path, *, missing: str | None = None,
                     "org/webrtc/peerconnection.class" if incorrect_api_case else
                     "org/webrtc/PeerConnection.class", klass
                 )
+            if nested_double_slash_dir:
+                jar.writestr("META-INF//", b"")
             if nested_traversal:
                 jar.writestr("../escape.class", b"forbidden")
             if nested_duplicates:
@@ -96,10 +100,16 @@ def aar_file(folder: Path, *, missing: str | None = None,
         if corrupt_jar:
             jar_bytes = jar_bytes[:24]
         output.writestr("classes.jar", b"fake jar payload" if fake_jar else jar_bytes)
-        output.writestr(
-            "AndroidManifest.xml",
-            b"manifest" if fake_manifest else b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>',
-        )
+        manifest_bytes = b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>'
+        if fake_manifest:
+            manifest_bytes = b"manifest"
+        elif forged_manifest == "text":
+            manifest_bytes = b"<placeholder><manifest/></placeholder>"
+        elif forged_manifest == "binary":
+            manifest_bytes = b"\x03\x00\x08\x00" + struct.pack("<I", 4096) + b"fake"
+        output.writestr("AndroidManifest.xml", manifest_bytes)
+        if double_slash_dir:
+            output.writestr("bad//", b"")
         output.writestr("LICENSE", b"test fixture; no upstream license claims")
         for abi, (kind, machine) in audit.REQUIRED_ABIS.items():
             if abi != missing:
@@ -197,6 +207,15 @@ class AarAuditTests(unittest.TestCase):
                 with self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
 
+    def test_manifest_prefix_cannot_impersonate_document_root_or_binary_chunk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for forged in ("text", "binary"):
+                path = aar_file(Path(tmp), forged_manifest=forged)
+                with self.subTest(forged=forged), self.assertRaisesRegex(
+                    audit.AarAuditError, "manifest is not plausible XML"
+                ):
+                    audit.audit_aar(path, report_only=True)
+
     def test_outer_aar_zip_requires_android_compatible_compression(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = aar_file(Path(tmp), outer_compression=zipfile.ZIP_STORED)
@@ -210,7 +229,8 @@ class AarAuditTests(unittest.TestCase):
 
     def test_traversal_symlink_and_duplicate_zip_paths_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for kwargs in ({"traversal": True}, {"symlink": True}, {"duplicates": True}):
+            for kwargs in ({"traversal": True}, {"symlink": True}, {"duplicates": True},
+                           {"double_slash_dir": True}, {"nested_double_slash_dir": True}):
                 path = aar_file(Path(tmp), **kwargs)
                 with self.assertRaises(audit.AarAuditError):
                     audit.audit_aar(path, report_only=True)
