@@ -46,7 +46,7 @@ def elf(elf_class: int, machine: int, *, truncated: bool = False,
         struct.pack_into("<IIQQQQQQ", header, hdr_size,
                          kind, 5, 0, 0, 0, segment_size, segment_memory_size, alignment)
     if malformed_segment == "noncanonical_stride":
-        header.extend(b"\\x00" * 4)
+        header.extend(bytes(4))
         struct.pack_into("<H", header, 42 if elf_class == 1 else 54, ph_size + 4)
     return bytes(header[:20] if truncated else header)
 
