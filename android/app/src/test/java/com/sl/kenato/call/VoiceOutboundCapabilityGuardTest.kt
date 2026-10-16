@@ -164,6 +164,11 @@ class VoiceOutboundCapabilityGuardTest {
         private val key = SecretKeySpec(ByteArray(32) { 0x2A.toByte() }, "AES")
         private val random = SecureRandom()
         override fun deleteCapabilityKeyForIdentityRecovery() = Unit
+        // This JVM-only fixture uses a stable test key; the Android implementation
+        // enforces the no-key-creation replacement rule separately.
+        override fun encryptExisting(plaintext: ByteArray, aad: ByteArray): ByteArray =
+            encrypt(plaintext, aad)
+
         override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
             val nonce = ByteArray(12).also(random::nextBytes)
             return Cipher.getInstance("AES/GCM/NoPadding").run {

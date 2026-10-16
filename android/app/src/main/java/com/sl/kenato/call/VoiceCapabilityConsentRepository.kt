@@ -26,7 +26,10 @@ internal interface VoiceCapabilityKeyLifecycle {
 
 /** Required independent cipher type; never reuse the semantic SDP/ICE encryption key. */
 internal interface VoiceCapabilityPayloadCipher :
-    VoiceSemanticPayloadCipher, VoiceCapabilityKeyLifecycle
+    VoiceSemanticPayloadCipher, VoiceCapabilityKeyLifecycle {
+    /** Replacing authenticated ciphertext must never regenerate a lost Keystore alias. */
+    fun encryptExisting(plaintext: ByteArray, aad: ByteArray): ByteArray
+}
 
 internal fun interface VoiceCapabilityConsentClock {
     fun nowEpochSeconds(): Long
@@ -235,7 +238,7 @@ internal class DurableVoiceCapabilityConsentRepository(
             now + VoiceCapabilityProofWire.MAX_LIFETIME_SECONDS,
             approvedAt = 0L,
         )
-        persist(ownerIdentityId, remaining + entry)
+        persist(ownerIdentityId, remaining + entry, replacingExisting = state != null)
         VoiceCapabilityChallenge(
             ownerIdentityId.copyOf(),
             peerIdentityId.copyOf(),
@@ -257,7 +260,9 @@ internal class DurableVoiceCapabilityConsentRepository(
             throw VoiceCapabilityConsentException("Explicit user approval is required")
         }
         val now = now()
-        val entries = load(ownerIdentityId)?.entries.orEmpty()
+        val state = load(ownerIdentityId)
+            ?: throw VoiceCapabilityConsentException("No outstanding capability challenge")
+        val entries = state.entries
         val pending = entries.singleOrNull {
             it.peerIdentityId.contentEquals(peerIdentityId) && it.approvedAt == 0L
         } ?: throw VoiceCapabilityConsentException("No outstanding capability challenge")
@@ -287,7 +292,7 @@ internal class DurableVoiceCapabilityConsentRepository(
         )
         persist(ownerIdentityId, entries.map {
             if (it.peerIdentityId.contentEquals(peerIdentityId)) confirmed else it
-        })
+        }, replacingExisting = true)
     }
 
     /** Verified only for this currently pinned public key; never consult relay hints. */
@@ -319,7 +324,7 @@ internal class DurableVoiceCapabilityConsentRepository(
         val state = load(ownerIdentityId) ?: return@synchronized
         persist(ownerIdentityId, state.entries.filterNot {
             it.peerIdentityId.contentEquals(peerIdentityId)
-        })
+        }, replacingExisting = true)
     }
 
     /** Must be called together with explicit destructive local identity recovery. */
@@ -333,12 +338,19 @@ internal class DurableVoiceCapabilityConsentRepository(
         }
     }
 
-    private fun persist(owner: ByteArray, entries: List<VoiceCapabilityConsentEntry>) {
+    private fun persist(
+        owner: ByteArray,
+        entries: List<VoiceCapabilityConsentEntry>,
+        replacingExisting: Boolean,
+    ) {
         val plaintext = VoiceCapabilityConsentStateCodec.encode(
             VoiceCapabilityConsentState(owner.copyOf(), entries),
         )
         val encrypted = try {
-            cipher.encrypt(plaintext, aad(owner))
+            // Existing state has already been authenticated by load(). Do not
+            // silently replace its lost Keystore alias after that read.
+            if (replacingExisting) cipher.encryptExisting(plaintext, aad(owner))
+            else cipher.encrypt(plaintext, aad(owner))
         } finally {
             plaintext.fill(0)
         }

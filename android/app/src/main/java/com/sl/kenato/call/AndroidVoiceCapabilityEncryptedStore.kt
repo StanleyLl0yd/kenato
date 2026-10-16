@@ -96,14 +96,24 @@ internal class AtomicFileVoiceCapabilityEncryptedStore(context: Context) : Voice
 internal class AndroidKeystoreVoiceCapabilityCipher : VoiceCapabilityPayloadCipher {
     private val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray =
+        encryptWithKey(plaintext, aad, allowKeyCreation = true)
+
+    override fun encryptExisting(plaintext: ByteArray, aad: ByteArray): ByteArray =
+        encryptWithKey(plaintext, aad, allowKeyCreation = false)
+
+    private fun encryptWithKey(
+        plaintext: ByteArray,
+        aad: ByteArray,
+        allowKeyCreation: Boolean,
+    ): ByteArray {
         requireAad(aad)
         if (plaintext.isEmpty() || plaintext.size > VoiceCapabilityConsentStateCodec.MAX_BYTES) {
             throw VoiceCapabilityConsentException("Capability plaintext size invalid")
         }
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, ensureKey())
+            cipher.init(Cipher.ENCRYPT_MODE, if (allowKeyCreation) ensureKey() else requireExistingKey())
             cipher.updateAAD(aad)
             val result = cipher.doFinal(plaintext)
             val iv = cipher.iv
