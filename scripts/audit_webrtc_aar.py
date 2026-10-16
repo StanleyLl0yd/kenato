@@ -21,6 +21,9 @@ import pyexpat
 from pathlib import Path, PurePosixPath
 
 REQUIRED_ABIS = {"armeabi-v7a": (1, 40), "arm64-v8a": (2, 183), "x86_64": (2, 62)}
+# A vendor may also include 32-bit x86; Kenato's ABI filters do not package it.
+OPTIONAL_ABIS = {"x86": (1, 3)}
+SUPPORTED_ABIS = {**REQUIRED_ABIS, **OPTIONAL_ABIS}
 MAX_AAR_BYTES = 250 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MAX_ENTRY_BYTES = 200 * 1024 * 1024
@@ -99,7 +102,7 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
     # rather than trusting the first 20 bytes of an arbitrary file.
     with zipped.open(info) as stream:
         header = stream.read(64)
-    elf_class, expected_machine = REQUIRED_ABIS[abi]
+    elf_class, expected_machine = SUPPORTED_ABIS[abi]
     header_size = 52 if elf_class == 1 else 64
     if (len(header) < header_size or header[:4] != b"\x7fELF" or
             header[4] != elf_class or header[5] != 1 or header[6] != 1):
@@ -472,7 +475,7 @@ def _audit_aar_snapshot(
     if expected_sha256 is not None and not hmac.compare_digest(expected_sha256, observed):
         raise AarAuditError("AAR SHA-256 does not match independently pinned digest")
 
-    libnames: dict[str, set[str]] = {name: set() for name in REQUIRED_ABIS}
+    libnames: dict[str, set[str]] = {name: set() for name in SUPPORTED_ABIS}
     native_paths = []
     license_paths = []
     class_versions: dict[int, int] = {}
@@ -510,7 +513,7 @@ def _audit_aar_snapshot(
                 parts = PurePosixPath(info.filename).parts
                 if info.filename.lower().endswith(".so"):
                     if (len(parts) != 3 or parts[0] != "jni" or
-                            parts[1] not in REQUIRED_ABIS or
+                            parts[1] not in SUPPORTED_ABIS or
                             not parts[2].startswith("lib")):
                         raise AarAuditError("Unrecognized native library path/ABI")
                     abi = parts[1]
@@ -525,8 +528,13 @@ def _audit_aar_snapshot(
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
             class_versions = _validate_required_content(zipped, files)
-            if not all(libnames.values()) or len({frozenset(x) for x in libnames.values()}) != 1:
+            required_names = [libnames[abi] for abi in REQUIRED_ABIS]
+            if not all(required_names) or len({frozenset(x) for x in required_names}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
+            canonical_names = required_names[0]
+            for abi in OPTIONAL_ABIS:
+                if libnames[abi] and libnames[abi] != canonical_names:
+                    raise AarAuditError(f"Optional ABI libraries inconsistent for {abi}")
             if zipped.testzip() is not None:
                 raise AarAuditError("AAR entry CRC verification failed")
     except (zipfile.BadZipFile, OSError, RuntimeError, EOFError) as error:
@@ -538,6 +546,7 @@ def _audit_aar_snapshot(
         "file_bytes": snapshot_bytes,
         "uncompressed_bytes": total_size,
         "required_abis": sorted(REQUIRED_ABIS),
+        "optional_abis_present": sorted(abi for abi in OPTIONAL_ABIS if libnames[abi]),
         "native_paths": sorted(native_paths),
         "java_classfile_major_counts": {str(k): class_versions[k] for k in sorted(class_versions)},
         "embedded_license_or_notice_paths": sorted(license_paths),
