@@ -12,6 +12,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -62,6 +63,26 @@ def download_snapshot(url: str, destination: Path, *,
     return digest.hexdigest(), size
 
 
+def native_entry_inventory(path: Path) -> dict:
+    """Read only ZIP directory metadata, never extract or load a native library."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            if len(entries) > audit.MAX_ENTRIES:
+                return {"error": "too many ZIP entries for evidence listing"}
+            native = sorted(
+                item.filename for item in entries
+                if not item.is_dir() and item.filename.lower().endswith(".so")
+            )
+            return {
+                "total_so_paths": len(native),
+                "displayed_so_paths": [name[:180] for name in native[:64]],
+                "paths_truncated": len(native) > 64 or any(len(x) > 180 for x in native[:64]),
+            }
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        return {"error": "native inventory ZIP parsing failed"}
+
+
 def collect_evidence(directory: Path, *, candidates=CANDIDATES,
                      downloader=download_snapshot) -> dict:
     records: dict[str, dict] = {}
@@ -90,6 +111,7 @@ def collect_evidence(directory: Path, *, candidates=CANDIDATES,
             "checked_against_release_asset_digest": pinned_release_digest is not None,
             "structural_status": status,
             "structural_details": details,
+            "native_entry_inventory": native_entry_inventory(path),
             "vendor_approved": False,
         }
     return {
