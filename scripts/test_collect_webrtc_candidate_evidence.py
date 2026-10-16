@@ -73,6 +73,37 @@ class CandidateEvidenceTests(unittest.TestCase):
             self.assertFalse(observed["paths_truncated"])
             self.assertFalse((Path(directory) / "jni").exists())
 
+    def test_nested_jar_api_inventory_finds_separate_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture.aar"
+            package_jar = io.BytesIO()
+            with zipfile.ZipFile(package_jar, "w") as nested:
+                nested.writestr("org/webrtc/PeerConnection.class", b"fixture")
+            with zipfile.ZipFile(path, "w") as outer:
+                outer.writestr("classes.jar", b"not the API")
+                outer.writestr("libs/libwebrtc.jar", package_jar.getvalue())
+            result = evidence.jar_entry_inventory(path)
+            self.assertEqual(2, len(result["jars"]))
+            self.assertTrue(result["jars"][1]["exact_peer_connection_path"])
+
+    def test_modelled_m150_major_stamping_is_header_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            initial = root / "input.aar"
+            result = root / "output.aar"
+            klass = b"\xca\xfe\xba\xbe" + b"\x00\x00\x00\x41" + b"payload"
+            nested = io.BytesIO()
+            with zipfile.ZipFile(nested, "w") as jar:
+                jar.writestr("org/webrtc/PeerConnection.class", klass)
+            with zipfile.ZipFile(initial, "w") as aar:
+                aar.writestr("classes.jar", nested.getvalue())
+            count = evidence.reproduce_published_m150_stamping(initial, result)
+            self.assertEqual(1, count)
+            with zipfile.ZipFile(result) as aar:
+                with zipfile.ZipFile(io.BytesIO(aar.read("classes.jar"))) as jar:
+                    updated = jar.read("org/webrtc/PeerConnection.class")
+            self.assertEqual(b"\xca\xfe\xba\xbe\x00\x00\x00\x3d" + b"payload", updated)
+
     def test_release_asset_digest_mismatch_blocks_collection(self):
         with tempfile.TemporaryDirectory() as directory:
             def untrusted_source(_url: str, target: Path) -> tuple[str, int]:
