@@ -220,7 +220,7 @@ def _require_webrtc_class_identity(contents: bytes) -> None:
         raise AarAuditError("WebRTC PeerConnection.class declares another class identity")
 
 
-def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[int, int]:
+def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[dict[int, int], bool]:
     """Inspect the nested JAR, not just its ZIP signature.
 
     This proves bounded ZIP/classfile structure, NOT that lowering a Java 21
@@ -234,7 +234,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
             while block := source.read(128 * 1024):
                 transferred += len(block)
                 if transferred > MAX_ENTRY_BYTES:
-                    raise AarAuditError("Nested classes.jar exceeds bounded input")
+                    raise AarAuditError("Nested JAR exceeds bounded input")
                 spool.write(block)
         spool.seek(0)
         with zipfile.ZipFile(spool) as jar:
@@ -285,13 +285,11 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                         _require_webrtc_class_identity(class_bytes)
                         found_webrtc_api = True
             if not majors:
-                raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
-            if not found_webrtc_api:
-                raise AarAuditError("WebRTC classes.jar has no org/webrtc/PeerConnection.class")
+                raise AarAuditError("Nested JAR contains no Java classfiles")
             _reject_file_parent_collisions(entries)
             if jar.testzip() is not None:
                 raise AarAuditError("Nested JAR CRC verification failed")
-    return majors
+    return majors, found_webrtc_api
 
 
 def _validate_source_manifest_xml(manifest_xml: bytes) -> None:
@@ -391,13 +389,27 @@ def _validate_binary_manifest_chunks(zipped: zipfile.ZipFile, info: zipfile.ZipI
 
 def _validate_required_content(
     zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
-) -> dict[int, int]:
-    # Names and first four signature bytes alone do not authenticate nested ZIPs.
-    with zipped.open(files["classes.jar"]) as stream:
-        jar_prefix = stream.read(4)
-    if jar_prefix != b"PK\x03\x04":
-        raise AarAuditError("AAR classes.jar is not a JAR/ZIP")
-    class_versions = _audit_classes_jar(zipped, files["classes.jar"])
+) -> tuple[dict[int, int], str]:
+    # Some valid Android AARs keep the public WebRTC API in libs/libwebrtc.jar
+    # while classes.jar holds wrapper metadata. Do not accept arbitrary JAR paths.
+    allowed_jars = {"classes.jar", "libs/libwebrtc.jar"}
+    if any(name.lower().endswith(".jar") and name not in allowed_jars for name in files):
+        raise AarAuditError("Unreviewed nested AAR JAR path")
+    class_versions: dict[int, int] = {}
+    api_jar_paths: list[str] = []
+    for jar_path in ("classes.jar", "libs/libwebrtc.jar"):
+        if jar_path not in files:
+            continue
+        with zipped.open(files[jar_path]) as stream:
+            if stream.read(4) != b"PK\x03\x04":
+                raise AarAuditError("AAR nested Java library is not a JAR/ZIP")
+        jar_versions, has_api = _audit_classes_jar(zipped, files[jar_path])
+        for major, count in jar_versions.items():
+            class_versions[major] = class_versions.get(major, 0) + count
+        if has_api:
+            api_jar_paths.append(jar_path)
+    if len(api_jar_paths) != 1:
+        raise AarAuditError("WebRTC PeerConnection.class missing or duplicated across JARs")
     with zipped.open(files["AndroidManifest.xml"]) as stream:
         manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
     # Compiled Android XML starts with a RES_XML_TYPE chunk header. A magic
@@ -418,7 +430,7 @@ def _validate_required_content(
     ))
     if binary_xml:
         _validate_binary_manifest_chunks(zipped, files["AndroidManifest.xml"])
-        return class_versions
+        return class_versions, api_jar_paths[0]
     if not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
 
@@ -434,7 +446,7 @@ def _validate_required_content(
     if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", manifest_xml, re.IGNORECASE):
         raise AarAuditError("DTD or entity declarations in AAR manifest")
     _validate_source_manifest_xml(manifest_xml)
-    return class_versions
+    return class_versions, api_jar_paths[0]
 
 
 def audit_aar(
@@ -479,6 +491,7 @@ def _audit_aar_snapshot(
     native_paths = []
     license_paths = []
     class_versions: dict[int, int] = {}
+    api_jar_path = ""
     total_size = 0
     seen: set[str] = set()
     try:
@@ -527,7 +540,7 @@ def _audit_aar_snapshot(
             files = {i.filename: i for i in entries if not i.is_dir()}
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
-            class_versions = _validate_required_content(zipped, files)
+            class_versions, api_jar_path = _validate_required_content(zipped, files)
             required_names = [libnames[abi] for abi in REQUIRED_ABIS]
             if not all(required_names) or len({frozenset(x) for x in required_names}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
@@ -548,6 +561,7 @@ def _audit_aar_snapshot(
         "required_abis": sorted(REQUIRED_ABIS),
         "optional_abis_present": sorted(abi for abi in OPTIONAL_ABIS if libnames[abi]),
         "native_paths": sorted(native_paths),
+        "webrtc_api_jar": api_jar_path,
         "java_classfile_major_counts": {str(k): class_versions[k] for k in sorted(class_versions)},
         "embedded_license_or_notice_paths": sorted(license_paths),
         "remaining_reviews": [
