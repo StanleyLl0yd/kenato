@@ -143,7 +143,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
             seen: set[str] = set()
             total = 0
             for item in entries:
-                _require_name(item.filename.rstrip("/") if item.is_dir() else item.filename)
+                _require_name(item.filename[:-1] if item.is_dir() else item.filename)
                 canonical = item.filename.rstrip("/").lower()
                 if canonical in seen:
                     raise AarAuditError("Duplicate/case-aliased nested JAR entry")
@@ -199,8 +199,22 @@ def _validate_required_content(
     class_versions = _audit_classes_jar(zipped, files["classes.jar"])
     with zipped.open(files["AndroidManifest.xml"]) as stream:
         manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
-    binary_xml = manifest.startswith(b"\x03\x00\x08\x00")
-    text_xml = manifest.startswith(b"<") and b"<manifest" in manifest
+    # Compiled Android XML starts with a RES_XML_TYPE chunk header. A magic
+    # prefix alone does not prove a plausible chunk length.
+    manifest_size = files["AndroidManifest.xml"].file_size
+    binary_xml = (
+        len(manifest) >= 8
+        and manifest.startswith(b"\x03\x00\x08\x00")
+        and manifest_size >= 16
+        and manifest_size % 4 == 0
+        and struct.unpack_from("<I", manifest, 4)[0] == manifest_size
+    )
+    # Common source-form manifests can have an XML declaration or comments,
+    # but the first document element must still be <manifest>.
+    text_xml = bool(re.match(
+        rb"(?:<\?xml\s[^>]*\?>\s*)?(?:<!--.*?-->\s*)*<manifest(?=[\s/>])",
+        manifest, re.DOTALL,
+    ))
     if not binary_xml and not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
     return class_versions
@@ -256,7 +270,7 @@ def _audit_aar_snapshot(
             if len(entries) > MAX_ENTRIES:
                 raise AarAuditError("Too many archive entries")
             for info in entries:
-                _require_name(info.filename.rstrip("/") if info.is_dir() else info.filename)
+                _require_name(info.filename[:-1] if info.is_dir() else info.filename)
                 canonical = info.filename.rstrip("/").lower()
                 if canonical in seen:
                     raise AarAuditError("Duplicate/case-alias archive path")
