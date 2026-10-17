@@ -220,8 +220,10 @@ internal class M45AcceptanceRuntime(
             val appContext = context.applicationContext
             val identityRepository = LocalIdentityRepository.create(appContext)
             val contactRepository = ContactRepository.create(appContext, serviceOrigin)
-            val sessionCoordinator = SessionCoordinator.create(appContext, serviceOrigin)
-            val messagingBoundary = AndroidM45MessagingBoundary(appContext, serviceOrigin)
+            // M3 bootstrap and M4 messaging must not race through distinct repository locks.
+            val sessionRepository = LocalSessionRepository.create(appContext)
+            val sessionCoordinator = SessionCoordinator.create(appContext, serviceOrigin, sessionRepository)
+            val messagingBoundary = AndroidM45MessagingBoundary(appContext, serviceOrigin, sessionRepository)
 
             return M45AcceptanceRuntime(
                 identity = object : M45IdentityBoundary {
@@ -263,10 +265,10 @@ internal class M45AcceptanceRuntime(
 private class AndroidM45MessagingBoundary(
     context: Context,
     serviceOrigin: URI,
+    private val sessionRepository: LocalSessionRepository,
 ) : M45MessagingBoundary {
     private val identityRepository = LocalIdentityRepository.create(context)
     private val diagnosticJournal = M45DiagnosticJournal(context)
-    private val sessionRepository = LocalSessionRepository.create(context)
     private val history = ConversationHistoryRepository(AtomicFileConversationHistoryStore(context))
     private val recovery = MessagingRecoveryCoordinator(
         sessions = LocalMessagingSessionHandoffRepository(sessionRepository),

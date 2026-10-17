@@ -978,10 +978,34 @@ internal class LocalSessionRepository(
         private const val FIRST_ONE_TIME_KEY_ID = 1L
         private const val TARGET_ONE_TIME_KEYS = 32
 
-        fun create(context: Context): LocalSessionRepository = LocalSessionRepository(
-            engine = JniSessionEngine(),
-            keyBackend = AndroidSessionPickleKeyBackend(),
-            stateStore = AtomicFileSessionStateStore(context),
-        )
+        // All Android factory callers targeting the same app storage use one process-local
+        // M3 monitor. Do not equate this with inter-process or multi-store transactions.
+        private val applicationOwners = SessionRepositoryRegistry<LocalSessionRepository>()
+
+        fun create(context: Context): LocalSessionRepository {
+            val applicationContext = context.applicationContext
+            val storageDirectory = applicationContext.noBackupFilesDir.canonicalPath
+            return applicationOwners.getOrCreate(storageDirectory) {
+                LocalSessionRepository(
+                    engine = JniSessionEngine(),
+                    keyBackend = AndroidSessionPickleKeyBackend(),
+                    stateStore = AtomicFileSessionStateStore(applicationContext),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Single owner per app-process storage location. It does not lock another process and does not
+ * make separate M2/contact/history writes part of an M3 transaction.
+ */
+internal class SessionRepositoryRegistry<T : Any> {
+    private val owners = HashMap<String, T>()
+
+    @Synchronized
+    fun getOrCreate(storageDirectory: String, create: () -> T): T {
+        require(storageDirectory.isNotBlank()) { "M3 storage location is required" }
+        return owners.getOrPut(storageDirectory, create)
     }
 }

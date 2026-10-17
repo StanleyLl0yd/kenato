@@ -114,6 +114,30 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun activeWssIsPausedAroundBothM3SessionEstablishmentDirections() {
+        for (inbound in listOf(false, true)) {
+            val fixture = Fixture()
+            val runtime = fixture.runtime()
+            runtime.startMessaging()
+            fixture.events.clear()
+
+            if (inbound) {
+                runtime.claimAndEstablish("kenato://invite/test")
+            } else {
+                runtime.redeemAndEstablish("kenato://invite/test")
+            }
+            val expected = if (inbound) listOf(
+                "messaging.stop", "identity.load", "sessions.claim", "messaging.start",
+            ) else listOf(
+                "messaging.stop", "identity.load", "contacts.redeem",
+                "sessions.outbound", "messaging.start",
+            )
+            assertEquals(expected, fixture.events)
+            assertTrue(fixture.messaging.started)
+        }
+    }
+
+    @Test
     fun failedTrustMutationLeavesMessagingStopped() {
         val fixture = Fixture()
         val runtime = fixture.runtime()
