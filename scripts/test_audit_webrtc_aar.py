@@ -175,7 +175,7 @@ def aar_file(folder: Path, *, missing: str | None = None,
             with zipfile.ZipFile(extra, "w") as library:
                 api_name = ("org/webrtc/Other.class" if missing_libs_api else
                             "org/webrtc/PeerConnection.class")
-                api_bytes = (b"badclass" if broken_libs_api else java_class(api_name))
+                api_bytes = (b"badclass" if broken_libs_api else java_class(api_name[:-6]))
                 library.writestr(api_name, api_bytes)
             library_path = "libs/unreviewed.jar" if unreviewed_libs_path else "libs/libwebrtc.jar"
             output.writestr(library_path, extra.getvalue())
