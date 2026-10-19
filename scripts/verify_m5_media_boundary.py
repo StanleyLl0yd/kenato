@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import sys
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from pathlib import Path
 
 ANDROID_NAME = "{http://schemas.android.com/apk/res/android}name"
