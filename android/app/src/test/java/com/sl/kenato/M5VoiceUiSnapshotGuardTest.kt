@@ -46,6 +46,44 @@ class M5VoiceUiSnapshotGuardTest {
     }
 
     @Test
+    fun backgroundEpochRejectsEntireOutdatedSnapshotNotOnlyQr() {
+        val current = M45AcceptanceUiState(
+            selectedPeerIdentityId = "contact-new",
+            voiceUiEpoch = 12,
+            messages = emptyList(),
+            voiceCapabilityConfirmed = false,
+            busy = true,
+            notice = "Current operation",
+        )
+        val old = current.copy(
+            selectedPeerIdentityId = "contact-old",
+            voiceUiEpoch = 11,
+            voiceChallengeQr = "old-challenge",
+            voiceProofQr = "old-proof",
+            voiceCapabilityConfirmed = true,
+            busy = false,
+            notice = "Obsolete result",
+        )
+        val updated = M5VoiceUiSnapshotGuard.redactStaleProofs(current, old, true)
+        assertEquals("contact-new", updated.selectedPeerIdentityId)
+        assertEquals(false, updated.voiceCapabilityConfirmed)
+        assertEquals(12L, updated.voiceUiEpoch)
+        assertEquals("Current operation", updated.notice)
+        assertEquals(false, updated.busy)
+        assertNull(updated.voiceChallengeQr)
+        assertNull(updated.voiceProofQr)
+    }
+
+    @Test
+    fun sameEpochLegitimateContactSelectionStillApplies() {
+        val old = M45AcceptanceUiState(selectedPeerIdentityId = "old", voiceUiEpoch = 3)
+        val selected = old.copy(selectedPeerIdentityId = "new", voiceCapabilityConfirmed = true)
+        val updated = M5VoiceUiSnapshotGuard.redactStaleProofs(old, selected, true)
+        assertEquals("new", updated.selectedPeerIdentityId)
+        assertEquals(true, updated.voiceCapabilityConfirmed)
+    }
+
+    @Test
     fun changedSelectedContactNeverReceivesPreviousContactQr() {
         val current = M45AcceptanceUiState(selectedPeerIdentityId = "contact-b", voiceUiEpoch = 6)
         val outdated = current.copy(
