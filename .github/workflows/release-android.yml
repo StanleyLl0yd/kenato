@@ -231,6 +231,11 @@ jobs:
       - name: Test and lint release source
         run: ./gradlew :android:app:testDebugUnitTest :android:app:lintRelease --stacktrace
 
+      - name: Verify M5 pre-approval media boundary
+        run: |
+          python3 scripts/verify_m5_media_boundary.py
+          python3 scripts/test_verify_m5_media_boundary.py
+
       - name: Restore and validate release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
