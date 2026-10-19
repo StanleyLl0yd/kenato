@@ -21,6 +21,9 @@ import pyexpat
 from pathlib import Path, PurePosixPath
 
 REQUIRED_ABIS = {"armeabi-v7a": (1, 40), "arm64-v8a": (2, 183), "x86_64": (2, 62)}
+# A vendor may also include 32-bit x86; Kenato's ABI filters do not package it.
+OPTIONAL_ABIS = {"x86": (1, 3)}
+SUPPORTED_ABIS = {**REQUIRED_ABIS, **OPTIONAL_ABIS}
 MAX_AAR_BYTES = 250 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MAX_ENTRY_BYTES = 200 * 1024 * 1024
@@ -99,7 +102,7 @@ def _validate_elf(zipped: zipfile.ZipFile, info: zipfile.ZipInfo, abi: str) -> N
     # rather than trusting the first 20 bytes of an arbitrary file.
     with zipped.open(info) as stream:
         header = stream.read(64)
-    elf_class, expected_machine = REQUIRED_ABIS[abi]
+    elf_class, expected_machine = SUPPORTED_ABIS[abi]
     header_size = 52 if elf_class == 1 else 64
     if (len(header) < header_size or header[:4] != b"\x7fELF" or
             header[4] != elf_class or header[5] != 1 or header[6] != 1):
@@ -217,7 +220,7 @@ def _require_webrtc_class_identity(contents: bytes) -> None:
         raise AarAuditError("WebRTC PeerConnection.class declares another class identity")
 
 
-def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[int, int]:
+def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[dict[int, int], bool]:
     """Inspect the nested JAR, not just its ZIP signature.
 
     This proves bounded ZIP/classfile structure, NOT that lowering a Java 21
@@ -231,7 +234,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
             while block := source.read(128 * 1024):
                 transferred += len(block)
                 if transferred > MAX_ENTRY_BYTES:
-                    raise AarAuditError("Nested classes.jar exceeds bounded input")
+                    raise AarAuditError("Nested JAR exceeds bounded input")
                 spool.write(block)
         spool.seek(0)
         with zipfile.ZipFile(spool) as jar:
@@ -282,13 +285,11 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> dict[i
                         _require_webrtc_class_identity(class_bytes)
                         found_webrtc_api = True
             if not majors:
-                raise AarAuditError("WebRTC classes.jar contains no Java classfiles")
-            if not found_webrtc_api:
-                raise AarAuditError("WebRTC classes.jar has no org/webrtc/PeerConnection.class")
+                raise AarAuditError("Nested JAR contains no Java classfiles")
             _reject_file_parent_collisions(entries)
             if jar.testzip() is not None:
                 raise AarAuditError("Nested JAR CRC verification failed")
-    return majors
+    return majors, found_webrtc_api
 
 
 def _validate_source_manifest_xml(manifest_xml: bytes) -> None:
@@ -388,13 +389,27 @@ def _validate_binary_manifest_chunks(zipped: zipfile.ZipFile, info: zipfile.ZipI
 
 def _validate_required_content(
     zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
-) -> dict[int, int]:
-    # Names and first four signature bytes alone do not authenticate nested ZIPs.
-    with zipped.open(files["classes.jar"]) as stream:
-        jar_prefix = stream.read(4)
-    if jar_prefix != b"PK\x03\x04":
-        raise AarAuditError("AAR classes.jar is not a JAR/ZIP")
-    class_versions = _audit_classes_jar(zipped, files["classes.jar"])
+) -> tuple[dict[int, int], str]:
+    # Some valid Android AARs keep the public WebRTC API in libs/libwebrtc.jar
+    # while classes.jar holds wrapper metadata. Do not accept arbitrary JAR paths.
+    allowed_jars = {"classes.jar", "libs/libwebrtc.jar"}
+    if any(name.lower().endswith(".jar") and name not in allowed_jars for name in files):
+        raise AarAuditError("Unreviewed nested AAR JAR path")
+    class_versions: dict[int, int] = {}
+    api_jar_paths: list[str] = []
+    for jar_path in ("classes.jar", "libs/libwebrtc.jar"):
+        if jar_path not in files:
+            continue
+        with zipped.open(files[jar_path]) as stream:
+            if stream.read(4) != b"PK\x03\x04":
+                raise AarAuditError("AAR nested Java library is not a JAR/ZIP")
+        jar_versions, has_api = _audit_classes_jar(zipped, files[jar_path])
+        for major, count in jar_versions.items():
+            class_versions[major] = class_versions.get(major, 0) + count
+        if has_api:
+            api_jar_paths.append(jar_path)
+    if len(api_jar_paths) != 1:
+        raise AarAuditError("WebRTC org/webrtc/PeerConnection.class missing or duplicated across JARs")
     with zipped.open(files["AndroidManifest.xml"]) as stream:
         manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
     # Compiled Android XML starts with a RES_XML_TYPE chunk header. A magic
@@ -415,7 +430,7 @@ def _validate_required_content(
     ))
     if binary_xml:
         _validate_binary_manifest_chunks(zipped, files["AndroidManifest.xml"])
-        return class_versions
+        return class_versions, api_jar_paths[0]
     if not text_xml:
         raise AarAuditError("AAR manifest is not plausible XML")
 
@@ -431,7 +446,7 @@ def _validate_required_content(
     if re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", manifest_xml, re.IGNORECASE):
         raise AarAuditError("DTD or entity declarations in AAR manifest")
     _validate_source_manifest_xml(manifest_xml)
-    return class_versions
+    return class_versions, api_jar_paths[0]
 
 
 def audit_aar(
@@ -472,10 +487,11 @@ def _audit_aar_snapshot(
     if expected_sha256 is not None and not hmac.compare_digest(expected_sha256, observed):
         raise AarAuditError("AAR SHA-256 does not match independently pinned digest")
 
-    libnames: dict[str, set[str]] = {name: set() for name in REQUIRED_ABIS}
+    libnames: dict[str, set[str]] = {name: set() for name in SUPPORTED_ABIS}
     native_paths = []
     license_paths = []
     class_versions: dict[int, int] = {}
+    api_jar_path = ""
     total_size = 0
     seen: set[str] = set()
     try:
@@ -510,7 +526,7 @@ def _audit_aar_snapshot(
                 parts = PurePosixPath(info.filename).parts
                 if info.filename.lower().endswith(".so"):
                     if (len(parts) != 3 or parts[0] != "jni" or
-                            parts[1] not in REQUIRED_ABIS or
+                            parts[1] not in SUPPORTED_ABIS or
                             not parts[2].startswith("lib")):
                         raise AarAuditError("Unrecognized native library path/ABI")
                     abi = parts[1]
@@ -524,9 +540,14 @@ def _audit_aar_snapshot(
             files = {i.filename: i for i in entries if not i.is_dir()}
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
-            class_versions = _validate_required_content(zipped, files)
-            if not all(libnames.values()) or len({frozenset(x) for x in libnames.values()}) != 1:
+            class_versions, api_jar_path = _validate_required_content(zipped, files)
+            required_names = [libnames[abi] for abi in REQUIRED_ABIS]
+            if not all(required_names) or len({frozenset(x) for x in required_names}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
+            canonical_names = required_names[0]
+            for abi in OPTIONAL_ABIS:
+                if libnames[abi] and libnames[abi] != canonical_names:
+                    raise AarAuditError(f"Optional ABI libraries inconsistent for {abi}")
             if zipped.testzip() is not None:
                 raise AarAuditError("AAR entry CRC verification failed")
     except (zipfile.BadZipFile, OSError, RuntimeError, EOFError) as error:
@@ -538,7 +559,9 @@ def _audit_aar_snapshot(
         "file_bytes": snapshot_bytes,
         "uncompressed_bytes": total_size,
         "required_abis": sorted(REQUIRED_ABIS),
+        "optional_abis_present": sorted(abi for abi in OPTIONAL_ABIS if libnames[abi]),
         "native_paths": sorted(native_paths),
+        "webrtc_api_jar": api_jar_path,
         "java_classfile_major_counts": {str(k): class_versions[k] for k in sorted(class_versions)},
         "embedded_license_or_notice_paths": sorted(license_paths),
         "remaining_reviews": [
