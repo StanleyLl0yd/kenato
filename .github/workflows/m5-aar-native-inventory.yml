@@ -1,0 +1,43 @@
+name: M5 WebRTC native ELF inventory (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-aar-native-inventory.yml"
+      - "scripts/probe_webrtc_native_elf.py"
+      - "scripts/test_probe_webrtc_native_elf.py"
+      - "scripts/collect_webrtc_candidate_evidence.py"
+      - "scripts/audit_webrtc_aar.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  native-elf:
+    name: Offline-only JNI/ELF/static binary observations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify workflow supply chain
+        run: python3 scripts/verify_ci_supply_chain.py
+      - name: Offline ELF probe regression tests
+        run: python3 scripts/test_probe_webrtc_native_elf.py
+      - name: Require native readelf analysis
+        run: command -v readelf
+      - name: Inspect real pinned AARs without executing their native code
+        run: python3 scripts/probe_webrtc_native_elf.py --output /tmp/kenato-m5-native-elf.json
+      - name: Publish JSON only; no AAR, ELF or APK files
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-native-elf-observations
+          path: /tmp/kenato-m5-native-elf.json
+          if-no-files-found: ignore
+          retention-days: 7
