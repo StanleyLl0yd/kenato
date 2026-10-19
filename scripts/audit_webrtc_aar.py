@@ -409,7 +409,7 @@ def _validate_required_content(
         if has_api:
             api_jar_paths.append(jar_path)
     if len(api_jar_paths) != 1:
-        raise AarAuditError("WebRTC PeerConnection.class missing or duplicated across JARs")
+        raise AarAuditError("WebRTC org/webrtc/PeerConnection.class missing or duplicated across JARs")
     with zipped.open(files["AndroidManifest.xml"]) as stream:
         manifest = stream.read(4096).lstrip(b"\xef\xbb\xbf\x09\x0a\x0d\x20")
     # Compiled Android XML starts with a RES_XML_TYPE chunk header. A magic
