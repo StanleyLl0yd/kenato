@@ -61,7 +61,7 @@ class BoundaryTests(unittest.TestCase):
     def test_catches_vendor_runtime_source(self):
         for variant in ("main", "release", "debug"):
             state = baseline()
-            state[f"android/app/src/{variant}/java/Media.kt"] = b"package com.sl.kenato\\nimport org.webrtc.PeerConnection"
+            state[f"android/app/src/{variant}/java/Media.kt"] = b"package com.sl.kenato\nimport org.webrtc.PeerConnection"
             self.assertTrue(any("JNI source" in e for e in gate.inspect(state)))
 
     def test_catches_prepackaged_aar_and_so(self):
