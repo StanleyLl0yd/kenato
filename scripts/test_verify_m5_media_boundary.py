@@ -59,9 +59,10 @@ class BoundaryTests(unittest.TestCase):
         self.assertTrue(any("foreground service" in e for e in gate.inspect(state)))
 
     def test_catches_vendor_runtime_source(self):
-        state = baseline()
-        state["android/app/src/main/java/Media.kt"] = b"package com.sl.kenato\nimport org.webrtc.PeerConnection"
-        self.assertTrue(any("JNI source" in e for e in gate.inspect(state)))
+        for variant in ("main", "release", "debug"):
+            state = baseline()
+            state[f"android/app/src/{variant}/java/Media.kt"] = b"package com.sl.kenato\\nimport org.webrtc.PeerConnection"
+            self.assertTrue(any("JNI source" in e for e in gate.inspect(state)))
 
     def test_catches_prepackaged_aar_and_so(self):
         for path in ("android/app/src/main/assets/media.aar",
@@ -71,6 +72,9 @@ class BoundaryTests(unittest.TestCase):
             self.assertTrue(any("vendored" in e for e in gate.inspect(state)))
 
     def test_missing_input_and_missing_wiring_fail_closed(self):
+        state = baseline()
+        del state["android/app/src/main/AndroidManifest.xml"]
+        self.assertTrue(any("AndroidManifest.xml" in e for e in gate.inspect(state)))
         state = baseline()
         del state[".github/workflows/ci.yml"]
         self.assertTrue(any("ci.yml" in e for e in gate.inspect(state)))

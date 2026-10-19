@@ -20,6 +20,7 @@ BUILD_FILES = (
     "android/app/build.gradle.kts",
     "gradle/libs.versions.toml",
 )
+MAIN_MANIFEST = "android/app/src/main/AndroidManifest.xml"
 WIRES = {
     "Makefile": "python3 scripts/verify_m5_media_boundary.py",
     ".github/workflows/ci.yml": "python3 scripts/verify_m5_media_boundary.py",
@@ -38,16 +39,17 @@ FORBIDDEN_PERMISSIONS = {
 
 def collect(root: Path) -> tuple[dict[str, bytes], list[str]]:
     """Read selected production inputs only; exclude generated build outputs."""
-    selected: set[Path] = {root / relative for relative in (*BUILD_FILES, *WIRES)}
+    selected: set[Path] = {root / relative for relative in (*BUILD_FILES, *WIRES, MAIN_MANIFEST)}
     source = root / "android/app/src"
     if source.is_dir():
         selected.update(source.rglob("AndroidManifest.xml"))
         selected.update(p for p in source.rglob("*")
                         if p.is_file() and p.suffix.lower() in {".aar", ".jar", ".so"})
-    main = source / "main"
-    if main.is_dir():
-        selected.update(main.rglob("*.kt"))
-        selected.update(main.rglob("*.java"))
+    if source.is_dir():
+        for suffix in ("*.kt", "*.java"):
+            selected.update(p for p in source.rglob(suffix)
+                            if p.relative_to(source).parts[0] not in
+                            {"test", "androidTest", "testFixtures"})
     android = root / "android"
     if android.is_dir():
         selected.update(p for p in android.rglob("*.gradle.kts")
@@ -65,7 +67,7 @@ def collect(root: Path) -> tuple[dict[str, bytes], list[str]]:
             continue
         try:
             if not path.is_file():
-                if relative in (*BUILD_FILES, *WIRES):
+                if relative in (*BUILD_FILES, *WIRES, MAIN_MANIFEST):
                     errors.append(f"{relative}: required policy input missing")
                 continue
             if path.stat().st_size > MAX_SOURCE:
@@ -79,7 +81,7 @@ def collect(root: Path) -> tuple[dict[str, bytes], list[str]]:
 
 def inspect(snapshot: dict[str, bytes]) -> list[str]:
     errors: list[str] = []
-    for name in (*BUILD_FILES, *WIRES):
+    for name in (*BUILD_FILES, *WIRES, MAIN_MANIFEST):
         if name not in snapshot:
             errors.append(f"{name}: required boundary input missing")
 
@@ -111,7 +113,7 @@ def inspect(snapshot: dict[str, bytes]) -> list[str]:
         if path.endswith((".gradle", ".gradle.kts", "libs.versions.toml")):
             if FORBIDDEN_BUILD.search(raw.decode("utf-8", errors="replace")):
                 errors.append(f"{path}: production WebRTC/media dependency or plugin needs M5 approval")
-        if path.startswith("android/app/src/main/") and path.endswith((".java", ".kt")):
+        if path.startswith("android/app/src/") and path.endswith((".java", ".kt")):
             if FORBIDDEN_SOURCE.search(raw.decode("utf-8", errors="replace")):
                 errors.append(f"{path}: production WebRTC/JNI source needs M5 approval")
 

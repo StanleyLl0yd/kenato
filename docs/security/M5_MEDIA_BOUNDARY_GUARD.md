@@ -10,7 +10,7 @@ the controlled physical acceptance plan, the source guard rejects:
 
 - known WebRTC/LiveKit/Jitsi/Jingle coordinates in production Gradle build inputs;
 - `org.webrtc` and relocated `livekit.org.webrtc` imports or JNI loading
-  references in production Kotlin/Java sources;
+  references in all non-test Android Kotlin/Java source sets;
 - vendored AAR/JAR/SO binaries anywhere below `android/app/src`;
 - `RECORD_AUDIO`, `FOREGROUND_SERVICE_MICROPHONE`, or a microphone-typed
   foreground service in main and build-variant manifest overlays.
