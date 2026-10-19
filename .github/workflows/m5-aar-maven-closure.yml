@@ -1,0 +1,75 @@
+name: M5 WebRTC Maven Gradle closure (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-aar-maven-closure.yml"
+      - "scripts/probe_webrtc_gradle_closure.py"
+      - "scripts/test_probe_webrtc_gradle_closure.py"
+      - "scripts/probe_webrtc_agp.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  maven-closure-research:
+    name: Official Maven Gradle closure, no vendor approval
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify supply-chain workflow policy
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Offline Gradle closure regression tests
+        run: python3 scripts/test_probe_webrtc_gradle_closure.py
+
+      - name: Verify Gradle wrapper
+        run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          verify-signature: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK 37
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3
+          "platforms;android-37.0"
+          "build-tools;37.0.0"
+
+      - name: Resolve official Maven coordinates and compile disposable APKs
+        run: >
+          python3 scripts/probe_webrtc_gradle_closure.py
+          --gradlew ./gradlew
+          --output /tmp/kenato-m5-gradle-closure.json
+
+      - name: Publish bounded JSON evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-gradle-closure-observations
+          path: /tmp/kenato-m5-gradle-closure.json
+          if-no-files-found: ignore
+          retention-days: 7
