@@ -66,6 +66,7 @@ test-security:
 	python3 scripts/test_collect_webrtc_candidate_evidence.py
 	python3 scripts/test_probe_webrtc_agp.py
 	python3 scripts/test_probe_webrtc_gradle_closure.py
+	python3 scripts/test_probe_webrtc_native_elf.py
 	python3 scripts/test_build_server_arm64_workflow.py
 	echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
 
