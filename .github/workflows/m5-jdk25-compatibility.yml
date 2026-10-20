@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/m5-jdk25-compatibility.yml"
       - "docs/development/M5_JDK25_BUILD_PROBE.md"
+      - "scripts/audit_kenato_jvm_target.py"
+      - "scripts/test_audit_kenato_jvm_target.py"
       - "android/app/build.gradle.kts"
       - "gradle/libs.versions.toml"
       - "gradle/wrapper/gradle-wrapper.properties"
@@ -94,46 +96,11 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Validate bytecode audit negative tests
+        run: python3 scripts/test_audit_kenato_jvm_target.py
+
       - name: Check compiled Kenato JVM classes remain Java17
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile
-          from struct import unpack
-          root = Path("android/app/build")
-          prefix = "com/sl/kenato/"
-          entry = prefix + "MainActivity.class"
-          names = set()
-          count = 0
-          def check(name, data):
-              global count
-              if data[:4] != b"\xca\xfe\xba\xbe" or len(data) < 8:
-                  raise SystemExit("Invalid app classfile: " + name)
-              major = unpack(">H", data[6:8])[0]
-              if major > 61:
-                  raise SystemExit("App classfile exceeds Java17: " + name + " major=" + str(major))
-              names.add(name)
-              count += 1
-          for sub in ("intermediates", "tmp"):
-              directory = root / sub
-              if not directory.exists():
-                  continue
-              for path in directory.rglob("*.class"):
-                  name = path.as_posix()
-                  start = name.find(prefix)
-                  if start >= 0:
-                      check(name[start:], path.read_bytes()[:8])
-              for path in directory.rglob("*.jar"):
-                  with ZipFile(path) as archive:
-                      for name in archive.namelist():
-                          if name.startswith(prefix) and name.endswith(".class"):
-                              if archive.getinfo(name).file_size > 16 * 1024 * 1024:
-                                  raise SystemExit("Oversized app class: " + name)
-                              check(name, archive.read(name)[:8])
-          if entry not in names:
-              raise SystemExit("MainActivity.class missing: cannot prove JVM target 17")
-          print("Java17 target PASS: checked", count, "Kenato classfile entries")
-          PY
+        run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 
       - name: Ensure no modifications to checked-out source
         run: git diff --exit-code
