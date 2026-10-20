@@ -1,0 +1,91 @@
+name: M5 Shiguredo m157 physical JNI harness (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-shiguredo-m157-jni-device.yml"
+      - "scripts/probe_shiguredo_m157_device.py"
+      - "scripts/test_probe_shiguredo_m157_device.py"
+      - "docs/security/M5_SHIGUREDO_M157_DEVICE_HARNESS.md"
+  workflow_dispatch:
+    inputs:
+      reviewed_native_risk:
+        description: "I acknowledge the native library is NOT approved; do not install before security review"
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  device-jni-smoke:
+    name: Build permissionless ARM64 JNI research APK, never execute it
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify unchanged production media boundary and test negatives
+        run: |
+          python3 scripts/verify_ci_supply_chain.py
+          python3 scripts/verify_m5_media_boundary.py
+          python3 scripts/test_probe_shiguredo_m157_device.py
+      - name: Gate manual APK preparation on explicit owner acknowledgement
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NATIVE_RISK_ACKNOWLEDGED: ${{ inputs.reviewed_native_risk }}
+        run: test "$NATIVE_RISK_ACKNOWLEDGED" = "true"
+      - name: Verify Gradle wrapper
+        run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+      - name: Install JDK25 (host build only)
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          verify-signature: true
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: platform-tools
+      - name: Install pinned Android SDK37
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
+      - name: Build and audit isolated unsigned-for-release device smoke APK
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            python3 scripts/probe_shiguredo_m157_device.py \
+              --gradlew ./gradlew --output /tmp/m157-device-harness.json \
+              --device-apk /tmp/m157-device-harness.apk
+          else
+            python3 scripts/probe_shiguredo_m157_device.py \
+              --gradlew ./gradlew --output /tmp/m157-device-harness.json
+          fi
+      - name: PR research report only
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-device-build-json-no-apk
+          path: /tmp/m157-device-harness.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Controlled manual APK provisioning only (no publication)
+        if: github.event_name == 'workflow_dispatch' && inputs.reviewed_native_risk == true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-unapproved-arm64-jni-device-smoke
+          path: |
+            /tmp/m157-device-harness.json
+            /tmp/m157-device-harness.apk
+          retention-days: 3
+          if-no-files-found: error
