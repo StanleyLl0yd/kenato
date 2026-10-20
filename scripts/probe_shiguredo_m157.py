@@ -29,6 +29,8 @@ EXPECTED_SHA256 = "b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340d558
 PRODUCER_TAG_SHA = "c575fdf836d1185d8cefda37197a2a489e95ffd9"
 PUBLISHER_DECLARED_WEBRTC_SHA = "b321f634929af0af61a8964487fbd7894a008f12"
 MAX_BYTES = 17 * 1024 * 1024
+MAX_EMBEDDED_NOTICE_BYTES = 2 * 1024 * 1024
+MAX_EMBEDDED_NOTICE_ENTRIES = 32
 
 
 class CandidateProbeError(ValueError):
@@ -40,6 +42,32 @@ def verify_observation(digest: str, size: int) -> None:
         raise CandidateProbeError("GitHub release asset SHA-256 mismatch")
     if size != EXPECTED_SIZE:
         raise CandidateProbeError("GitHub release asset byte count mismatch")
+
+
+def inspect_notice_evidence(archive: zipfile.ZipFile, names: list[str]) -> list[dict]:
+    """Read only small, auditor-approved NOTICE/license ZIP members.
+
+    Digests/sizes are evidence of actual embedded bytes, not a license audit.
+    """
+    if len(names) > MAX_EMBEDDED_NOTICE_ENTRIES:
+        raise CandidateProbeError("Too many AAR license/NOTICE entries")
+    out = []
+    for name in names:
+        info = archive.getinfo(name)
+        if info.file_size < 1 or info.file_size > MAX_EMBEDDED_NOTICE_BYTES:
+            raise CandidateProbeError("Missing or oversized embedded license/NOTICE text")
+        content = archive.read(info)
+        if len(content) != info.file_size:
+            raise CandidateProbeError("Truncated AAR embedded license/NOTICE")
+        # This is not a full SPDX inventory; record bounded fingerprints only.
+        out.append({
+            "path": name,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "contains_webrtc_attribution": b"WebRTC" in content,
+            "contains_redistribution_terms": b"Redistribution and use" in content,
+        })
+    return out
 
 
 def inspect_pinned_aar(path: Path) -> dict:
@@ -64,6 +92,7 @@ def inspect_pinned_aar(path: Path) -> dict:
         if member.file_size > evidence.audit.MAX_JAR_ENTRY_BYTES:
             raise CandidateProbeError("Oversized WebRTC API JAR")
         jar_data = archive.read(member)
+        notice_evidence = inspect_notice_evidence(archive, details["embedded_license_or_notice_paths"])
     with zipfile.ZipFile(io.BytesIO(jar_data)) as nested:
         logging_present = "org/webrtc/LoggingJni.class" in nested.namelist()
     return {
@@ -79,6 +108,7 @@ def inspect_pinned_aar(path: Path) -> dict:
         "native_paths": native,
         "api_jar_path": details["webrtc_api_jar"],
         "embedded_license_or_notice_paths": details["embedded_license_or_notice_paths"],
+        "embedded_notice_content_evidence": notice_evidence,
         "license_and_notice_binary_inventory_complete": False,
         "java_classfile_major_counts": details["java_classfile_major_counts"],
         "jdk17_compatible_classfiles": max(map(int, details["java_classfile_major_counts"])) <= 61,
