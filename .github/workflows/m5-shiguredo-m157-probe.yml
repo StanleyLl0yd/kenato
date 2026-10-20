@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/m5-shiguredo-m157-probe.yml"
       - "scripts/probe_shiguredo_m157.py"
+      - "scripts/probe_shiguredo_m157_source.py"
+      - "scripts/test_probe_shiguredo_m157_source.py"
       - "scripts/test_probe_shiguredo_m157.py"
       - "scripts/probe_shiguredo_m157_d8.py"
       - "scripts/test_probe_shiguredo_m157_d8.py"
@@ -98,5 +100,31 @@ jobs:
         with:
           name: m5-shiguredo-m157-jdk25-d8-research
           path: /tmp/kenato-m157-jdk25-d8.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publisher-upstream-source-and-notice:
+    name: Audit pinned vendor source/NOTICE and upstream VP9 fix (research)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify CI supply chain
+        run: python3 scripts/verify_ci_supply_chain.py
+      - name: Run offline negative tests
+        run: python3 scripts/test_probe_shiguredo_m157_source.py
+      - name: Fetch only pinned publisher and upstream source snapshots
+        run: python3 scripts/probe_shiguredo_m157_source.py --output /tmp/kenato-shiguredo-m157-source.json
+      - name: Store sanitized source-status JSON (never binary or secrets)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m157-source-evidence
+          path: /tmp/kenato-shiguredo-m157-source.json
           if-no-files-found: ignore
           retention-days: 7
