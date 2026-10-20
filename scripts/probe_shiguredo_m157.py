@@ -78,6 +78,8 @@ def inspect_pinned_aar(path: Path) -> dict:
         "other_packaged_abis": details["optional_abis_present"],
         "native_paths": native,
         "api_jar_path": details["webrtc_api_jar"],
+        "embedded_license_or_notice_paths": details["embedded_license_or_notice_paths"],
+        "license_and_notice_binary_inventory_complete": False,
         "java_classfile_major_counts": details["java_classfile_major_counts"],
         "jdk17_compatible_classfiles": max(map(int, details["java_classfile_major_counts"])) <= 61,
         "java25_classfile_observed": "69" in details["java_classfile_major_counts"],
@@ -126,6 +128,10 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("Publisher-produced m157 snapshot research only; no vendor approval.")
+    if report["status"] == "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL":
+        names = report["embedded_license_or_notice_paths"]
+        print("AAR embedded license/NOTICE filenames:", ", ".join(names) if names else "NONE")
+        print("Full bundled/transitive license inventory: NOT VERIFIED")
     if report["status"] == "RESEARCH_PROBE_FAILED":
         print("Research probe failed:", report["failure"], report["detail"])
     return 0 if report["status"] == "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL" else 1
