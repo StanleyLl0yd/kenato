@@ -24,3 +24,14 @@ metadata. Its synthetic negative tests run in `make test-security`.
 **Not proven:** an independent reproducible build from source, exact applied
 GN/patch/NDK flags, machine-code CVE fixes, complete SPDX obligations, JNI
 on physical Android or any voice call. #88/#87/#116 remain OPEN.
+
+## Exact NOTICE byte identity
+
+The SHA-pinned producer CI archive also contains `webrtc/NOTICE` of 214353
+bytes, SHA-256 `e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9`.
+The exact nested release-equivalent AAR contains `META-INF/NOTICE`, same length,
+same SHA-256 and **identical bytes**. The offline verifier now checks both
+members and pins their hashes before reporting success.
+
+This is **not** a full transitive SPDX or redistribution review; neither the
+count nor the presence of WebRTC notices proves license completeness.

@@ -15,13 +15,21 @@ VERSIONS = (
     "WEBRTC_COMMIT=" + probe.WEBRTC_SHA + "\n"
     "WEBRTC_SRC_COMMIT=" + probe.WEBRTC_SHA + "\n"
 ).encode()
+GOOD_NOTICE = b"WebRTC\nRedistribution and use for testing"
+def aar_fixture(notice: bytes = GOOD_NOTICE) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as zipfile_out:
+        zipfile_out.writestr(probe.AAR_NOTICE, notice)
+    return output.getvalue()
+GOOD_AAR = aar_fixture()
 
-
-def produce(path: Path, aar: bytes = b"synthetic-aar",
-            metadata: bytes = VERSIONS, duplicate: bool = False) -> tuple[int, str]:
+def produce(path: Path, aar: bytes = GOOD_AAR,
+            metadata: bytes = VERSIONS, duplicate: bool = False,
+            notice: bytes = GOOD_NOTICE) -> tuple[int, str]:
     content = io.BytesIO()
     with tarfile.open(fileobj=content, mode="w:gz") as tar:
         for name, data in [(probe.TARGET_VERSIONS, metadata),
+                           (probe.TARGET_NOTICE, notice),
                            (probe.TARGET_AAR, aar)]:
             entry = tarfile.TarInfo(name)
             entry.size = len(data)
@@ -36,10 +44,12 @@ def produce(path: Path, aar: bytes = b"synthetic-aar",
 
 
 class ArchiveTests(unittest.TestCase):
-    def validate(self, path: Path, size: int, digest: str, aar: bytes = b"synthetic-aar"):
+    def validate(self, path: Path, size: int, digest: str, aar: bytes = GOOD_AAR):
         return probe.prove(path, expected_outer_size=size,
                            expected_outer_sha=digest, expected_aar_size=len(aar),
-                           expected_aar_sha=hashlib.sha256(aar).hexdigest())
+                           expected_aar_sha=hashlib.sha256(aar).hexdigest(),
+                           expected_notice_size=len(GOOD_NOTICE),
+                           expected_notice_sha=hashlib.sha256(GOOD_NOTICE).hexdigest())
 
     def test_exact_archive_with_declared_source_is_only_lineage_proof(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -78,6 +88,32 @@ class ArchiveTests(unittest.TestCase):
             size, digest = produce(path, metadata=VERSIONS.replace(probe.WEBRTC_SHA.encode(), b"0" * 40))
             with self.assertRaisesRegex(probe.ProducerArchiveError, "source missing"):
                 self.validate(path, size, digest)
+
+    def test_mismatch_root_notice_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "artifact.zip"
+            size, digest = produce(path, notice=b"unexpected-root-notice")
+            with self.assertRaisesRegex(probe.ProducerArchiveError, "Producer NOTICE"):
+                self.validate(path, size, digest)
+
+    def test_mismatch_embedded_notice_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "artifact.zip"
+            changed = aar_fixture(b"Tampered embedded")
+            size, digest = produce(path, aar=changed)
+            with self.assertRaisesRegex(probe.ProducerArchiveError, "embedded NOTICE"):
+                self.validate(path, size, digest, aar=changed)
+
+    def test_missing_embedded_notice_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "artifact.zip"
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as inner:
+                inner.writestr("missing-notice.txt", b"not-a-notice")
+            changed = output.getvalue()
+            size, digest = produce(path, aar=changed)
+            with self.assertRaisesRegex(probe.ProducerArchiveError, "NOTICE missing"):
+                self.validate(path, size, digest, aar=changed)
 
     def test_undocumented_zip_member_fails_closed(self):
         with tempfile.TemporaryDirectory() as temp:
