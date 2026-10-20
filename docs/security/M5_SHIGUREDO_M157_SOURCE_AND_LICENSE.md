@@ -1,0 +1,57 @@
+# M5 Shiguredo m157: pinned source, CVE and NOTICE research
+
+Status: **SOURCE RESEARCH ONLY** — **NO VENDOR/BINARY APPROVAL** (2026-10-20).
+Parent #88; keep #87/#116 open.
+
+## Exact identities
+
+- Shiguredo tag: m157.8103.0.0; producer tag Git SHA:
+  c575fdf836d1185d8cefda37197a2a489e95ffd9.
+- Publisher VERSION claims WebRTC source:
+  b321f634929af0af61a8964487fbd7894a008f12.
+- Published AAR SHA-256 independently pinned by the existing offline probe:
+  b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340d558d3a.
+- Producer VERSION/LICENSE/NOTICE come only from pinned GitHub SHA.
+- Source inspection uses the exact, declared WebRTC SHA from Gitiles, not HEAD.
+
+## Source research and explicitly unproven claims
+
+- CVE-2026-78891 (VP9 payload-size conversion): Chromium issue
+  https://issues.chromium.org/issues/503013378 identifies upstream change
+  https://webrtc.googlesource.com/src/+/190a7606321b53c861142f97fc39f679b295f31c
+  (2026-07-23). The probe checks the pinned upstream source for an equivalent
+  size_t SplitAboutEqually signature and bounded SafeGt payload-size guard.
+  Even a PASS proves a **source fingerprint only**, not that the published
+  ARM64 libjingle_peerconnection_so.so contains the fix. Shiguredo applies
+  publisher patches before compilation.
+- CVE-2026-9962: public Chrome advisory refers to the Chrome update
+  https://github.com/advisories/GHSA-xf76-hmq4-v7qj but does not establish
+  the exact upstream WebRTC patch or independently proven Android AAR scope.
+  **UNVERIFIED**, not inferred safe from m157 > m148.
+- CVE-2026-106268: NVD
+  https://nvd.nist.gov/vuln/detail/CVE-2026-106268 records a Chrome fix,
+  but gives no verified upstream-to-m157 AAR mapping. **UNVERIFIED**;
+  never infer a native fix from Chrome 155.0.8059.39 or m157 version.
+- Publisher LICENSE is Apache-2.0; tag NOTICE includes BSD-style WebRTC and
+  WebKit attributions. **Third-party/transitive binary license completeness is
+  NOT verified**, and eventual redistribution must reproduce applicable
+  notices/licenses. Do not substitute publisher NOTICE for a binary SBOM.
+
+The independent research job downloads bounded, pinned UTF-8 publisher text
+and Gitiles base64 source. Every network/parse/pattern error **fails closed**.
+Offline regressions cover mutated revision, invalid license/NOTICE, vulnerable
+source pattern, redirection and oversized source. It uploads **JSON only**;
+no WebRTC native code is compiled, patched, linked or loaded.
+
+## Before #88 can be approved
+
+1. Establish upstream patch identity and applicability for CVE-2026-9962 and
+   CVE-2026-106268; independent source-to-build mapping for all applicable
+   native fixes. Closed-source or absent lineage is a blocker.
+2. Review exact applied Android publisher patch set, native link flags,
+   transitive SPDX/NOTICE and release/source attestation; approved audit of
+   the **actual** SHA-pinned ELF—not just source signatures.
+3. JNI load on physical ARM64 Android 10/13/14+, D8/JDK25/full Kenato app,
+   #116 safe effect runner, #87 P01-P24 device and security acceptance.
+4. Preserve current production Java17 target, no vendor Gradle dependency,
+   no microphone/STUN/TURN/OCI change, signed 0.0.4 untouched, M6 prohibited.
