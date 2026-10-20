@@ -120,6 +120,24 @@ def audit_manifest(apk: Path, *, sdk: str | None = None, runner=subprocess.run) 
         raise DeviceProbeError("Expected research activity missing from APK")
 
 
+def audit_apk_16k_zip_alignment(apk: Path, *, sdk: str | None = None,
+                                runner=subprocess.run) -> None:
+    """Official Android zipalign verification: never alter/re-sign test APK."""
+    sdk = sdk if sdk is not None else os.environ.get("ANDROID_HOME", "")
+    binary = Path(sdk) / "build-tools/37.0.0/zipalign"
+    if not sdk or not binary.is_file():
+        raise DeviceProbeError("Pinned SDK37 zipalign unavailable")
+    try:
+        check = runner([str(binary), "-c", "-P", "16", "-v", "4", str(apk)],
+                       capture_output=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise DeviceProbeError("16KiB APK ZIP alignment audit could not run") from error
+    if (check.returncode != 0 or not isinstance(check.stdout, bytes) or
+            len(check.stdout) > 256 * 1024 or
+            b"Verification successful" not in check.stdout):
+        raise DeviceProbeError("APK ZIP native library is not 16KiB aligned")
+
+
 def build(wrapper: Path, apk_output: Path | None, *, downloader=evidence.download_snapshot,
           runner=subprocess.run) -> dict:
     if not wrapper.is_file():
@@ -144,6 +162,7 @@ def build(wrapper: Path, apk_output: Path | None, *, downloader=evidence.downloa
         apk = app / "app/build/outputs/apk/debug/app-debug.apk"
         d8.inspect_arm64_apk(apk)
         audit_manifest(apk)
+        audit_apk_16k_zip_alignment(apk)
         sha = hashlib.sha256(apk.read_bytes()).hexdigest()
         if apk_output is not None:
             apk_output.parent.mkdir(parents=True, exist_ok=True)
@@ -153,6 +172,7 @@ def build(wrapper: Path, apk_output: Path | None, *, downloader=evidence.downloa
         return {
             "status": STATUS, "apk_sha256": sha, "apk_bytes": apk.stat().st_size,
             "application_id": PACKAGE, "arm64_only": True, "no_permissions": True,
+            "native_apk_zip_alignment_16k_verified": True,
             "jni_executed": False, "microphone_executed": False,
             "vendor_approved_for_kenato": False, "production_release": False,
         }
