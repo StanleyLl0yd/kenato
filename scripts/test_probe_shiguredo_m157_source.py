@@ -167,7 +167,11 @@ class ProbeTests(unittest.TestCase):
 
     def test_transceiver_missing_method_fails(self):
         with self.assertRaisesRegex(probe.SourceProbeError, "method missing"):
-            probe.validate_transceiver_source("")
+            probe.validate_transceiver_source(
+                GOOD_TRANSCEIVER_SOURCE.split(
+                    "void SdpOfferAnswerHandler::RemoveStoppedTransceivers()"
+                )[0]
+            )
 
     def test_transceiver_pinned_gitiles_path_allowlisted(self):
         from unittest.mock import patch
