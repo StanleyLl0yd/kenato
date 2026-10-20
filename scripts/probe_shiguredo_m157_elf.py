@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import struct
 import tempfile
 import zipfile
 from pathlib import Path
@@ -17,6 +18,37 @@ LIB_PATH = "jni/arm64-v8a/libjingle_peerconnection_so.so"
 
 class M157NativeError(ValueError):
     pass
+
+
+def require_16k_elf_loads(payload: bytes) -> list[int]:
+    """Parse bounded ELF64 little-endian PT_LOAD alignment, fail closed."""
+    if (len(payload) < 64 or payload[:4] != b"\x7fELF" or
+            payload[4:7] != b"\x02\x01\x01" or
+            struct.unpack_from("<H", payload, 16)[0] != 3 or
+            struct.unpack_from("<H", payload, 18)[0] != 183):
+        raise M157NativeError("Expected ARM64 ELF64 shared object absent")
+    phoff = struct.unpack_from("<Q", payload, 32)[0]
+    entsize = struct.unpack_from("<H", payload, 54)[0]
+    count = struct.unpack_from("<H", payload, 56)[0]
+    if not (1 <= count <= 64) or entsize != 56 or phoff < 64 or (
+            phoff + count * entsize > len(payload)):
+        raise M157NativeError("Invalid or missing ELF program headers")
+    alignments = []
+    for index in range(count):
+        p = phoff + index * entsize
+        if struct.unpack_from("<I", payload, p)[0] != 1:  # PT_LOAD
+            continue
+        offset = struct.unpack_from("<Q", payload, p + 8)[0]
+        vaddr = struct.unpack_from("<Q", payload, p + 16)[0]
+        alignment = struct.unpack_from("<Q", payload, p + 48)[0]
+        if alignment < 16384 or alignment & (alignment - 1):
+            raise M157NativeError("PT_LOAD alignment below 16KiB")
+        if offset % alignment != vaddr % alignment:
+            raise M157NativeError("PT_LOAD virtual/file offset congruency failure")
+        alignments.append(alignment)
+    if not alignments:
+        raise M157NativeError("No PT_LOAD segments")
+    return alignments
 
 
 def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
@@ -35,6 +67,7 @@ def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
             payload = source.read(native.LIMIT + 1)
         if len(payload) != member.file_size:
             raise M157NativeError("Truncated native ELF")
+    load_alignments = require_16k_elf_loads(payload)
     record = scanner(payload, "arm64-v8a")
     # Explicitly do not turn ELF flags into an arbitrary automatic approval.
     return {
@@ -42,6 +75,8 @@ def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
         "sha256_pinned_aar": m157.EXPECTED_SHA256,
         "aar_bytes": m157.EXPECTED_SIZE,
         "native_arm64": record,
+        "pt_load_alignments_bytes": load_alignments,
+        "all_load_segments_at_least_16k": True,
         "native_executed": False,
         "symbol_presence_proves_cve_fix": False,
         "source_to_native_binary_reproducibility_verified": False,
