@@ -107,7 +107,7 @@ def audit_manifest(apk: Path, *, sdk: str | None = None, runner=subprocess.run) 
     if not sdk or not aapt2.is_file():
         raise DeviceProbeError("Pinned SDK37 aapt2 unavailable")
     try:
-        output = runner([str(aapt2), "dump", "xmltree", str(apk), "AndroidManifest.xml"],
+        output = runner([str(aapt2), "dump", "xmltree", str(apk), "--file", "AndroidManifest.xml"],
                         capture_output=True, check=False, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise DeviceProbeError("Merged manifest audit failed") from error
