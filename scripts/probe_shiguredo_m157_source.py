@@ -9,9 +9,9 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-import http.client
 import json
 import re
+import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
@@ -34,32 +34,39 @@ class SourceProbeError(ValueError):
 
 
 def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
-    # This is not a general HTTP client. Only two pinned research origins are
-    # allowed, with fixed paths under exact source Git SHAs and no redirects.
+    # Never use a general URL fetch. All four resources are exact and pinned.
     parsed = urllib.parse.urlsplit(url)
     if (parsed.scheme != "https" or parsed.username or parsed.password or
             parsed.port is not None or parsed.fragment):
         raise SourceProbeError("Invalid pinned HTTPS source URI")
-    if (host == "raw.githubusercontent.com" and
-            url in (PUBLISHER_ROOT + "VERSION",
-                    PUBLISHER_ROOT + "LICENSE",
-                    PUBLISHER_ROOT + "NOTICE")):
-        connection = http.client.HTTPSConnection("raw.githubusercontent.com", timeout=30)
-    elif (host == "webrtc.googlesource.com" and
-          url == GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT"):
-        connection = http.client.HTTPSConnection("webrtc.googlesource.com", timeout=30)
+    if host == "raw.githubusercontent.com":
+        allowed = (PUBLISHER_ROOT + "VERSION",
+                   PUBLISHER_ROOT + "LICENSE",
+                   PUBLISHER_ROOT + "NOTICE")
+    elif host == "webrtc.googlesource.com":
+        allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",)
     else:
+        raise SourceProbeError("Source host outside exact allowlist")
+    if parsed.hostname != host or url not in allowed:
         raise SourceProbeError("Source URL outside exact allowlist")
+    # curl is provided by the pinned ubuntu-24.04 GitHub Actions runner.
+    # No shell, redirects, HTTP, proxies via user arguments, or arbitrary URL.
     try:
-        resource = parsed.path + ("?" + parsed.query if parsed.query else "")
-        connection.request("GET", resource, headers={"User-Agent": "Kenato-M5-pinned-source-research/1"})
-        response = connection.getresponse()
-        if response.status != 200:
-            # Crucially: HTTP 3xx is NOT followed to another host.
-            raise SourceProbeError("Pinned source HTTP status " + str(response.status))
-        body = response.read(maximum + 1)
-    finally:
-        connection.close()
+        result = subprocess.run(
+            ["curl", "--silent", "--show-error", "--proto", "=https",
+             "--max-time", "30", "--connect-timeout", "15",
+             "--max-filesize", str(maximum),
+             "--write-out", "\n@@KENATO_STATUS:%{http_code}",
+             "--url", url],
+            capture_output=True, timeout=40, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SourceProbeError("Pinned source retrieval failed") from error
+    if result.returncode != 0:
+        raise SourceProbeError("Pinned source transport rejected response")
+    body, sep, status = result.stdout.rpartition(b"\n@@KENATO_STATUS:")
+    if not sep or status != b"200":
+        raise SourceProbeError("Pinned source did not return HTTP 200")
     if not body or len(body) > maximum:
         raise SourceProbeError("Missing or oversized source snapshot")
     return body
@@ -161,7 +168,7 @@ def main() -> int:
     try:
         report = collect()
         result = 0
-    except (SourceProbeError, OSError, ValueError, http.client.HTTPException) as error:
+    except (SourceProbeError, OSError, ValueError) as error:
         report = {
             "status": "PINNED_SOURCE_RESEARCH_FAILED",
             "failure": type(error).__name__,

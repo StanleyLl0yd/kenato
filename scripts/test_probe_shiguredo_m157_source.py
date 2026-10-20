@@ -61,34 +61,51 @@ class ProbeTests(unittest.TestCase):
             )
 
     def test_http_redirect_is_rejected(self):
-        class Response:
-            status = 302
-            def read(self, n): return b"x"
-        class Connection:
-            def request(self, *args, **kwargs): pass
-            def getresponse(self): return Response()
-            def close(self): pass
-        with patch.object(probe.http.client, "HTTPSConnection", return_value=Connection()):
-            with self.assertRaisesRegex(probe.SourceProbeError, "HTTP status 302"):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0,
+            stdout=b"redirect\n@@KENATO_STATUS:302", stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            with self.assertRaisesRegex(probe.SourceProbeError, "HTTP 200"):
                 probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com")
 
     def test_oversized_content_is_rejected(self):
-        class Response:
-            status = 200
-            def read(self, n): return b"x" * (n + 1)
-        class Connection:
-            def request(self, *args, **kwargs): pass
-            def getresponse(self): return Response()
-            def close(self): pass
-        with patch.object(probe.http.client, "HTTPSConnection", return_value=Connection()):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0,
+            stdout=b"x" * 11 + b"\n@@KENATO_STATUS:200", stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
             with self.assertRaisesRegex(probe.SourceProbeError, "oversized"):
                 probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com")
 
     def test_non_allowlisted_url_rejected_without_request(self):
-        with patch.object(probe.http.client, "HTTPSConnection") as make:
+        with patch.object(probe.subprocess, "run") as call:
             with self.assertRaisesRegex(probe.SourceProbeError, "allowlist"):
                 probe.fetch_exact("https://raw.githubusercontent.com/attacker/other", maximum=10, host="raw.githubusercontent.com")
-            make.assert_not_called()
+            call.assert_not_called()
+
+    def test_transport_failure_rejected(self):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=22, stdout=b"", stderr=b"hidden",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            with self.assertRaisesRegex(probe.SourceProbeError, "transport"):
+                probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com")
+
+    def test_https_only_curl_invariant(self):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0,
+            stdout=b"v\n@@KENATO_STATUS:200", stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome) as call:
+            self.assertEqual(
+                probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com"),
+                b"v",
+            )
+            args = call.call_args.args[0]
+            self.assertIn("=https", args)
+            self.assertNotIn("--location", args)
+            self.assertIn("--max-filesize", args)
 
 
 if __name__ == "__main__":
