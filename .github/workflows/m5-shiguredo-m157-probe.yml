@@ -9,6 +9,8 @@ on:
       - "scripts/probe_shiguredo_m157_source.py"
       - "scripts/test_probe_shiguredo_m157_source.py"
       - "scripts/test_probe_shiguredo_m157.py"
+      - "scripts/probe_shiguredo_m157_elf.py"
+      - "scripts/test_probe_shiguredo_m157_elf.py"
       - "scripts/probe_shiguredo_m157_d8.py"
       - "scripts/test_probe_shiguredo_m157_d8.py"
       - "scripts/audit_webrtc_aar.py"
@@ -126,5 +128,31 @@ jobs:
         with:
           name: m5-shiguredo-m157-source-evidence
           path: /tmp/kenato-shiguredo-m157-source.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  pinned-m157-native-hardening:
+    name: Inventory real m157 ARM64 ELF flags, no JNI load (research)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify supply-chain restrictions
+        run: python3 scripts/verify_ci_supply_chain.py
+      - name: Run offline static ELF probe regressions
+        run: python3 scripts/test_probe_shiguredo_m157_elf.py
+      - name: Inspect only SHA-pinned real m157 ARM64 library
+        run: python3 scripts/probe_shiguredo_m157_elf.py --output /tmp/m157-arm64-elf-hardening.json
+      - name: Upload JSON only (no AAR or ELF)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m157-arm64-hardening
+          path: /tmp/m157-arm64-elf-hardening.json
           if-no-files-found: ignore
           retention-days: 7
