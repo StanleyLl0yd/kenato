@@ -20,3 +20,13 @@ APK SHA256, UTC timestamp. Do not collect serials, raw bugreports or logs.
 No device is tested by CI; factory initialization/disposal does not establish
 two-phone calls, microphone permission compliance, or #87 P01-P24.
 #88/#116/#87 remain OPEN; M6 prohibited.
+
+## 16KiB APK ZIP alignment gate
+
+The disposable device APK build now runs official Android SDK37
+`zipalign -c -P 16 -v 4` after checking the merged manifest and native
+package inventory. Missing zipalign, misaligned uncompressed `.so`, or an
+inconclusive tool result fail closed. This is a read-only check; it does not
+rewrite or re-sign the APK. It complements the pinned AAR ELF PT_LOAD 16KiB
+check in #155; full Android device/API execution and release AAB alignment
+are still NOT proven. Reference: https://developer.android.com/tools/zipalign
