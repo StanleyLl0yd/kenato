@@ -69,6 +69,7 @@ test-security:
 	python3 scripts/test_probe_webrtc_native_elf.py
 	python3 scripts/test_probe_shiguredo_m157.py
 	python3 scripts/test_probe_shiguredo_m157_d8.py
+	python3 scripts/test_probe_shiguredo_m157_device.py
 	python3 scripts/test_probe_shiguredo_m157_elf.py
 	python3 scripts/test_probe_shiguredo_m157_source.py
 	python3 scripts/test_audit_kenato_jvm_target.py
