@@ -53,6 +53,45 @@ class DeviceTests(unittest.TestCase):
                 probe.audit_manifest(Path(directory) / "app.apk", sdk=directory,
                                      runner=lambda *a, **k: fake)
 
+    def test_zipalign_absent_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(probe.DeviceProbeError, "zipalign unavailable"):
+                probe.audit_apk_16k_zip_alignment(Path(directory) / "app.apk", sdk=directory)
+
+    def test_zipalign_rejects_native_page_misalignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "build-tools/37.0.0/zipalign"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            result = CompletedProcess([], 1, b"Verification FAILED", b"")
+            with self.assertRaisesRegex(probe.DeviceProbeError, "not 16KiB aligned"):
+                probe.audit_apk_16k_zip_alignment(Path(directory) / "app.apk",
+                                                 sdk=directory, runner=lambda *a, **k: result)
+
+    def test_zipalign_verifies_without_modifying_apk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "build-tools/37.0.0/zipalign"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            apk = Path(directory) / "sample.apk"
+            args_seen = []
+            def fake_run(args, **kwargs):
+                args_seen.extend(args)
+                return CompletedProcess(args, 0, b"Verification successful\n", b"")
+            probe.audit_apk_16k_zip_alignment(apk, sdk=directory, runner=fake_run)
+            self.assertEqual(args_seen[1:-1], ["-c", "-P", "16", "-v", "4"])
+            self.assertEqual(args_seen[-1], str(apk))
+
+    def test_zipalign_no_success_marker_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tool = Path(directory) / "build-tools/37.0.0/zipalign"
+            tool.parent.mkdir(parents=True)
+            tool.touch()
+            ok_but_incomplete = CompletedProcess([], 0, b"", b"")
+            with self.assertRaisesRegex(probe.DeviceProbeError, "not 16KiB aligned"):
+                probe.audit_apk_16k_zip_alignment(Path(directory) / "app.apk",
+                           sdk=directory, runner=lambda *a, **k: ok_but_incomplete)
+
     def test_corrupt_vendor_digest_blocks_build(self):
         with tempfile.TemporaryDirectory() as directory:
             wrapper = Path(directory) / "gradlew"
