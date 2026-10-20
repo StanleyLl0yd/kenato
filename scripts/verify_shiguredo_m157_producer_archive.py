@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import tarfile
 import zipfile
@@ -24,6 +25,10 @@ TARGET_AAR = "webrtc/aar/libwebrtc.aar"
 TARGET_AAR_BYTES = 15036224
 TARGET_AAR_SHA256 = "b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340d558d3a"
 TARGET_VERSIONS = "webrtc/VERSIONS"
+TARGET_NOTICE = "webrtc/NOTICE"
+AAR_NOTICE = "META-INF/NOTICE"
+EXPECTED_NOTICE_BYTES = 214353
+EXPECTED_NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
 WEBRTC_SHA = "b321f634929af0af61a8964487fbd7894a008f12"
 MAX_TAR_MEMBERS = 100000
 MAX_MEMBER_SIZE = 256 * 1024 * 1024
@@ -44,7 +49,9 @@ def file_sha256(path: Path) -> str:
 def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
           expected_outer_size: int = OUTER_BYTES,
           expected_aar_sha: str = TARGET_AAR_SHA256,
-          expected_aar_size: int = TARGET_AAR_BYTES) -> dict:
+          expected_aar_size: int = TARGET_AAR_BYTES,
+          expected_notice_size: int = EXPECTED_NOTICE_BYTES,
+          expected_notice_sha: str = EXPECTED_NOTICE_SHA256) -> dict:
     if not path.is_file() or path.stat().st_size != expected_outer_size:
         raise ProducerArchiveError("Producer Actions artifact size mismatch")
     if file_sha256(path) != expected_outer_sha:
@@ -58,6 +65,9 @@ def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
             raise ProducerArchiveError("Oversized producer tar stream")
         found_aar = False
         found_versions = False
+        found_notice = False
+        archive_notice_sha = None
+        embedded_notice_sha = None
         count = 0
         versions = {}
         with archive.open(member) as compressed:
@@ -66,7 +76,7 @@ def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
                     count += 1
                     if count > MAX_TAR_MEMBERS:
                         raise ProducerArchiveError("Too many tar members")
-                    if entry.name not in (TARGET_AAR, TARGET_VERSIONS):
+                    if entry.name not in (TARGET_AAR, TARGET_VERSIONS, TARGET_NOTICE):
                         continue
                     if not entry.isfile() or entry.size > MAX_MEMBER_SIZE:
                         raise ProducerArchiveError("Target member missing or oversized")
@@ -76,17 +86,32 @@ def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
                     if entry.name == TARGET_AAR:
                         if found_aar or entry.size != expected_aar_size:
                             raise ProducerArchiveError("Duplicate or wrong-sized producer AAR")
-                        digest = hashlib.sha256()
-                        size = 0
-                        while True:
-                            block = stream.read(1024 * 1024)
-                            if not block:
-                                break
-                            size += len(block)
-                            digest.update(block)
-                        if size != expected_aar_size or digest.hexdigest() != expected_aar_sha:
+                        aar_payload = stream.read(expected_aar_size + 1)
+                        if len(aar_payload) != expected_aar_size or hashlib.sha256(aar_payload).hexdigest() != expected_aar_sha:
                             raise ProducerArchiveError("CI-built AAR differs from pinned release AAR")
+                        with zipfile.ZipFile(io.BytesIO(aar_payload)) as inner:
+                            if inner.namelist().count(AAR_NOTICE) != 1:
+                                raise ProducerArchiveError("AAR embedded NOTICE missing or duplicate")
+                            detail = inner.getinfo(AAR_NOTICE)
+                            if detail.file_size != expected_notice_size:
+                                raise ProducerArchiveError("AAR embedded NOTICE length mismatch")
+                            inside = inner.read(detail)
+                            if len(inside) != expected_notice_size:
+                                raise ProducerArchiveError("Truncated AAR embedded NOTICE")
+                            embedded_notice_sha = hashlib.sha256(inside).hexdigest()
+                            if embedded_notice_sha != expected_notice_sha:
+                                raise ProducerArchiveError("AAR embedded NOTICE SHA256 mismatch")
                         found_aar = True
+                    elif entry.name == TARGET_NOTICE:
+                        if found_notice or entry.size != expected_notice_size:
+                            raise ProducerArchiveError("Producer NOTICE duplicate or wrong sized")
+                        outer_notice = stream.read(expected_notice_size + 1)
+                        if len(outer_notice) != expected_notice_size:
+                            raise ProducerArchiveError("Producer NOTICE truncated")
+                        archive_notice_sha = hashlib.sha256(outer_notice).hexdigest()
+                        if archive_notice_sha != expected_notice_sha:
+                            raise ProducerArchiveError("Producer NOTICE SHA256 mismatch")
+                        found_notice = True
                     else:
                         if found_versions or entry.size > 4096:
                             raise ProducerArchiveError("Duplicate or oversized source VERSIONS")
@@ -98,7 +123,8 @@ def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
                                     raise ProducerArchiveError("Duplicate pinned source version")
                                 versions[key] = value
                         found_versions = True
-    if not found_aar or not found_versions or versions != {
+    if not found_aar or not found_versions or not found_notice or (
+            embedded_notice_sha != archive_notice_sha) or versions != {
         "WEBRTC_BUILD_VERSION": "157.8103.0.0",
         "WEBRTC_COMMIT": WEBRTC_SHA,
         "WEBRTC_SRC_COMMIT": WEBRTC_SHA,
@@ -113,6 +139,9 @@ def prove(path: Path, *, expected_outer_sha: str = OUTER_SHA256,
         "ci_archive_aar_sha256": expected_aar_sha,
         "published_aar_sha256": TARGET_AAR_SHA256,
         "ci_archive_aar_bytes": expected_aar_size,
+        "producer_and_embedded_notice_sha256": expected_notice_sha,
+        "producer_embedded_notice_bytes_identical": True,
+        "producer_embedded_notice_bytes": expected_notice_size,
         "source_commit_declared_in_ci_archive": WEBRTC_SHA,
         "source_to_ci_output_metadata_consistent": True,
         "independent_source_rebuild_reproducibility_verified": False,
