@@ -71,7 +71,8 @@ class ArchiveTests(unittest.TestCase):
     def test_changed_aar_bytes_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "artifact.zip"
-            size, digest = produce(path, aar=b"altered-inner")
+            changed = b"X" + GOOD_AAR[1:]  # Same size, invalid digest before ZIP parsing
+            size, digest = produce(path, aar=changed)
             with self.assertRaisesRegex(probe.ProducerArchiveError, "CI-built AAR differs"):
                 self.validate(path, size, digest)
 
