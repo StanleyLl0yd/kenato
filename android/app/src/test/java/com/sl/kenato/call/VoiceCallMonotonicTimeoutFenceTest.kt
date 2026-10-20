@@ -87,6 +87,38 @@ class VoiceCallMonotonicTimeoutFenceTest {
     }
 
     @Test
+    fun copiedTicketWithEqualFieldsCannotConsumeOriginalDeadline() {
+        val fence = VoiceCallMonotonicTimeoutFence()
+        val ringing = VoiceCallSnapshot(
+            phase = VoiceCallPhase.OUTGOING_RINGING,
+            active = a, direction = VoiceCallDirection.OUTGOING,
+        )
+        val issued = fence.issue(ringing, 100, 10)
+        val reconstructed = issued.copy()
+        assertEquals(issued, reconstructed)
+        assertNull(fence.consume(reconstructed, ringing, 111))
+        // Rejecting a foreign object must not burn the authentic ticket.
+        assertEquals(a, fence.consume(issued, ringing, 111)?.key)
+        assertNull(fence.consume(issued, ringing, 112))
+    }
+
+    @Test
+    fun identicalDeadlineTicketFromAnotherOwnerCannotFireAfterReplacement() {
+        val first = VoiceCallMonotonicTimeoutFence()
+        val replacement = VoiceCallMonotonicTimeoutFence()
+        val ringing = VoiceCallSnapshot(
+            phase = VoiceCallPhase.INCOMING_RINGING,
+            active = a, direction = VoiceCallDirection.INCOMING,
+        )
+        val beforeReplacement = first.issue(ringing, 1000, 100)
+        val newOwnerTicket = replacement.issue(ringing, 1000, 100)
+        assertEquals(beforeReplacement, newOwnerTicket)
+        assertNull(replacement.consume(beforeReplacement, ringing, 1100))
+        assertEquals(VoiceCallEventKind.RING_TIMEOUT,
+            replacement.consume(newOwnerTicket, ringing, 1100)?.kind)
+    }
+
+    @Test
     fun activeAndIdleCallsCannotArmTimers() {
         val fence = VoiceCallMonotonicTimeoutFence()
         assertThrows(IllegalArgumentException::class.java) {
