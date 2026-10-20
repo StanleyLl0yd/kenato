@@ -1,0 +1,139 @@
+name: M5 JDK25 Android compatibility (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-jdk25-compatibility.yml"
+      - "docs/development/M5_JDK25_BUILD_PROBE.md"
+      - "android/app/build.gradle.kts"
+      - "gradle/libs.versions.toml"
+      - "gradle/wrapper/gradle-wrapper.properties"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - "gradle.properties"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  android-jdk25:
+    name: Full Android build and tests with JDK25 / Java17 target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify supply-chain and M5 media safety policy
+        run: |
+          python3 scripts/verify_ci_supply_chain.py
+          python3 scripts/verify_security_baseline.py
+          python3 scripts/verify_m5_media_boundary.py
+          python3 scripts/test_verify_m5_media_boundary.py
+
+      - name: Verify Gradle wrapper JAR
+        run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+
+      - name: Set up Temurin JDK 25 (build runtime only)
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          verify-signature: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
+
+      - name: Record JDK and Gradle versions
+        run: |
+          java -version
+          ./gradlew --no-daemon --version
+
+      - name: Install pinned Rust toolchains and cargo-ndk
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup target add --toolchain 1.85.0 \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
+          cargo +1.86.0 install cargo-ndk --version 4.1.2 --locked --force
+          test "$(cargo ndk --version)" = "cargo-ndk 4.1.2"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK 37 and pinned NDK
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3
+          "platforms;android-37.0"
+          "build-tools;37.0.0"
+          "ndk;28.2.13676358"
+
+      - name: Build unchanged M3 JNI libraries for production ABI set
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash scripts/build_android_native.sh
+
+      - name: Compile, lint, unit-test and package Android with JDK25
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :android:app:lintDebug
+          :android:app:lintRelease
+          :android:app:testDebugUnitTest
+          :android:app:assembleDebug
+          :android:app:assembleRelease
+          :android:app:bundleRelease
+
+      - name: Check compiled Kenato JVM classes remain Java17
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          from struct import unpack
+          root = Path("android/app/build")
+          prefix = "com/sl/kenato/"
+          entry = prefix + "MainActivity.class"
+          names = set()
+          count = 0
+          def check(name, data):
+              global count
+              if data[:4] != b"\xca\xfe\xba\xbe" or len(data) < 8:
+                  raise SystemExit("Invalid app classfile: " + name)
+              major = unpack(">H", data[6:8])[0]
+              if major > 61:
+                  raise SystemExit("App classfile exceeds Java17: " + name + " major=" + str(major))
+              names.add(name)
+              count += 1
+          for sub in ("intermediates", "tmp"):
+              directory = root / sub
+              if not directory.exists():
+                  continue
+              for path in directory.rglob("*.class"):
+                  name = path.as_posix()
+                  start = name.find(prefix)
+                  if start >= 0:
+                      check(name[start:], path.read_bytes()[:8])
+              for path in directory.rglob("*.jar"):
+                  with ZipFile(path) as archive:
+                      for name in archive.namelist():
+                          if name.startswith(prefix) and name.endswith(".class"):
+                              if archive.getinfo(name).file_size > 16 * 1024 * 1024:
+                                  raise SystemExit("Oversized app class: " + name)
+                              check(name, archive.read(name)[:8])
+          if entry not in names:
+              raise SystemExit("MainActivity.class missing: cannot prove JVM target 17")
+          print("Java17 target PASS: checked", count, "Kenato classfile entries")
+          PY
+
+      - name: Ensure no modifications to checked-out source
+        run: git diff --exit-code
