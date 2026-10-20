@@ -60,25 +60,35 @@ class ProbeTests(unittest.TestCase):
                 GOOD_SOURCE + "RtpPacketizer::SplitAboutEqually(int payload_len)"
             )
 
-    def test_unexpected_redirect_is_rejected(self):
+    def test_http_redirect_is_rejected(self):
         class Response:
-            def __enter__(self): return self
-            def __exit__(self, *args): pass
-            def geturl(self): return "https://attacker.example.invalid/evil"
+            status = 302
             def read(self, n): return b"x"
-        with patch.object(probe.urllib.request, "urlopen", return_value=Response()):
-            with self.assertRaisesRegex(probe.SourceProbeError, "redirect"):
+        class Connection:
+            def request(self, *args, **kwargs): pass
+            def getresponse(self): return Response()
+            def close(self): pass
+        with patch.object(probe.http.client, "HTTPSConnection", return_value=Connection()):
+            with self.assertRaisesRegex(probe.SourceProbeError, "HTTP status 302"):
                 probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com")
 
     def test_oversized_content_is_rejected(self):
         class Response:
-            def __enter__(self): return self
-            def __exit__(self, *args): pass
-            def geturl(self): return probe.PUBLISHER_ROOT + "VERSION"
+            status = 200
             def read(self, n): return b"x" * (n + 1)
-        with patch.object(probe.urllib.request, "urlopen", return_value=Response()):
+        class Connection:
+            def request(self, *args, **kwargs): pass
+            def getresponse(self): return Response()
+            def close(self): pass
+        with patch.object(probe.http.client, "HTTPSConnection", return_value=Connection()):
             with self.assertRaisesRegex(probe.SourceProbeError, "oversized"):
                 probe.fetch_exact(probe.PUBLISHER_ROOT + "VERSION", maximum=10, host="raw.githubusercontent.com")
+
+    def test_non_allowlisted_url_rejected_without_request(self):
+        with patch.object(probe.http.client, "HTTPSConnection") as make:
+            with self.assertRaisesRegex(probe.SourceProbeError, "allowlist"):
+                probe.fetch_exact("https://raw.githubusercontent.com/attacker/other", maximum=10, host="raw.githubusercontent.com")
+            make.assert_not_called()
 
 
 if __name__ == "__main__":

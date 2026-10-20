@@ -9,11 +9,11 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import http.client
 import json
 import re
 import sys
 import urllib.parse
-import urllib.request
 from pathlib import Path
 
 PUBLISHER_SHA = "c575fdf836d1185d8cefda37197a2a489e95ffd9"
@@ -34,14 +34,32 @@ class SourceProbeError(ValueError):
 
 
 def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
-    if urllib.parse.urlsplit(url).scheme != "https":
-        raise SourceProbeError("Non-HTTPS source refused")
-    request = urllib.request.Request(url, headers={"User-Agent": "Kenato-M5-pinned-source-research/1"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        final = urllib.parse.urlsplit(response.geturl())
-        if final.scheme != "https" or final.hostname != host:
-            raise SourceProbeError("Unexpected source redirect host")
+    # This is not a general HTTP client. Only two pinned research origins are
+    # allowed, with fixed paths under exact source Git SHAs and no redirects.
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != "https" or parsed.username or parsed.password or
+            parsed.port is not None or parsed.fragment):
+        raise SourceProbeError("Invalid pinned HTTPS source URI")
+    if (host == "raw.githubusercontent.com" and
+            url in (PUBLISHER_ROOT + "VERSION",
+                    PUBLISHER_ROOT + "LICENSE",
+                    PUBLISHER_ROOT + "NOTICE")):
+        connection = http.client.HTTPSConnection("raw.githubusercontent.com", timeout=30)
+    elif (host == "webrtc.googlesource.com" and
+          url == GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT"):
+        connection = http.client.HTTPSConnection("webrtc.googlesource.com", timeout=30)
+    else:
+        raise SourceProbeError("Source URL outside exact allowlist")
+    try:
+        resource = parsed.path + ("?" + parsed.query if parsed.query else "")
+        connection.request("GET", resource, headers={"User-Agent": "Kenato-M5-pinned-source-research/1"})
+        response = connection.getresponse()
+        if response.status != 200:
+            # Crucially: HTTP 3xx is NOT followed to another host.
+            raise SourceProbeError("Pinned source HTTP status " + str(response.status))
         body = response.read(maximum + 1)
+    finally:
+        connection.close()
     if not body or len(body) > maximum:
         raise SourceProbeError("Missing or oversized source snapshot")
     return body
@@ -143,7 +161,7 @@ def main() -> int:
     try:
         report = collect()
         result = 0
-    except (SourceProbeError, OSError, ValueError, urllib.error.URLError) as error:
+    except (SourceProbeError, OSError, ValueError, http.client.HTTPException) as error:
         report = {
             "status": "PINNED_SOURCE_RESEARCH_FAILED",
             "failure": type(error).__name__,
