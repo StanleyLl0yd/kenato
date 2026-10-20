@@ -72,3 +72,15 @@ key and durable single-use claims *again, immediately before every effect*,
 including between `SEND_ACCEPT` and `START_MEDIA`; independent M2/M3
 storage and asynchronous revocation still lack a serialized commit boundary.
 No Android media, WebRTC, microphone or live voice transport is activated.
+
+## Bounded reachable-state safety regression (JVM-only)
+
+The `VoiceCallReducerReachabilityTest` enumerates all reachable snapshots
+with three distinct immutable call/peer keys and all 13 event kinds. It
+asserts that media start/stop is emitted only for the exact active key and
+correct phase, that busy sends cannot overwrite an existing call, and that
+stale callbacks cannot affect a newly admitted call. It checks generated
+retirement cache bounds and every proposed signal's originating event key.
+This does **not** prove the production effect runner's concurrency safety,
+durable E2EE dispatch, consent freshness, physical Android JNI, media
+permissions or device acceptance. #116 and #87 remain OPEN.
