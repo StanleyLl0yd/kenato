@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/m5-shiguredo-m157-probe.yml"
       - "scripts/probe_shiguredo_m157.py"
+      - "scripts/probe_shiguredo_m157_elf.py"
+      - "scripts/test_probe_shiguredo_m157_elf.py"
       - "scripts/probe_shiguredo_m157_source.py"
       - "scripts/test_probe_shiguredo_m157_source.py"
       - "scripts/test_probe_shiguredo_m157.py"
