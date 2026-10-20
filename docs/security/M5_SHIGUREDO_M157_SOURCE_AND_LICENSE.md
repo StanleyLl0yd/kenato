@@ -32,10 +32,13 @@ Parent #88; keep #87/#116 open.
   fingerprint probe checks these forms in exact WebRTC revision b321f634.
   It does NOT validate reachability on Kenato's audio-only path or prove
   the fix in the built ARM64 .so. Those remain OPEN.
-- CVE-2026-106268: NVD
-  https://nvd.nist.gov/vuln/detail/CVE-2026-106268 records a Chrome fix,
-  but gives no verified upstream-to-m157 AAR mapping. **UNVERIFIED**;
-  never infer a native fix from Chrome 155.0.8059.39 or m157 version.
+- CVE-2026-106268: [Chrome's issue 565742177](https://issues.chromium.org/issues/565742177)
+  maps to [upstream WebRTC commit 82df4ce](https://webrtc.googlesource.com/src/+/82df4ce4226de25e1682351d7ba2e9bf9a198790)
+  (2026-09-25). Three pinned-source fingerprints independently demand that
+  stopped transceivers receive no transport, gain no channel, and execute
+  ordered network/worker channel teardown before removal. **Even PASS does
+  NOT prove compiled AAR remediation or completeness of all related fixes.**
+  Physical JNI, binary and patch-chain mapping are still required.
 - Publisher LICENSE is Apache-2.0; tag NOTICE includes BSD-style WebRTC and
   WebKit attributions. **Third-party/transitive binary license completeness is
   NOT verified**, and eventual redistribution must reproduce applicable
@@ -49,9 +52,9 @@ no WebRTC native code is compiled, patched, linked or loaded.
 
 ## Before #88 can be approved
 
-1. Establish upstream patch identity for CVE-2026-106268 and assess
-   CVE-2026-9962 applicability; source-to-built-binary remediation still
-   unverified for ALL applicable native fixes. Closed-source or absent lineage is a blocker.
+1. Assess applicability of all CVEs and independent source-to-built-binary
+   patch-chain/remediation proof for ALL applicable native fixes; source-only
+   fingerprints are insufficient for production. Closed-source or absent lineage is a blocker.
 2. Review exact applied Android publisher patch set, native link flags,
    transitive SPDX/NOTICE and release/source attestation; approved audit of
    the **actual** SHA-pinned ELF—not just source signatures.
