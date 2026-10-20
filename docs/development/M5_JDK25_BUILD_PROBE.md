@@ -39,3 +39,11 @@ source-to-AAR provenance, or exercise a physical Android phone.
    repository make test. Release-signing workflow changes require a
    separate explicit review and acceptance.
 4. Keep #88/#116/#87 open pending source security proof and physical tests.
+
+## CI adoption candidate (separate PR)
+
+Following the successful isolated run on PR #145 (1881 classfile entries,
+all major <=61), the next change tests JDK25 in standard Android CI,
+repository-wide make test and Java/Kotlin CodeQL only. The release signing
+workflow remains JDK17 until separately reviewed. Native and AAR vendor
+acceptance, physical JNI and #87 tests remain independent.
