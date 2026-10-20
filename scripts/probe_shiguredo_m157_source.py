@@ -23,10 +23,12 @@ EXPECTED_AAR_SHA256 = "b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340
 PUBLISHER_ROOT = "https://raw.githubusercontent.com/shiguredo-webrtc-build/webrtc-build/" + PUBLISHER_SHA + "/"
 GITILES_ROOT = "https://webrtc.googlesource.com/src/+/" + WEBRTC_SHA + "/"
 UPSTREAM_RTP_PATH = "modules/rtp_rtcp/source/rtp_format.cc"
+UPSTREAM_SCTP_PATH = "pc/sctp_data_channel.cc"
 MAX_VERSION = 4096
 MAX_NOTICE = 128 * 1024
 MAX_LICENSE = 128 * 1024
 MAX_RTP_BASE64 = 2 * 1024 * 1024
+MAX_SCTP_BASE64 = 2 * 1024 * 1024
 
 
 class SourceProbeError(ValueError):
@@ -44,7 +46,8 @@ def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
                    PUBLISHER_ROOT + "LICENSE",
                    PUBLISHER_ROOT + "NOTICE")
     elif host == "webrtc.googlesource.com":
-        allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",)
+        allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT")
     else:
         raise SourceProbeError("Source host outside exact allowlist")
     if parsed.hostname != host or url not in allowed:
@@ -116,10 +119,33 @@ def validate_vp9_source(source: str) -> None:
         raise SourceProbeError("CVE-2026-78891: old int payload signature present")
 
 
-def inspect_snapshots(version: str, license_text: str, notice: str, source: str) -> dict:
+def validate_sctp_source(source: str) -> None:
+    # CVE-2026-9962: Chromium bug 504716948, upstream fix 9b4ffb3
+    # (2026-05-06). Only a SOURCE fingerprint; Android ELF remains unproven.
+    if not re.search(r"void\s+SctpDataChannel::SendAsync\s*\(", source):
+        raise SourceProbeError("CVE-2026-9962: SendAsync method absent")
+    if not re.search(
+        r"scoped_refptr\s*<\s*SctpDataChannel\s*>\s+me\s*\(\s*this\s*\)\s*;",
+        source,
+    ):
+        raise SourceProbeError("CVE-2026-9962: reference-counted SendAsync receiver absent")
+    if not re.search(
+        r"network_thread_->PostTask\s*\(\s*\[\s*me\s*=\s*std::move\s*\(\s*me\s*\)",
+        source,
+    ):
+        raise SourceProbeError("CVE-2026-9962: posted task does not retain receiver")
+    if re.search(
+        r"network_thread_->PostTask\s*\(\s*SafeTask\s*\(\s*network_safety_",
+        source,
+    ):
+        raise SourceProbeError("CVE-2026-9962: unsafe task safety flag pattern present")
+
+
+def inspect_snapshots(version: str, license_text: str, notice: str, source: str, sctp_source: str) -> dict:
     validate_version(version)
     validate_licenses(license_text, notice)
     validate_vp9_source(source)
+    validate_sctp_source(sctp_source)
     return {
         "status": "PINNED_SOURCE_RESEARCH_PASS_NOT_BINARY_APPROVAL",
         "publisher_git_sha": PUBLISHER_SHA,
@@ -131,6 +157,8 @@ def inspect_snapshots(version: str, license_text: str, notice: str, source: str)
         "license_inventory_complete_for_binary": False,
         "cve_2026_78891_upstream_source_fix_signature": True,
         "cve_2026_78891_binary_remediation_verified": False,
+        "cve_2026_9962_upstream_source_fix_signature": True,
+        "cve_2026_9962_binary_remediation_verified": False,
         "cve_2026_9962_applicability_verified": False,
         "cve_2026_106268_binary_remediation_verified": False,
         "source_to_published_aar_reproducible": False,
@@ -149,13 +177,20 @@ def collect() -> dict:
         maximum=MAX_RTP_BASE64,
         host="webrtc.googlesource.com",
     )
+    sctp_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT",
+        maximum=MAX_SCTP_BASE64,
+        host="webrtc.googlesource.com",
+    )
     try:
         source = base64.b64decode(encoded, validate=True).decode("utf-8")
+        sctp_source = base64.b64decode(sctp_encoded, validate=True).decode("utf-8")
         return inspect_snapshots(
             version.decode("utf-8"),
             license_data.decode("utf-8"),
             notice.decode("utf-8"),
             source,
+            sctp_source,
         )
     except (UnicodeError, binascii.Error) as error:
         raise SourceProbeError("Invalid upstream encoded source") from error
