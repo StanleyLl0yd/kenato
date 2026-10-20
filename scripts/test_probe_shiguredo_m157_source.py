@@ -32,9 +32,32 @@ void SctpDataChannel::SendAsync(DataBuffer buffer) {
 }
 """
 
+GOOD_TRANSCEIVER_SOURCE = """
+void ApplyRemoteDescriptionUpdateTransceiverState() {
+  if (transceiver->mid() && !transceiver->stopped()) { }
+}
+void UpdateTransceiverChannel() {
+  if (content.rejected || transceiver->internal()->stopped()) { }
+}
+void SdpOfferAnswerHandler::RemoveStoppedTransceivers() {
+  ScopedOperationsBatcher network_teardown_tasks(context_->network_thread());
+  ScopedOperationsBatcher worker_tasks(context_->worker_thread());
+  if (transceiver->internal()->HasChannel()) {
+    network_teardown_tasks.Add(
+      transceiver->internal()->GetClearChannelNetworkTask());
+    worker_tasks.Add(
+      transceiver->internal()->GetDeleteChannelWorkerTask(false));
+  }
+  transceivers()->Remove(transceiver);
+  RTCError error = network_teardown_tasks.Run();
+  error = worker_tasks.Run();
+}
+void SdpOfferAnswerHandler::RemoveUnusedChannels() {}
+"""
+
 class ProbeTests(unittest.TestCase):
     def test_valid_snapshot_is_research_only(self):
-        report = probe.inspect_snapshots(GOOD_VERSION, GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE)
+        report = probe.inspect_snapshots(GOOD_VERSION, GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE, GOOD_TRANSCEIVER_SOURCE)
         self.assertFalse(report["vendor_approved_for_kenato"])
         self.assertFalse(report["cve_2026_78891_binary_remediation_verified"])
         self.assertFalse(report["license_inventory_complete_for_binary"])
@@ -43,7 +66,7 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.SourceProbeError, "VERSION mismatch"):
             probe.inspect_snapshots(
                 GOOD_VERSION.replace(probe.WEBRTC_SHA, "0" * 40),
-                GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE,
+                GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE, GOOD_TRANSCEIVER_SOURCE,
             )
 
     def test_duplicate_version_field_rejected(self):
@@ -111,6 +134,57 @@ class ProbeTests(unittest.TestCase):
                     maximum=128, host="webrtc.googlesource.com",
                 ), b"ZGF0YQ=="
             )
+
+    def test_transceiver_fixed_guards_pass(self):
+        probe.validate_transceiver_source(GOOD_TRANSCEIVER_SOURCE)
+
+    def test_transceiver_transport_guard_absent_fails(self):
+        bad = GOOD_TRANSCEIVER_SOURCE.replace(
+            "transceiver->mid() && !transceiver->stopped()", "transceiver->mid()"
+        )
+        with self.assertRaisesRegex(probe.SourceProbeError, "transport guard"):
+            probe.validate_transceiver_source(bad)
+
+    def test_transceiver_channel_guard_absent_fails(self):
+        bad = GOOD_TRANSCEIVER_SOURCE.replace(
+            "content.rejected || transceiver->internal()->stopped()", "content.rejected"
+        )
+        with self.assertRaisesRegex(probe.SourceProbeError, "channel guard"):
+            probe.validate_transceiver_source(bad)
+
+    def test_transceiver_remove_before_teardown_fails(self):
+        bad = GOOD_TRANSCEIVER_SOURCE.replace(
+            "  transceivers()->Remove(transceiver);\n  RTCError error = network_teardown_tasks.Run();",
+            "  RTCError error = network_teardown_tasks.Run();\n  transceivers()->Remove(transceiver);"
+        )
+        with self.assertRaisesRegex(probe.SourceProbeError, "ordered removal"):
+            probe.validate_transceiver_source(bad)
+
+    def test_transceiver_no_worker_teardown_fails(self):
+        bad = GOOD_TRANSCEIVER_SOURCE.replace("GetDeleteChannelWorkerTask(", "MissingWorkerTask(")
+        with self.assertRaisesRegex(probe.SourceProbeError, "ordered removal"):
+            probe.validate_transceiver_source(bad)
+
+    def test_transceiver_missing_method_fails(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "method missing"):
+            probe.validate_transceiver_source(
+                GOOD_TRANSCEIVER_SOURCE.split(
+                    "void SdpOfferAnswerHandler::RemoveStoppedTransceivers()"
+                )[0]
+            )
+
+    def test_transceiver_pinned_gitiles_path_allowlisted(self):
+        from unittest.mock import patch
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0,
+            stdout=b"ZGF0YQ==\n@@KENATO_STATUS:200", stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            result = probe.fetch_exact(
+                probe.GITILES_ROOT + probe.UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT",
+                maximum=128, host="webrtc.googlesource.com",
+            )
+            self.assertEqual(result, b"ZGF0YQ==")
 
     def test_http_redirect_is_rejected(self):
         outcome = probe.subprocess.CompletedProcess(
