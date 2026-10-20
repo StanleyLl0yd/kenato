@@ -22,9 +22,19 @@ if (SafeGt(payload.size(), limits.max_payload_len * 0x7000)) {}
 """
 
 
+GOOD_SCTP_SOURCE = """
+void SctpDataChannel::SendAsync(DataBuffer buffer) {
+  scoped_refptr<SctpDataChannel> me(this);
+  network_thread_->PostTask([me = std::move(me), buffer = std::move(buffer)]() mutable {
+    RTC_DCHECK_RUN_ON(me->network_thread_);
+    RTCError err = me->SendImpl(std::move(buffer));
+  });
+}
+"""
+
 class ProbeTests(unittest.TestCase):
     def test_valid_snapshot_is_research_only(self):
-        report = probe.inspect_snapshots(GOOD_VERSION, GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE)
+        report = probe.inspect_snapshots(GOOD_VERSION, GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE)
         self.assertFalse(report["vendor_approved_for_kenato"])
         self.assertFalse(report["cve_2026_78891_binary_remediation_verified"])
         self.assertFalse(report["license_inventory_complete_for_binary"])
@@ -33,7 +43,7 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.SourceProbeError, "VERSION mismatch"):
             probe.inspect_snapshots(
                 GOOD_VERSION.replace(probe.WEBRTC_SHA, "0" * 40),
-                GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE,
+                GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE,
             )
 
     def test_duplicate_version_field_rejected(self):
@@ -58,6 +68,48 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.SourceProbeError, "old int"):
             probe.validate_vp9_source(
                 GOOD_SOURCE + "RtpPacketizer::SplitAboutEqually(int payload_len)"
+            )
+
+    def test_sctp_fixed_ref_counted_task_passes(self):
+        probe.validate_sctp_source(GOOD_SCTP_SOURCE)
+
+    def test_sctp_old_raw_this_task_rejected(self):
+        vulnerable = GOOD_SCTP_SOURCE.replace(
+            "scoped_refptr<SctpDataChannel> me(this);", ""
+        ).replace("me = std::move(me)", "this")
+        with self.assertRaisesRegex(probe.SourceProbeError, "reference-counted"):
+            probe.validate_sctp_source(vulnerable)
+
+    def test_sctp_nonretaining_post_task_rejected(self):
+        vulnerable = GOOD_SCTP_SOURCE.replace(
+            "[me = std::move(me), buffer", "[this, buffer"
+        )
+        with self.assertRaisesRegex(probe.SourceProbeError, "does not retain"):
+            probe.validate_sctp_source(vulnerable)
+
+    def test_sctp_old_safety_flag_rejected_even_if_fixed_pattern_exists(self):
+        vulnerable = GOOD_SCTP_SOURCE + (
+            "\nnetwork_thread_->PostTask(SafeTask(network_safety_, [this]{}));\n"
+        )
+        with self.assertRaisesRegex(probe.SourceProbeError, "unsafe task"):
+            probe.validate_sctp_source(vulnerable)
+
+    def test_sctp_missing_method_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "SendAsync method absent"):
+            probe.validate_sctp_source("")
+
+    def test_sctp_exact_gitiles_path_allowlisted(self):
+        from unittest.mock import patch
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0,
+            stdout=b"ZGF0YQ==\n@@KENATO_STATUS:200", stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            self.assertEqual(
+                probe.fetch_exact(
+                    probe.GITILES_ROOT + probe.UPSTREAM_SCTP_PATH + "?format=TEXT",
+                    maximum=128, host="webrtc.googlesource.com",
+                ), b"ZGF0YQ=="
             )
 
     def test_http_redirect_is_rejected(self):
