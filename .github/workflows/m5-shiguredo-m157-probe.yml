@@ -1,0 +1,102 @@
+name: M5 Shiguredo m157 ARM64 prebuilt AAR probe (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-shiguredo-m157-probe.yml"
+      - "scripts/probe_shiguredo_m157.py"
+      - "scripts/test_probe_shiguredo_m157.py"
+      - "scripts/probe_shiguredo_m157_d8.py"
+      - "scripts/test_probe_shiguredo_m157_d8.py"
+      - "scripts/audit_webrtc_aar.py"
+      - "scripts/test_audit_webrtc_aar.py"
+      - "scripts/collect_webrtc_candidate_evidence.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pinned-arm64-prebuilt:
+    name: Verify publisher asset digest and inspect AAR (no execution)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify CI supply chain
+        run: python3 scripts/verify_ci_supply_chain.py
+
+      - name: Offline AAR policy tests
+        run: |
+          python3 scripts/test_audit_webrtc_aar.py
+          python3 scripts/test_probe_shiguredo_m157.py
+
+      - name: Download pinned publisher m157 AAR and inspect ARM64 without running native code
+        run: python3 scripts/probe_shiguredo_m157.py --output /tmp/kenato-shiguredo-m157-evidence.json
+
+      - name: Publish JSON only (never third-party binary)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m157-arm64-evidence
+          path: /tmp/kenato-shiguredo-m157-evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  disposable-jdk25-d8:
+    name: Test Java25 AAR with JDK25, AGP9.4 and arm64 D8 (not production)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify CI supply chain
+        run: python3 scripts/verify_ci_supply_chain.py
+      - name: Verify Gradle Wrapper
+        run: echo "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+      - name: Set up isolated JDK25
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          verify-signature: true
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+          validate-wrappers: true
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: platform-tools
+      - name: Install Android SDK 37
+        run: >
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --channel=3
+          "platforms;android-37.0"
+          "build-tools;37.0.0"
+      - name: Offline disposable smoke tests
+        run: python3 scripts/test_probe_shiguredo_m157_d8.py
+      - name: Build disposable JDK25 ARM64 test app using published prebuilt AAR
+        run: >
+          python3 scripts/probe_shiguredo_m157_d8.py
+          --gradlew ./gradlew
+          --output /tmp/kenato-m157-jdk25-d8.json
+      - name: Upload research JSON only (no AAR/APK)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m157-jdk25-d8-research
+          path: /tmp/kenato-m157-jdk25-d8.json
+          if-no-files-found: ignore
+          retention-days: 7

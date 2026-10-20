@@ -291,6 +291,37 @@ class AarAuditTests(unittest.TestCase):
             self.assertEqual({"61": 1}, report["java_classfile_major_counts"])
             self.assertNotEqual(expected, hashlib.sha256(path.read_bytes()).hexdigest())
 
+    def test_pinned_arm64_only_research_does_not_weaken_default_abi_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), missing="armeabi-v7a")
+            with self.assertRaises(audit.AarAuditError):
+                audit.audit_aar(path, report_only=True)
+            report = audit.audit_aar(
+                path, report_only=True, required_abis=frozenset(("arm64-v8a",)),
+            )
+            self.assertEqual(["arm64-v8a"], report["required_abis"])
+            self.assertIn("x86_64", report["optional_abis_present"])
+            for invalid in (frozenset(), frozenset(("unknown-abi",))):
+                with self.assertRaises(audit.AarAuditError):
+                    audit.audit_aar(path, report_only=True, required_abis=invalid)
+            path = aar_file(Path(tmp), missing="arm64-v8a")
+            with self.assertRaises(audit.AarAuditError):
+                audit.audit_aar(
+                    path, report_only=True,
+                    required_abis=frozenset(("arm64-v8a",)),
+                )
+
+    def test_java25_research_override_cannot_change_production_java17_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = aar_file(Path(tmp), class_major=69)
+            with self.assertRaisesRegex(audit.AarAuditError, "Unsupported Java"):
+                audit.audit_aar(path, report_only=True)
+            result = audit.audit_aar(path, report_only=True, max_classfile_major=69)
+            self.assertIn("69", result["java_classfile_major_counts"])
+            self.assertEqual(69, result["audit_max_java_classfile_major"])
+            with self.assertRaises(audit.AarAuditError):
+                audit.audit_aar(path, report_only=True, max_classfile_major=70)
+
     def test_missing_digest_is_never_a_valid_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = aar_file(Path(tmp))

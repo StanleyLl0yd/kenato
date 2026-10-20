@@ -220,7 +220,9 @@ def _require_webrtc_class_identity(contents: bytes) -> None:
         raise AarAuditError("WebRTC PeerConnection.class declares another class identity")
 
 
-def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[dict[int, int], bool]:
+def _audit_classes_jar(
+    zipped: zipfile.ZipFile, info: zipfile.ZipInfo, *, max_classfile_major: int = MAX_CLASSFILE_MAJOR,
+) -> tuple[dict[int, int], bool]:
     """Inspect the nested JAR, not just its ZIP signature.
 
     This proves bounded ZIP/classfile structure, NOT that lowering a Java 21
@@ -270,7 +272,7 @@ def _audit_classes_jar(zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[
                     with jar.open(item) as klass:
                         header = klass.read(8)
                     magic, minor, major = struct.unpack(">IHH", header)
-                    if magic != 0xCAFEBABE or minor == 65535 or not 45 <= major <= MAX_CLASSFILE_MAJOR:
+                    if magic != 0xCAFEBABE or minor == 65535 or not 45 <= major <= max_classfile_major:
                         raise AarAuditError(
                             f"Unsupported Java classfile version {major}.{minor}"
                         )
@@ -388,7 +390,8 @@ def _validate_binary_manifest_chunks(zipped: zipfile.ZipFile, info: zipfile.ZipI
 
 
 def _validate_required_content(
-    zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo]
+    zipped: zipfile.ZipFile, files: dict[str, zipfile.ZipInfo], *,
+    max_classfile_major: int = MAX_CLASSFILE_MAJOR,
 ) -> tuple[dict[int, int], str]:
     # Some valid Android AARs keep the public WebRTC API in libs/libwebrtc.jar
     # while classes.jar holds wrapper metadata. Do not accept arbitrary JAR paths.
@@ -403,7 +406,7 @@ def _validate_required_content(
         with zipped.open(files[jar_path]) as stream:
             if stream.read(4) != b"PK\x03\x04":
                 raise AarAuditError("AAR nested Java library is not a JAR/ZIP")
-        jar_versions, has_api = _audit_classes_jar(zipped, files[jar_path])
+        jar_versions, has_api = _audit_classes_jar(zipped, files[jar_path], max_classfile_major=max_classfile_major)
         for major, count in jar_versions.items():
             class_versions[major] = class_versions.get(major, 0) + count
         if has_api:
@@ -454,12 +457,20 @@ def audit_aar(
     *,
     expected_sha256: str | None = None,
     report_only: bool = False,
+    required_abis: frozenset[str] | None = None,
+    max_classfile_major: int = MAX_CLASSFILE_MAJOR,
 ) -> dict:
     """Validate integrity + AAR layout without ever executing native code.
 
     A verification requires independently obtained SHA-256. Report-only mode
     prints an observed digest but deliberately never claims a verified binary.
     """
+    if max_classfile_major not in (MAX_CLASSFILE_MAJOR, 69):
+        raise AarAuditError("Only JDK 17 production or JDK 25 research classfile limits are supported")
+    if required_abis is None:
+        required_abis = frozenset(REQUIRED_ABIS)
+    if not required_abis or not required_abis.issubset(SUPPORTED_ABIS):
+        raise AarAuditError("Required ABI selection must be a nonempty supported subset")
     # Keep the snapshot open through ZIP/classfile validation. Hash verification
     # of path A followed by reopening path B would allow an artifact-swap race.
     with tempfile.TemporaryFile() as snapshot:
@@ -467,6 +478,8 @@ def audit_aar(
             Path(path), snapshot,
             expected_sha256=expected_sha256,
             report_only=report_only,
+            required_abis=required_abis,
+            max_classfile_major=max_classfile_major,
         )
 
 
@@ -476,6 +489,8 @@ def _audit_aar_snapshot(
     *,
     expected_sha256: str | None,
     report_only: bool,
+    required_abis: frozenset[str],
+    max_classfile_major: int,
 ) -> dict:
     if not report_only and expected_sha256 is None:
         raise AarAuditError("Expected SHA-256 is required for verification")
@@ -540,12 +555,14 @@ def _audit_aar_snapshot(
             files = {i.filename: i for i in entries if not i.is_dir()}
             if not {"classes.jar", "AndroidManifest.xml"}.issubset(files):
                 raise AarAuditError("AAR is missing classes.jar or AndroidManifest.xml")
-            class_versions, api_jar_path = _validate_required_content(zipped, files)
-            required_names = [libnames[abi] for abi in REQUIRED_ABIS]
+            class_versions, api_jar_path = _validate_required_content(
+                zipped, files, max_classfile_major=max_classfile_major,
+            )
+            required_names = [libnames[abi] for abi in sorted(required_abis)]
             if not all(required_names) or len({frozenset(x) for x in required_names}) != 1:
                 raise AarAuditError("Required ABI libraries missing or inconsistent across ABIs")
             canonical_names = required_names[0]
-            for abi in OPTIONAL_ABIS:
+            for abi in (SUPPORTED_ABIS.keys() - required_abis):
                 if libnames[abi] and libnames[abi] != canonical_names:
                     raise AarAuditError(f"Optional ABI libraries inconsistent for {abi}")
             if zipped.testzip() is not None:
@@ -558,8 +575,9 @@ def _audit_aar_snapshot(
         "verified_against_expected_sha256": expected_sha256 is not None,
         "file_bytes": snapshot_bytes,
         "uncompressed_bytes": total_size,
-        "required_abis": sorted(REQUIRED_ABIS),
-        "optional_abis_present": sorted(abi for abi in OPTIONAL_ABIS if libnames[abi]),
+        "required_abis": sorted(required_abis),
+        "audit_max_java_classfile_major": max_classfile_major,
+        "optional_abis_present": sorted(abi for abi in SUPPORTED_ABIS.keys() - required_abis if libnames[abi]),
         "native_paths": sorted(native_paths),
         "webrtc_api_jar": api_jar_path,
         "java_classfile_major_counts": {str(k): class_versions[k] for k in sorted(class_versions)},
