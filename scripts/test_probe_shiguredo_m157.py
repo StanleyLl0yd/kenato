@@ -43,6 +43,58 @@ class ReadyMadeVendorTests(unittest.TestCase):
             with self.assertRaises(m157.CandidateProbeError):
                 m157.collect(downloader=fake_download)
 
+    def test_embedded_notice_paths_are_inventory_only(self):
+        import io
+        import zipfile
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "synthetic.aar"
+            api = io.BytesIO()
+            with zipfile.ZipFile(api, "w") as nested:
+                nested.writestr("org/webrtc/LoggingJni.class", b"synthetic")
+            with zipfile.ZipFile(out, "w") as aar:
+                aar.writestr("classes.jar", api.getvalue())
+            details = {
+                "sha256": m157.EXPECTED_SHA256,
+                "file_bytes": m157.EXPECTED_SIZE,
+                "native_paths": ["jni/arm64-v8a/libjingle_peerconnection_so.so"],
+                "webrtc_api_jar": "classes.jar",
+                "java_classfile_major_counts": {"69": 1},
+                "required_abis": ["arm64-v8a"],
+                "optional_abis_present": [],
+                "embedded_license_or_notice_paths": ["META-INF/NOTICE"],
+            }
+            with mock.patch.object(m157.evidence.audit, "audit_aar", return_value=details):
+                result = m157.inspect_pinned_aar(out)
+            self.assertEqual(result["embedded_license_or_notice_paths"], ["META-INF/NOTICE"])
+            self.assertFalse(result["license_and_notice_binary_inventory_complete"])
+            self.assertFalse(result["vendor_approved_for_kenato"])
+
+    def test_empty_aar_notice_is_never_automatically_approved(self):
+        import io
+        import zipfile
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "synthetic.aar"
+            api = io.BytesIO()
+            with zipfile.ZipFile(api, "w") as nested:
+                nested.writestr("org/webrtc/LoggingJni.class", b"synthetic")
+            with zipfile.ZipFile(out, "w") as aar:
+                aar.writestr("classes.jar", api.getvalue())
+            details = {
+                "sha256": m157.EXPECTED_SHA256,
+                "file_bytes": m157.EXPECTED_SIZE,
+                "native_paths": ["jni/arm64-v8a/libjingle_peerconnection_so.so"],
+                "webrtc_api_jar": "classes.jar",
+                "java_classfile_major_counts": {"69": 1},
+                "required_abis": ["arm64-v8a"],
+                "optional_abis_present": [],
+                "embedded_license_or_notice_paths": [],
+            }
+            with mock.patch.object(m157.evidence.audit, "audit_aar", return_value=details):
+                result = m157.inspect_pinned_aar(out)
+            self.assertEqual(result["embedded_license_or_notice_paths"], [])
+            self.assertFalse(result["license_and_notice_binary_inventory_complete"])
+            self.assertFalse(result["vendor_approved_for_kenato"])
+
     def test_invalid_research_abi_is_rejected_by_existing_auditor(self):
         with mock.patch.object(m157.evidence.audit, "audit_aar",
                                side_effect=m157.evidence.audit.AarAuditError("no ARM64")):
