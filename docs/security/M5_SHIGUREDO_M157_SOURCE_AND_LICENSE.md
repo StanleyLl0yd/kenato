@@ -24,10 +24,14 @@ Parent #88; keep #87/#116 open.
   Even a PASS proves a **source fingerprint only**, not that the published
   ARM64 libjingle_peerconnection_so.so contains the fix. Shiguredo applies
   publisher patches before compilation.
-- CVE-2026-9962: public Chrome advisory refers to the Chrome update
-  https://github.com/advisories/GHSA-xf76-hmq4-v7qj but does not establish
-  the exact upstream WebRTC patch or independently proven Android AAR scope.
-  **UNVERIFIED**, not inferred safe from m157 > m148.
+- CVE-2026-9962: advisory https://github.com/advisories/GHSA-xf76-hmq4-v7qj
+  maps to Chromium issue https://issues.chromium.org/issues/504716948;
+  upstream fix https://webrtc.googlesource.com/src/+/9b4ffb3281c02327968ed07389082fcb2dd77baa
+  (2026-05-06) ref-counts SctpDataChannel in SendAsync posted tasks instead of
+  using the network_safety_ flag with a raw this capture. A pinned-source
+  fingerprint probe checks these forms in exact WebRTC revision b321f634.
+  It does NOT validate reachability on Kenato's audio-only path or prove
+  the fix in the built ARM64 .so. Those remain OPEN.
 - CVE-2026-106268: NVD
   https://nvd.nist.gov/vuln/detail/CVE-2026-106268 records a Chrome fix,
   but gives no verified upstream-to-m157 AAR mapping. **UNVERIFIED**;
@@ -45,9 +49,9 @@ no WebRTC native code is compiled, patched, linked or loaded.
 
 ## Before #88 can be approved
 
-1. Establish upstream patch identity and applicability for CVE-2026-9962 and
-   CVE-2026-106268; independent source-to-build mapping for all applicable
-   native fixes. Closed-source or absent lineage is a blocker.
+1. Establish upstream patch identity for CVE-2026-106268 and assess
+   CVE-2026-9962 applicability; source-to-built-binary remediation still
+   unverified for ALL applicable native fixes. Closed-source or absent lineage is a blocker.
 2. Review exact applied Android publisher patch set, native link flags,
    transitive SPDX/NOTICE and release/source attestation; approved audit of
    the **actual** SHA-pinned ELF—not just source signatures.
