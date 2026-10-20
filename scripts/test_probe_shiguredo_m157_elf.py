@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -12,11 +13,26 @@ from unittest.mock import patch
 import probe_shiguredo_m157_elf as probe
 
 
+def valid_arm64_elf(*, align: int = 16384, vaddr: int = 0,
+                    ph_type: int = 1) -> bytes:
+    raw = bytearray(120)
+    raw[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<H", raw, 16, 3)       # ET_DYN
+    struct.pack_into("<H", raw, 18, 183)     # AArch64
+    struct.pack_into("<Q", raw, 32, 64)      # e_phoff
+    struct.pack_into("<H", raw, 54, 56)      # phentsize
+    struct.pack_into("<H", raw, 56, 1)       # phnum
+    struct.pack_into("<I", raw, 64, ph_type) # p_type
+    struct.pack_into("<Q", raw, 80, vaddr)   # p_vaddr
+    struct.pack_into("<Q", raw, 112, align)  # p_align
+    return bytes(raw)
+
+
 class NativeInventoryTests(unittest.TestCase):
     def test_exact_structural_input_reports_only_static_attributes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic.aar"
-            raw = b"Z" * 64
+            raw = valid_arm64_elf()
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(probe.LIB_PATH, raw)
             fake = {
@@ -37,6 +53,25 @@ class NativeInventoryTests(unittest.TestCase):
             self.assertFalse(result["symbol_presence_proves_cve_fix"])
             self.assertFalse(result["source_to_native_binary_reproducibility_verified"])
             self.assertEqual(result["native_arm64"]["sha256"], fake["sha256"])
+
+    def test_16k_load_alignment_guard(self):
+        self.assertEqual(probe.require_16k_elf_loads(valid_arm64_elf()), [16384])
+
+    def test_4k_load_alignment_rejected(self):
+        with self.assertRaisesRegex(probe.M157NativeError, "below 16KiB"):
+            probe.require_16k_elf_loads(valid_arm64_elf(align=4096))
+
+    def test_misaligned_segment_rejected(self):
+        with self.assertRaisesRegex(probe.M157NativeError, "congruency"):
+            probe.require_16k_elf_loads(valid_arm64_elf(vaddr=17))
+
+    def test_no_load_segment_rejected(self):
+        with self.assertRaisesRegex(probe.M157NativeError, "No PT_LOAD"):
+            probe.require_16k_elf_loads(valid_arm64_elf(ph_type=2))
+
+    def test_short_or_corrupted_elf_rejected(self):
+        with self.assertRaises(probe.M157NativeError):
+            probe.require_16k_elf_loads(b"\x7fELF")
 
     def test_wrong_abi_path_fails(self):
         with tempfile.TemporaryDirectory() as directory:
