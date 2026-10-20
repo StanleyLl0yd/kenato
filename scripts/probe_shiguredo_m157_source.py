@@ -24,11 +24,13 @@ PUBLISHER_ROOT = "https://raw.githubusercontent.com/shiguredo-webrtc-build/webrt
 GITILES_ROOT = "https://webrtc.googlesource.com/src/+/" + WEBRTC_SHA + "/"
 UPSTREAM_RTP_PATH = "modules/rtp_rtcp/source/rtp_format.cc"
 UPSTREAM_SCTP_PATH = "pc/sctp_data_channel.cc"
+UPSTREAM_TRANSCEIVER_PATH = "pc/sdp_offer_answer.cc"
 MAX_VERSION = 4096
 MAX_NOTICE = 128 * 1024
 MAX_LICENSE = 128 * 1024
 MAX_RTP_BASE64 = 2 * 1024 * 1024
 MAX_SCTP_BASE64 = 2 * 1024 * 1024
+MAX_TRANSCEIVER_BASE64 = 4 * 1024 * 1024
 
 
 class SourceProbeError(ValueError):
@@ -47,7 +49,8 @@ def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
                    PUBLISHER_ROOT + "NOTICE")
     elif host == "webrtc.googlesource.com":
         allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",
-                   GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT")
+                   GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT")
     else:
         raise SourceProbeError("Source host outside exact allowlist")
     if parsed.hostname != host or url not in allowed:
@@ -141,11 +144,49 @@ def validate_sctp_source(source: str) -> None:
         raise SourceProbeError("CVE-2026-9962: unsafe task safety flag pattern present")
 
 
-def inspect_snapshots(version: str, license_text: str, notice: str, source: str, sctp_source: str) -> dict:
+def validate_transceiver_source(source: str) -> None:
+    """CVE-2026-106268 pinned-source fingerprint; NOT native binary proof.
+
+    Upstream 82df4ce4226de25e1682351d7ba2e9bf9a198790 (2026-09-25).
+    The three invariants cover stopped transceiver transport, channel creation,
+    and ordered channel teardown before dropping its last reference.
+    """
+    if not re.search(
+        r"if\s*\(\s*transceiver->mid\(\)\s*&&\s*!transceiver->stopped\(\)\s*\)",
+        source,
+    ):
+        raise SourceProbeError("CVE-2026-106268: stopped transceiver transport guard absent")
+    if not re.search(
+        r"if\s*\(\s*content\.rejected\s*\|\|\s*transceiver->internal\(\)->stopped\(\)\s*\)",
+        source,
+    ):
+        raise SourceProbeError("CVE-2026-106268: stopped transceiver channel guard absent")
+    start = source.find("void SdpOfferAnswerHandler::RemoveStoppedTransceivers(")
+    end = source.find("void SdpOfferAnswerHandler::RemoveUnusedChannels(", start + 1)
+    if start < 0 or end <= start:
+        raise SourceProbeError("CVE-2026-106268: transceiver removal method missing")
+    section = source[start:end]
+    required = [
+        "ScopedOperationsBatcher network_teardown_tasks(",
+        "ScopedOperationsBatcher worker_tasks(",
+        "if (transceiver->internal()->HasChannel())",
+        "GetClearChannelNetworkTask()",
+        "GetDeleteChannelWorkerTask(",
+        "transceivers()->Remove(transceiver)",
+        "network_teardown_tasks.Run()",
+        "worker_tasks.Run()",
+    ]
+    positions = [section.find(token) for token in required]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        raise SourceProbeError("CVE-2026-106268: ordered removal/teardown guard absent")
+
+
+def inspect_snapshots(version: str, license_text: str, notice: str, source: str, sctp_source: str, transceiver_source: str) -> dict:
     validate_version(version)
     validate_licenses(license_text, notice)
     validate_vp9_source(source)
     validate_sctp_source(sctp_source)
+    validate_transceiver_source(transceiver_source)
     return {
         "status": "PINNED_SOURCE_RESEARCH_PASS_NOT_BINARY_APPROVAL",
         "publisher_git_sha": PUBLISHER_SHA,
@@ -160,6 +201,7 @@ def inspect_snapshots(version: str, license_text: str, notice: str, source: str,
         "cve_2026_9962_upstream_source_fix_signature": True,
         "cve_2026_9962_binary_remediation_verified": False,
         "cve_2026_9962_applicability_verified": False,
+        "cve_2026_106268_upstream_source_fix_signature": True,
         "cve_2026_106268_binary_remediation_verified": False,
         "source_to_published_aar_reproducible": False,
         "producer_patches_and_transitive_components_approved": False,
@@ -182,15 +224,22 @@ def collect() -> dict:
         maximum=MAX_SCTP_BASE64,
         host="webrtc.googlesource.com",
     )
+    transceiver_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT",
+        maximum=MAX_TRANSCEIVER_BASE64,
+        host="webrtc.googlesource.com",
+    )
     try:
         source = base64.b64decode(encoded, validate=True).decode("utf-8")
         sctp_source = base64.b64decode(sctp_encoded, validate=True).decode("utf-8")
+        transceiver_source = base64.b64decode(transceiver_encoded, validate=True).decode("utf-8")
         return inspect_snapshots(
             version.decode("utf-8"),
             license_data.decode("utf-8"),
             notice.decode("utf-8"),
             source,
             sctp_source,
+            transceiver_source,
         )
     except (UnicodeError, binascii.Error) as error:
         raise SourceProbeError("Invalid upstream encoded source") from error
