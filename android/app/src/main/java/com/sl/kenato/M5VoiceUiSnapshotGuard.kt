@@ -20,8 +20,16 @@ internal object M5VoiceUiSnapshotGuard {
         incoming: M45AcceptanceUiState,
         foreground: Boolean,
     ): M45AcceptanceUiState {
+        // An old Activity epoch cannot overwrite current contact/message/UI state.
+        // Preserve only the completed worker's busy release; QR data remains redacted.
+        if (current.voiceUiEpoch != incoming.voiceUiEpoch) {
+            return current.copy(
+                busy = incoming.busy,
+                voiceChallengeQr = null,
+                voiceProofQr = null,
+            )
+        }
         val mayExpose = foreground &&
-            current.voiceUiEpoch == incoming.voiceUiEpoch &&
             current.selectedPeerIdentityId == incoming.selectedPeerIdentityId
         return incoming.copy(
             voiceUiEpoch = current.voiceUiEpoch,
