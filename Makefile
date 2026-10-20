@@ -71,6 +71,7 @@ test-security:
 	python3 scripts/test_probe_shiguredo_m157_d8.py
 	python3 scripts/test_probe_shiguredo_m157_elf.py
 	python3 scripts/test_probe_shiguredo_m157_source.py
+	python3 scripts/test_verify_shiguredo_m157_producer_archive.py
 	python3 scripts/test_audit_kenato_jvm_target.py
 	python3 scripts/verify_m5_media_boundary.py
 	python3 scripts/test_verify_m5_media_boundary.py
