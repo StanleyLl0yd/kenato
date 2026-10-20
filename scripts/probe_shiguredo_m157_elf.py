@@ -25,7 +25,10 @@ def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
     if baseline["status"] != "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL":
         raise M157NativeError("Vendor AAR structure not approved for research")
     with zipfile.ZipFile(path) as archive:
-        member = archive.getinfo(LIB_PATH)
+        try:
+            member = archive.getinfo(LIB_PATH)
+        except KeyError as error:
+            raise M157NativeError("Expected ARM64 ELF absent from pinned AAR") from error
         if member.file_size < 52 or member.file_size > native.LIMIT:
             raise M157NativeError("Native ARM64 library absent or oversized")
         with archive.open(member) as source:

@@ -45,18 +45,19 @@ class NativeInventoryTests(unittest.TestCase):
                 z.writestr("jni/x86_64/libjingle_peerconnection_so.so", b"Z" * 64)
             with patch.object(probe.m157, "inspect_pinned_aar",
                               return_value={"status": "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL"}):
-                with self.assertRaises(KeyError):
+                with self.assertRaisesRegex(probe.M157NativeError, "absent"):
                     probe.inventory(file)
 
     def test_oversized_elf_refused_before_readelf(self):
         with tempfile.TemporaryDirectory() as directory:
             file = Path(directory) / "synthetic.aar"
             with zipfile.ZipFile(file, "w") as z:
-                z.writestr(probe.LIB_PATH, b"Z" * (probe.native.LIMIT + 1))
-            with patch.object(probe.m157, "inspect_pinned_aar",
-                              return_value={"status": "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL"}):
-                with self.assertRaisesRegex(probe.M157NativeError, "oversized"):
-                    probe.inventory(file, scanner=lambda *x: self.fail("must not execute"))
+                z.writestr(probe.LIB_PATH, b"Z" * 129)
+            with patch.object(probe.native, "LIMIT", 128):
+                with patch.object(probe.m157, "inspect_pinned_aar",
+                                  return_value={"status": "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL"}):
+                    with self.assertRaisesRegex(probe.M157NativeError, "oversized"):
+                        probe.inventory(file, scanner=lambda *x: self.fail("must not execute"))
 
     def test_download_mismatch_blocks_before_binary_read(self):
         def fake_download(_url, output, *, max_bytes):
