@@ -108,6 +108,42 @@ class VoiceOutboundHandoffStagerTest {
     }
 
     @Test
+    fun expiryDuringSerializedM3BuilderPreventsDurableVoiceHandoff() {
+        val f = Fixture()
+        f.approve()
+        f.sessions.beforeBuilder = { f.now = NOW + 30 }
+        assertThrows(VoiceOutboundStagingException::class.java) {
+            f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+        }
+        assertEquals(1, f.sessions.calls)
+        assertTrue(f.sessions.commits.isEmpty())
+    }
+
+    @Test
+    fun backwardsClockDuringSerializedBuilderFailsClosed() {
+        val f = Fixture()
+        f.approve()
+        f.sessions.beforeBuilder = { f.now = NOW - 1 }
+        assertThrows(VoiceOutboundStagingException::class.java) {
+            f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+        }
+        assertEquals(1, f.sessions.calls)
+        assertTrue(f.sessions.commits.isEmpty())
+    }
+
+    @Test
+    fun notYetExpiredM3BuilderCanStillStageVoice() {
+        val f = Fixture()
+        f.approve()
+        f.sessions.beforeBuilder = { f.now = NOW + 29 }
+        val staged = f.stager().stage(
+            OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30,
+        )
+        assertEquals(1, f.sessions.commits.size)
+        assertArrayEquals(f.sessions.commits.single().messageId, staged.messageId)
+    }
+
+    @Test
     fun cryptoContextSubstitutionCannotCreateHandoff() {
         val f = Fixture()
         f.approve()
@@ -195,6 +231,7 @@ class VoiceOutboundHandoffStagerTest {
             VoiceCapabilityConsentClock { NOW },
         )
         val sessions = FakeSessions(peer)
+        var now = NOW
         var messageId = ByteArray(16) { 7 }
         private val history = ConversationHistoryRepository(
             object : ConversationHistoryStore {
@@ -220,7 +257,7 @@ class VoiceOutboundHandoffStagerTest {
             handoffs = sessions,
             history = history,
             messageIds = MessagingMessageIdGenerator { messageId.copyOf() },
-            clock = MessagingOutboundClock { NOW },
+            clock = MessagingOutboundClock { now },
         )
 
         fun approve() {
