@@ -99,6 +99,7 @@ internal class VoiceCallAdmissionCoordinator(
     }
     private val ownerEncoded = encode(owner)
     private var state = VoiceCallSnapshot()
+    private val timeoutFence = VoiceCallMonotonicTimeoutFence()
 
     @Synchronized
     fun snapshot(): VoiceCallSnapshot = state.copy(
@@ -225,19 +226,50 @@ internal class VoiceCallAdmissionCoordinator(
         }
     }
 
-    /** All asynchronous media/timeouts must carry the originally admitted exact call key. */
+    /**
+     * Only genuine asynchronous media callbacks are accepted here.
+     * Timeouts MUST enter through [timeoutCallback] with their exact issued ticket.
+     */
     @Synchronized
     fun callback(kind: VoiceCallEventKind, key: VoiceCallKey): VoiceCallTransition {
         if (kind !in setOf(
                 VoiceCallEventKind.MEDIA_CONNECTED,
                 VoiceCallEventKind.MEDIA_FAILED,
-                VoiceCallEventKind.RING_TIMEOUT,
-                VoiceCallEventKind.CONNECT_TIMEOUT,
             )
-        ) throw VoiceCallAdmissionException("Unclaimed network event supplied through callback")
+        ) throw VoiceCallAdmissionException("Unclaimed timeout/network event supplied through callback")
+        return admitLocalCallback(kind, key)
+    }
+
+    /**
+     * The coordinator owns exactly one timeout fence, never a caller-supplied
+     * fence. The future runtime must serialize timers and effect execution with
+     * this authenticated owner; no scheduling or media is performed here.
+     */
+    @Synchronized
+    fun issueTimeout(nowElapsedMillis: Long, delayMillis: Long): VoiceCallMonotonicTimeoutFence.Ticket =
+        timeoutFence.issue(state, nowElapsedMillis, delayMillis)
+
+    /** Lifecycle close/revocation may proactively invalidate outstanding timers. */
+    @Synchronized
+    fun cancelTimeout() {
+        timeoutFence.cancel()
+    }
+
+    /** Only the exact unexpired ticket issued by THIS coordinator may fire. */
+    @Synchronized
+    fun timeoutCallback(
+        ticket: VoiceCallMonotonicTimeoutFence.Ticket,
+        nowElapsedMillis: Long,
+    ): VoiceCallTransition {
+        val accepted = timeoutFence.consume(ticket, state, nowElapsedMillis)
+            ?: return VoiceCallTransition(state)
+        return admitLocalCallback(accepted.kind, accepted.key)
+    }
+
+    /** Invoked only under the synchronized coordinator admission monitor. */
+    private fun admitLocalCallback(kind: VoiceCallEventKind, key: VoiceCallKey): VoiceCallTransition {
         if (key == state.active) {
-            // MEDIA_FAILED and timeouts also propose SEND_HANGUP/REJECT. A revoked
-            // contact is entitled to no further outbound effect, including teardown.
+            // Revoked trust permits local STOP_MEDIA but never outbound teardown.
             val revalidated = revalidateActiveCall()
             if (revalidated.next.phase == VoiceCallPhase.IDLE) return revalidated
         }
@@ -245,6 +277,10 @@ internal class VoiceCallAdmissionCoordinator(
     }
 
     private fun commit(transition: VoiceCallTransition): VoiceCallTransition {
+        if (state.active != transition.next.active || state.phase != transition.next.phase) {
+            // Phase or owner changes invalidate old async timeout callbacks.
+            timeoutFence.cancel()
+        }
         state = transition.next
         return transition
     }
