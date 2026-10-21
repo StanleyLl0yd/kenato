@@ -84,3 +84,16 @@ retirement cache bounds and every proposed signal's originating event key.
 This does **not** prove the production effect runner's concurrency safety,
 durable E2EE dispatch, consent freshness, physical Android JNI, media
 permissions or device acceptance. #116 and #87 remain OPEN.
+
+## Freshness after durable inbound claim
+
+The serialized `VoiceCallAdmissionCoordinator` now samples its clock **again**
+after the durable single-use claimed control has returned and the second
+pinned-consent check completes. It rejects an event whose expiry has passed
+at reducer admission, as well as an epoch clock that regressed during this
+in-process admission. A durable claim may be consumed even when the event is
+subsequently rejected; it must never be replayed to make a second attempt.
+Five deterministic JVM regressions cover expiration during claim, an expiring
+answer (no `START_MEDIA`), delay inside consent revalidation, clock rollback
+and a still-valid claim. This adds no live M3/WSS effect runner, scheduler,
+WebRTC, microphone permission or physical device evidence.
