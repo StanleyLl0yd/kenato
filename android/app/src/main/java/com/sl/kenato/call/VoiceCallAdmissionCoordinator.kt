@@ -156,6 +156,12 @@ internal class VoiceCallAdmissionCoordinator(
         val callKey = key(peerIdentityId, signal.callId)
         // The local signed consent may have been revoked while the durable claim was written.
         approved.requireApproved(owner.copyOf(), peerIdentityId.copyOf())
+        // The durable one-time claim and fresh consent check can outlive the original
+        // receive timestamp. Do not admit an event after expiry or a backwards clock jump.
+        val admissionTime = clock.nowEpochSeconds()
+        if (admissionTime < now || signal.expiresAtEpochSeconds <= admissionTime) {
+            throw VoiceCallAdmissionException("Claimed M5 voice signal expired before reducer admission")
+        }
         val transition = when (signal.kind) {
             VoiceSignalKind.OFFER -> VoiceCallGlareResolver.resolveAuthenticatedIncomingOffer(
                 ownerEncoded, state, callKey,
