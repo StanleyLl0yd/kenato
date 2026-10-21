@@ -143,7 +143,13 @@ internal class VoiceOutboundHandoffStager(
                 ciphertext = wrapped,
                 expiresAtEpochSeconds = signal.expiresAtEpochSeconds,
             )
-            MessagingProtocol.validateEnvelope(envelope, now)
+            // The serialized M3 builder can be delayed after the original preflight.
+            // Reject expired handoffs (and wall-clock regression) before persistence.
+            val commitTime = clock.nowEpochSeconds()
+            if (commitTime < now || commitTime >= signal.expiresAtEpochSeconds) {
+                throw VoiceOutboundStagingException("M5 outbound handoff expired before commit")
+            }
+            MessagingProtocol.validateEnvelope(envelope, commitTime)
             SessionMessageHandoff(
                 localContactId = latest.localContactId.copyOf(),
                 peerIdentityId = peerIdentityId.copyOf(),
