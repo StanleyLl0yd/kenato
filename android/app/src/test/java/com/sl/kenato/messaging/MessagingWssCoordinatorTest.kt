@@ -101,6 +101,85 @@ class MessagingWssCoordinatorTest {
     }
 
     @Test
+    fun delayedRecoveryPreflightCannotQueueExpiredEnvelope() {
+        val fixture = Fixture()
+        val envelope = outboundEnvelope(1)
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            listOf(MessagingRecoveredSend(PEER.copyOf(), envelope.messageId.copyOf(), MessagingWire.encodeEnvelope(envelope))),
+            emptyList(),
+        )
+        fixture.recovery.expireAtOrAfter = 200L
+        fixture.recovery.afterExpiryCheck = { if (it == 100L) fixture.now = 200L }
+
+        val socket = fixture.authenticate()
+
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size) // Authentication only, no expired SEND
+        assertEquals(listOf(100L, 200L), fixture.recovery.expiryCheckTimes)
+        assertTrue(fixture.recovery.plan.outboundSends.isEmpty())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+    }
+
+    @Test
+    fun delayedRecoveryCanStillSendBeforeExpiry() {
+        val fixture = Fixture()
+        val envelope = outboundEnvelope(1)
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            listOf(MessagingRecoveredSend(PEER.copyOf(), envelope.messageId.copyOf(), MessagingWire.encodeEnvelope(envelope))),
+            emptyList(),
+        )
+        fixture.recovery.afterExpiryCheck = { if (it == 100L) fixture.now = 199L }
+
+        val socket = fixture.authenticate()
+
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, socket.sent.size)
+        assertArrayEquals(
+            MessagingWire.encodeEnvelope(envelope),
+            MessagingWire.encodeEnvelope(MessagingWire.decodeClientFrame(socket.sent[1]).send!!),
+        )
+        assertEquals(listOf(100L), fixture.recovery.expiryCheckTimes)
+    }
+
+    @Test
+    fun regressedClockAfterRecoveryPreflightFailsClosedBeforeSend() {
+        val fixture = Fixture()
+        val envelope = outboundEnvelope(1)
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            listOf(MessagingRecoveredSend(PEER.copyOf(), envelope.messageId.copyOf(), MessagingWire.encodeEnvelope(envelope))),
+            emptyList(),
+        )
+        fixture.recovery.afterExpiryCheck = { if (it == 100L) fixture.now = 99L }
+
+        val socket = fixture.authenticate()
+
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+        assertEquals(1, fixture.recovery.plan.outboundSends.size)
+    }
+
+    @Test
+    fun expiryWithoutDurableTerminalizationFailsClosedBeforeSend() {
+        val fixture = Fixture()
+        val envelope = outboundEnvelope(1)
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            listOf(MessagingRecoveredSend(PEER.copyOf(), envelope.messageId.copyOf(), MessagingWire.encodeEnvelope(envelope))),
+            emptyList(),
+        )
+        fixture.recovery.afterExpiryCheck = { if (it == 100L) fixture.now = 200L }
+        // Deliberately refuse the durable expiry acknowledgement.
+
+        val socket = fixture.authenticate()
+
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+        assertEquals(listOf(100L, 200L), fixture.recovery.expiryCheckTimes)
+        assertEquals(1, fixture.recovery.plan.outboundSends.size)
+    }
+
+    @Test
     fun expiredRecoveredSendIsTerminalizedBeforeSocketQueueing() {
         val fixture = Fixture()
         val envelope = outboundEnvelope(1)
@@ -336,6 +415,7 @@ class MessagingWssCoordinatorTest {
         val inbound = FakeInbound()
         val scheduler = FakeScheduler()
         val diagnosticEvents = mutableListOf<M45DiagnosticEvent>()
+        var now = 100L
         val coordinator = MessagingWssCoordinator(
             serviceOrigin = origin,
             sockets = sockets,
@@ -343,7 +423,7 @@ class MessagingWssCoordinatorTest {
             recovery = recovery,
             inbound = inbound,
             scheduler = scheduler,
-            clock = MessagingWssClock { 100 },
+            clock = MessagingWssClock { now },
             diagnostics = diagnosticEvents::add,
         )
 
@@ -420,6 +500,9 @@ class MessagingWssCoordinatorTest {
         val accepted = ArrayList<MessagingSendAccepted>()
         val expiredMessageIds = ArrayList<ByteArray>()
         val expiryChecks = ArrayList<ByteArray>()
+        val expiryCheckTimes = ArrayList<Long>()
+        var expireAtOrAfter: Long? = null
+        var afterExpiryCheck: ((Long) -> Unit)? = null
 
         override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = plan
 
@@ -430,7 +513,10 @@ class MessagingWssCoordinatorTest {
             nowEpochSeconds: Long,
         ): Boolean {
             expiryChecks += messageId.copyOf()
-            val expired = expiredMessageIds.any { it.contentEquals(messageId) }
+            expiryCheckTimes += nowEpochSeconds
+            afterExpiryCheck?.invoke(nowEpochSeconds)
+            val expired = expiredMessageIds.any { it.contentEquals(messageId) } ||
+                (expireAtOrAfter?.let { nowEpochSeconds >= it } == true)
             if (expired) {
                 plan = plan.copy(
                     outboundSends = plan.outboundSends.filterNot {
