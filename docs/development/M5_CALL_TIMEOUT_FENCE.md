@@ -25,3 +25,26 @@ structural equality. A copied/reconstructed ticket or a ticket from a
 different fence instance is refused even if key, phase, generation and
 deadline happen to match. The legitimate pending ticket stays usable.
 Offline JVM regressions cover both cases. No runtime activation.
+
+## Coordinator timeout entrypoint
+
+`VoiceCallAdmissionCoordinator.callback` now accepts only media callbacks.
+`RING_TIMEOUT` and `CONNECT_TIMEOUT` require a ticket issued by the
+coordinator's `issueTimeout()` and passed to `timeoutCallback(ticket,
+nowElapsedMillis)`. That call consumes the exact unfired timeout token
+against the CURRENT call snapshot under the coordinator lock and immediately
+revalidates pinned consent before generating reducer proposals. Wrong phase,
+wrong owner, early, forged or duplicated tickets cannot bypass admission.
+
+This remains **in-process pure policy**, not Android scheduling. The future
+voice owner must serialize issuance and invalidation with M3/WSS ownership,
+and recheck trust before executing any effect.
+
+## Coordinator-owned fence and phase retirement
+
+The coordinator, not its caller, owns the single process-local timeout
+fence. `issueTimeout` and `timeoutCallback` are synchronized on the same
+coordinator monitor; callers cannot substitute arbitrary external fences.
+Every state transition changing the active key or phase cancels any pending
+ticket, as does explicit `cancelTimeout()`. The admission remains an event
+proposal, not permission to transmit or start media.

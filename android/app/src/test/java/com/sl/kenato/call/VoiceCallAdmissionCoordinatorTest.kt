@@ -275,6 +275,9 @@ class VoiceCallAdmissionCoordinatorTest {
             f.permissionAllowed = false
             val stopped = if (eventKind == VoiceCallEventKind.LOCAL_HANGUP) {
                 f.coordinator.userAction(eventKind, key)
+            } else if (eventKind == VoiceCallEventKind.CONNECT_TIMEOUT) {
+                val ticket = f.coordinator.issueTimeout(100, 10)
+                f.coordinator.timeoutCallback(ticket, 110)
             } else {
                 f.coordinator.callback(eventKind, key)
             }
@@ -290,7 +293,8 @@ class VoiceCallAdmissionCoordinatorTest {
         val f = Fixture()
         val key = f.coordinator.userDial(PEER, true).next.active!!
         f.permissionAllowed = false
-        val timedOut = f.coordinator.callback(VoiceCallEventKind.RING_TIMEOUT, key)
+        val ticket = f.coordinator.issueTimeout(100, 10)
+        val timedOut = f.coordinator.timeoutCallback(ticket, 110)
         assertEquals(VoiceCallPhase.IDLE, timedOut.next.phase)
         assertTrue(timedOut.effects.isEmpty())
         assertEquals(listOf(key.callId), timedOut.next.retiredCallIds)
@@ -300,7 +304,8 @@ class VoiceCallAdmissionCoordinatorTest {
     fun stillApprovedTimeOutAndLocalHangupRetainNormalControlEffects() {
         val ringing = Fixture()
         val ringingKey = ringing.coordinator.userDial(PEER, true).next.active!!
-        val timeout = ringing.coordinator.callback(VoiceCallEventKind.RING_TIMEOUT, ringingKey)
+        val ticket = ringing.coordinator.issueTimeout(100, 10)
+        val timeout = ringing.coordinator.timeoutCallback(ticket, 110)
         assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP), timeout.effects.map { it.kind })
 
         val connected = Fixture()
@@ -312,6 +317,82 @@ class VoiceCallAdmissionCoordinatorTest {
             listOf(VoiceCallEffectKind.SEND_HANGUP, VoiceCallEffectKind.STOP_MEDIA),
             hangup.effects.map { it.kind },
         )
+    }
+
+    @Test
+    fun directTimeoutEventCannotBypassTicketAdmission() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        for (kind in listOf(VoiceCallEventKind.RING_TIMEOUT, VoiceCallEventKind.CONNECT_TIMEOUT)) {
+            assertThrows(VoiceCallAdmissionException::class.java) {
+                f.coordinator.callback(kind, key)
+            }
+        }
+        assertEquals(VoiceCallPhase.OUTGOING_RINGING, f.coordinator.snapshot().phase)
+    }
+
+    @Test
+    fun earlyCopiedAndForeignOwnerTicketsDoNotReachReducer() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        val ticket = f.coordinator.issueTimeout(100, 10)
+        val copy = ticket.copy()
+        assertTrue(f.coordinator.timeoutCallback(ticket, 109).effects.isEmpty())
+        assertTrue(f.coordinator.timeoutCallback(copy, 110).effects.isEmpty())
+        // Same key, phase, generation and deadline in a second owner.
+        val otherOwner = Fixture()
+        otherOwner.coordinator.userDial(PEER, true)
+        val foreign = otherOwner.coordinator.issueTimeout(100, 10)
+        assertEquals(ticket, foreign)
+        assertTrue(f.coordinator.timeoutCallback(foreign, 110).effects.isEmpty())
+        assertEquals(VoiceCallPhase.OUTGOING_RINGING, f.coordinator.snapshot().phase)
+        assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP),
+            f.coordinator.timeoutCallback(ticket, 110).effects.map { it.kind })
+        assertTrue(f.coordinator.timeoutCallback(ticket, 111).effects.isEmpty())
+        assertEquals(VoiceCallPhase.IDLE, f.coordinator.snapshot().phase)
+        assertEquals(key.callId, f.coordinator.snapshot().retiredCallIds.single())
+    }
+
+    @Test
+    fun oldRingingTicketCannotCloseAlreadyConnectingCall() {
+        val f = Fixture()
+        val key = f.coordinator.userDial(PEER, true).next.active!!
+        val ticket = f.coordinator.issueTimeout(100, 10)
+        f.next = event(VoiceSignalKind.ANSWER, 53)
+        assertEquals(VoiceCallPhase.CONNECTING,
+            f.coordinator.receiveClaimedControl(PEER, id(53))!!.next.phase)
+        val ignored = f.coordinator.timeoutCallback(ticket, 120)
+        assertEquals(VoiceCallPhase.CONNECTING, ignored.next.phase)
+        assertTrue(ignored.effects.isEmpty())
+        val connectingTicket = f.coordinator.issueTimeout(120, 10)
+        assertTrue(f.coordinator.timeoutCallback(ticket, 130).effects.isEmpty())
+        val stopped = f.coordinator.timeoutCallback(connectingTicket, 130)
+        assertEquals(VoiceCallPhase.IDLE, stopped.next.phase)
+        assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP, VoiceCallEffectKind.STOP_MEDIA),
+            stopped.effects.map { it.kind })
+        assertEquals(key.callId, stopped.next.retiredCallIds.single())
+    }
+
+    @Test
+    fun closingCallInvalidatesPendingTicketBeforeLaterCall() {
+        val f = Fixture()
+        val firstKey = f.coordinator.userDial(PEER, true).next.active!!
+        val oldTicket = f.coordinator.issueTimeout(100, 10)
+        f.coordinator.userAction(VoiceCallEventKind.LOCAL_HANGUP, firstKey)
+        assertTrue(f.coordinator.timeoutCallback(oldTicket, 110).effects.isEmpty())
+        assertEquals(VoiceCallPhase.IDLE, f.coordinator.snapshot().phase)
+    }
+
+    @Test
+    fun cancelTimeoutRequiresNewTicketBeforeFiring() {
+        val f = Fixture()
+        f.coordinator.userDial(PEER, true)
+        val stale = f.coordinator.issueTimeout(100, 10)
+        f.coordinator.cancelTimeout()
+        assertTrue(f.coordinator.timeoutCallback(stale, 110).effects.isEmpty())
+        val current = f.coordinator.issueTimeout(110, 10)
+        assertEquals(listOf(VoiceCallEffectKind.SEND_HANGUP),
+            f.coordinator.timeoutCallback(current, 120).effects.map { it.kind })
     }
 
     private class Fixture {
