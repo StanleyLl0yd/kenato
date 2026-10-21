@@ -16,3 +16,12 @@ it gives no persistence, replay protection after process restart or
 cross-process ordering. Keystore failure/consent revocation must cancel
 the relevant ticket and locally stop already active media. #116/#87
 remain OPEN and physical P01–P24 tests are still mandatory.
+
+## Owner-identity invariant
+
+Ticket fields are values for diagnostics, **not credentials for admission**.
+The fence now requires the identical issued object (`===`), not data-class
+structural equality. A copied/reconstructed ticket or a ticket from a
+different fence instance is refused even if key, phase, generation and
+deadline happen to match. The legitimate pending ticket stays usable.
+Offline JVM regressions cover both cases. No runtime activation.

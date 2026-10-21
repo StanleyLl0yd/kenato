@@ -46,7 +46,7 @@ internal class VoiceCallMonotonicTimeoutFence {
 
     /**
      * Reject early, duplicate, superseded, wrong-peer/call and wrong-phase
-     * callbacks. This is a proposal of an event only, never execution.
+     * callbacks, including structurally identical tickets forged or issued\n     * by another process-local owner. This is a proposal of an event only,\n     * never execution.
      */
     @Synchronized
     fun consume(
@@ -55,7 +55,7 @@ internal class VoiceCallMonotonicTimeoutFence {
         nowElapsedMillis: Long,
     ): VoiceCallEvent? {
         if (nowElapsedMillis < 0L ||
-            ticket != pending ||
+            ticket !== pending ||
             snapshot.phase != ticket.phase ||
             snapshot.active != ticket.key ||
             nowElapsedMillis < ticket.deadlineElapsedMillis
