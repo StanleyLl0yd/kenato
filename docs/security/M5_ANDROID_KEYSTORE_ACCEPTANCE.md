@@ -45,6 +45,9 @@ debug-signed research-only Actions artifact** named
 `SHA256SUMS` and `SCOPE.txt`. CI verifies both package IDs using Android
 SDK Build Tools before upload and retains the artifact for only 14 days.
 This is **not** an installable voice prototype or a production release.
+The dedicated `m5Probe` manifest removes INTERNET, and CI rejects network,
+microphone, camera or audio capture permissions in the diagnostic APK.
+
 
 On Windows with PowerShell 7 and Android platform-tools (`adb`), extract
 the artifact to a local directory. The operator may run:
