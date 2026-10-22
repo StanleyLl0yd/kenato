@@ -115,6 +115,58 @@ class EpochKeystoreInstrumentedTest {
         }
     }
 
+    @Test
+    fun removedActiveKeystoreAliasRefusesReadAndReplacementAfterBackendReopen() {
+        val backing = PhysicalAtomicFile(testFile)
+        val store = EpochBoundSessionStateStore(backing, backend)
+        assertTrue(store.write(canonicalState(revision = 0)))
+        val protectedSnapshot = backing.read()!!.copyOf()
+
+        backend.retireEpoch(backend.epochIds().single())
+        val reopened = EpochBoundSessionStateStore(
+            backing, AndroidKeystoreSessionEpochKeyBackend(prefix),
+        )
+        assertThrows(SessionStateException::class.java) { reopened.read() }
+        assertThrows(SessionStateException::class.java) {
+            reopened.write(canonicalState(revision = 1))
+        }
+        assertArrayEquals(protectedSnapshot, backing.read())
+        assertTrue(backend.epochIds().isEmpty())
+    }
+
+    @Test
+    fun actualAtomicFileCommitWithSimulatedUncertainResultFailsClosedOnReopen() {
+        val backing = PhysicalAtomicFile(testFile)
+        assertTrue(EpochBoundSessionStateStore(backing, backend)
+            .write(canonicalState(revision = 0)))
+        val oldCiphertext = backing.read()!!.copyOf()
+
+        // Synthetic fault: physically replace the test AtomicFile but return false.
+        // Not a real power-loss, fsync-failure or reboot-durability measurement.
+        val reportsFailureAfterCommit = object : SessionStateStore {
+            override fun read(): ByteArray? = backing.read()
+            override fun write(value: ByteArray): Boolean {
+                assertTrue(backing.write(value))
+                return false
+            }
+            override fun clear(): Boolean = throw AssertionError("No implicit recovery")
+        }
+        assertThrows(SessionStateException::class.java) {
+            EpochBoundSessionStateStore(reportsFailureAfterCommit, backend)
+                .write(canonicalState(revision = 1))
+        }
+        assertFalse(oldCiphertext.contentEquals(backing.read()))
+        assertEquals(2, backend.epochIds().size)
+
+        val reopened = EpochBoundSessionStateStore(
+            backing, AndroidKeystoreSessionEpochKeyBackend(prefix),
+        )
+        assertThrows(SessionStateException::class.java) { reopened.read() }
+        assertThrows(SessionStateException::class.java) {
+            reopened.write(canonicalState(revision = 1))
+        }
+    }
+
     private class PhysicalAtomicFile(path: File) : SessionStateStore {
         private val file = AtomicFile(path)
         override fun read(): ByteArray? = try {

@@ -27,7 +27,7 @@ production device without a backup/consent to diagnostic testing.
 5. Capture redacted output and `adb logcat -d -s KenatoM5Acceptance:I`. The log
    contains timing, API and key security classification only; it must never
    contain aliases, encrypted material, identifiers, SDP/ICE or private keys.
-6. Confirm **3 executed / 3 PASS** for the exact artifact SHA and the exact
+6. Confirm **5 executed / 5 PASS** for the exact artifact SHA and the exact
    physical device. Test-APK compilation is only a CI build result, not a pass.
 
 ## What these tests establish
@@ -38,6 +38,11 @@ production device without a backup/consent to diagnostic testing.
   of a previously valid, older encrypted snapshot *when the Keystore namespace
   is not rolled back*.
 - Extra unexpected aliases block reads, including after backend recreation.
+- Deleting the only active test Keystore alias blocks reads and replacement
+  without silently replacing the encrypted AtomicFile snapshot.
+- A **simulated** ambiguous return after a real AtomicFile replacement leaves two
+  Keystore epoch aliases and blocks reads/writes after backend recreation.
+  This does **not** simulate hardware power loss, storage persistence barriers or reboot.
 - Latency for two synthetic commits is logged, **not automatically approved**.
   Measure warm, cold, repeated and post-reboot distributions separately before
   choosing any production latency threshold.
