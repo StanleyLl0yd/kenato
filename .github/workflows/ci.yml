@@ -28,6 +28,21 @@ jobs:
       - name: Verify CI supply-chain policy
         run: python3 scripts/verify_ci_supply_chain.py
 
+      - name: Parse Windows OCI operator helper
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/Deploy-KenatoGoArm64.ps1',
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
       - name: Set up Rust 1.85.0
         run: >
           rustup toolchain install 1.85.0
