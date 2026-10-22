@@ -79,11 +79,20 @@ readelf -h "$artifact_dir/$binary" | grep -Eq 'Machine:[[:space:]]*AArch64'
 
 local_health() {
   systemctl is-active --quiet "$service" || return 1
-  curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/healthz >/dev/null || return 1
-  ss -H -ltn | awk '
-    $4 ~ /:8080$/ { found++; if ($4 != "127.0.0.1:8080") bad=1 }
+  local service_pid
+  service_pid="$(systemctl show --property=MainPID --value "$service")"
+  [[ "$service_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  # Verify the sole port-8080 listener belongs to THIS systemd process,
+  # not an unrelated program that happens to return HTTP 200 on /healthz.
+  ss -H -ltnp | awk -v wanted="$service_pid" '
+    $4 ~ /:8080$/ {
+      found++
+      if ($4 != "127.0.0.1:8080" ||
+          index($0, "pid=" wanted ",") == 0) bad=1
+    }
     END { if (found != 1 || bad) exit 1 }
   ' || return 1
+  curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/healthz >/dev/null || return 1
 }
 local_health || { echo 'Existing host/service unhealthy before deployment; no changes made' >&2; exit 1; }
 
