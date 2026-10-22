@@ -37,6 +37,32 @@ production device without a backup/consent to diagnostic testing.
 6. Confirm **5 executed / 5 PASS** for the exact artifact SHA and the exact
    physical device. Test-APK compilation is only a CI build result, not a pass.
 
+## Downloadable isolated diagnostic APKs and Windows acceptance
+
+The Draft PR CI Android job now produces a **temporary, unsigned-release /
+debug-signed research-only Actions artifact** named
+`kenato-m5-keystore-research-apks`. It contains exactly two APKs,
+`SHA256SUMS` and `SCOPE.txt`. CI verifies both package IDs using Android
+SDK Build Tools before upload and retains the artifact for only 14 days.
+This is **not** an installable voice prototype or a production release.
+
+On Windows with PowerShell 7 and Android platform-tools (`adb`), extract
+the artifact to a local directory. The operator may run:
+
+```powershell
+pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactDirectory C:\\KenatoM5Probe -EvidenceDirectory C:\\KenatoM5Evidence
+```
+
+The script verifies both inner APK hashes and scope, requires a physical
+API29+ Android device (specify `-DeviceSerial` if multiple devices are
+connected), installs only `com.sl.kenato.m5probe` and the matching test
+package, runs the five methods and writes sanitized JSON with API, Android
+release, security patch, artifact checksums and PASS/FAIL. It does **not**
+copy raw test output, logcat, unique hardware serial, identity or keys to
+evidence. The signed `com.sl.kenato` production package is not uninstalled,
+cleared or replaced. A single passing device does not satisfy the mandatory
+Android 10/13/14+ physical matrix or reboot/fault-injection requirements.
+
 ## What these tests establish
 
 - AES-GCM alias material is not exportable through Android Keystore's key API;
