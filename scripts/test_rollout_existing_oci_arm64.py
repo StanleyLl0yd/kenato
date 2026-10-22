@@ -35,6 +35,8 @@ required = [
     'mv -fT -- "$rollback_tmp" "$target"',
     'sync -f "$install_tmp"',
     'sync -f "$target_dir"',
+    'ss -H -ltnp | awk -v wanted="$service_pid"',
+    'index($0, "pid=" wanted ",") == 0',
     'PENDING: independently verify public HTTPS, authenticated WSS',
 ]
 for marker in required:
