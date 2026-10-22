@@ -60,12 +60,12 @@ listener = re.search(
 assert listener is not None, "Must retain isolated exact-PID socket guard"
 awk = listener.group(1)
 examples = (
-    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', True),
-    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-service",pid=5678,fd=8))\\n', False),
-    ('LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', False),
-    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n'
-     'LISTEN 0 4096 [::]:8080 [::]:* users:(("kenato-server",pid=1234,fd=10))\\n', False),
-    ('LISTEN 0 4096 127.0.0.1:8081 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', False),
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\n', True),
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-service",pid=5678,fd=8))\n', False),
+    ('LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\n', False),
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\n'
+     'LISTEN 0 4096 [::]:8080 [::]:* users:(("kenato-server",pid=1234,fd=10))\n', False),
+    ('LISTEN 0 4096 127.0.0.1:8081 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\n', False),
 )
 for ss_output, should_accept in examples:
     trial = subprocess.run(
