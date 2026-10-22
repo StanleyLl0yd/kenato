@@ -36,6 +36,35 @@ Record only the source SHA, binary SHA-256, Actions run ID, source/toolchain
 verification and operator approval in #91. Do not record the host address,
 secrets, raw requests, user identities or databases.
 
+## Guarded on-host operator helper (proposal; not yet deployed)
+
+A reviewed, **manual-only** helper at
+`scripts/rollout_existing_oci_arm64.sh` stages the exact existing Go
+1.27.2 ARM64 artifact on the **existing host only**, validates local checksums,
+source/provenance fields, binary architecture, existing service ownership,
+pre-change service health and loopback-only port, preserves the original binary
+under `/var/backups/kenato`, performs an atomic executable replacement and
+checks systemd, local HTTP health, listener scope and `/proc/<pid>/exe`
+binary digest. Failures after service stoppage trigger automatic local
+executable rollback and a health recheck. No SSH, firewall, Nginx, TLS, SQLite,
+secrets, server feature, additional host or TURN changes are attempted.
+
+**This script is not evidence of deployment**: it has not been run on OCI.
+Before executing it, the host operator must independently authenticate the
+GitHub Actions ZIP digest and inner `SHA256SUMS`, authorize a change window,
+review the script and copy the extracted files to an operator-controlled
+directory on the real host. Then on the host:
+
+```sh
+sudo bash scripts/rollout_existing_oci_arm64.sh --apply /path/to/extracted-artifact 04f8d78c3d730d512a9bca6462a4f4177db6ff58
+```
+
+The source SHA is the **original verified backend artifact's** source, not
+the latest Android-only `main` SHA. The script deliberately refuses to
+create an absent service or install onto an unhealthy host. A successful
+local result is not enough: independently test public HTTPS and authenticated
+WSS, document the backup and rollback readiness, and only then close #91.
+
 ## Operator-controlled deployment gate
 
 The live OCI host was previously reported to run an older Go-built binary.
