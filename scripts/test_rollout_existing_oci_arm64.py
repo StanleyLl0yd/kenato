@@ -18,6 +18,8 @@ required = [
     "vcs.modified=false",
     "go1.27.2",
     "SHA256SUMS",
+    "pinned_source=04f8d78c3d730d512a9bca6462a4f4177db6ff58",
+    "pinned_binary=f651a2519ea555d224f49897944561447dd6a8810353dd34c4e87f5ff28b97e9",
     "readelf -h",
     "local_health()",
     "127.0.0.1:8080/healthz",
