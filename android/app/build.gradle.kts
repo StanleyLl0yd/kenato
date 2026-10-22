@@ -36,6 +36,7 @@ android {
         targetSdk = 37
         versionCode = 4
         versionName = "0.0.4"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
@@ -54,6 +55,14 @@ android {
     }
 
     buildTypes {
+        // Dedicated, side-by-side diagnostic application. Never reuse the
+        // signed com.sl.kenato production identity or its app-private files.
+        create("m5Probe") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".m5probe"
+            versionNameSuffix = "-m5probe"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = true
             if (hasReleaseSigning) {
@@ -65,6 +74,12 @@ android {
             )
         }
     }
+
+    // Preserve the ordinary debug JVM unit-test task in every normal build.
+    // Only explicit, separate KAE2 instrumentation builds select m5Probe.
+    testBuildType = if (
+        providers.gradleProperty("kenatoM5ProbeInstrumentation").orNull == "true"
+    ) "m5Probe" else "debug"
 
     buildFeatures {
         compose = true
@@ -147,4 +162,6 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

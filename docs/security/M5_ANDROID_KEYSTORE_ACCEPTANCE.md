@@ -1,0 +1,99 @@
+# M5 Android Keystore continuity physical acceptance
+
+Status: **NOT EXECUTED / NOT APPROVED**. Tracking: #118, #87, #116.
+
+This is an **isolated synthetic probe**. It cannot authorize M3 migration, voice
+runtime, microphone permission or a release. No original contact/Olm/voice state
+is read. The Android Keystore aliases use a random 128-bit test-only namespace
+`com.sl.kenato.session.epoch-acceptance.v1.<random>.` and the AtomicFile
+uses a unique `kenato_epoch_probe_<random>.bin` name. The test destroys only
+its own aliases and file after each method. Do not run on an irreplaceable
+production device without a backup/consent to diagnostic testing.
+
+## Preparation and execution
+
+1. On Android 10, 13, and 14+ *real devices*, record model, build fingerprint,
+   security patch, API level, target SDK, Android Keystore implementation and
+   whether keys are hardware-backed. An emulator result is additional evidence
+   only; it is not a physical-device pass.
+2. Build with JDK 25, pinned SDK/NDK and native M3 prerequisites (same as CI).
+   Run `./gradlew -PkenatoM5ProbeInstrumentation=true :android:app:assembleM5Probe :android:app:assembleM5ProbeAndroidTest`.
+   The `m5Probe` build has application ID `com.sl.kenato.m5probe`,
+   separate app-private data and a debug signature; do **not** uninstall,
+   replace or clear the signed `com.sl.kenato` v0.0.4 production app.
+   Hosted CI only compiles the instrumented package; it does **not** run it.
+3. Inspect both Gradle outputs and confirm the target package **before** installation.
+   The probe APK is normally `android/app/build/outputs/apk/m5Probe/app-m5Probe.apk`;
+   the test APK is normally
+   `android/app/build/outputs/apk/androidTest/m5Probe/app-m5Probe-androidTest.apk`.
+   Confirm the paths and IDs using `apkanalyzer manifest application-id FILE.apk`,
+   then use `adb install -r` for **only these two isolated test APKs**.
+   Never use the ordinary release/debug package in this acceptance procedure.
+4. Execute:
+   `adb shell am instrument -w -r -e class com.sl.kenato.session.EpochKeystoreInstrumentedTest com.sl.kenato.m5probe.test/androidx.test.runner.AndroidJUnitRunner`
+5. Capture redacted output and `adb logcat -d -s KenatoM5Acceptance:I`. The log
+   contains timing, API and key security classification only; it must never
+   contain aliases, encrypted material, identifiers, SDP/ICE or private keys.
+6. Confirm **5 executed / 5 PASS** for the exact artifact SHA and the exact
+   physical device. Test-APK compilation is only a CI build result, not a pass.
+
+## Downloadable isolated diagnostic APKs and Windows acceptance
+
+The Draft PR CI Android job now produces a **temporary, unsigned-release /
+debug-signed research-only Actions artifact** named
+`kenato-m5-keystore-research-apks`. It contains exactly two APKs,
+`SHA256SUMS` and `SCOPE.txt`. CI verifies both package IDs using Android
+SDK Build Tools before upload and retains the artifact for only 14 days.
+This is **not** an installable voice prototype or a production release.
+The dedicated `m5Probe` manifest removes INTERNET, and CI rejects network,
+microphone, camera or audio capture permissions in the diagnostic APK.
+
+
+On Windows with PowerShell 7 and Android platform-tools (`adb`), extract
+the artifact to a local directory. The operator may run:
+
+```powershell
+pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactDirectory C:\\KenatoM5Probe -EvidenceDirectory C:\\KenatoM5Evidence
+```
+
+The script verifies both inner APK hashes and scope, requires a physical
+API29+ Android device (specify `-DeviceSerial` if multiple devices are
+connected), installs only `com.sl.kenato.m5probe` and the matching test
+package, runs the five methods and writes sanitized JSON with API, Android
+release, security patch, artifact checksums and PASS/FAIL. It does **not**
+copy raw test output, logcat, unique hardware serial, identity or keys to
+evidence. The signed `com.sl.kenato` production package is not uninstalled,
+cleared or replaced. A single passing device does not satisfy the mandatory
+Android 10/13/14+ physical matrix or reboot/fault-injection requirements.
+
+## What these tests establish
+
+- AES-GCM alias material is not exportable through Android Keystore's key API;
+  authenticated ciphertext survives new backend instance construction.
+- Real AtomicFile replacement and per-commit alias retirement reject restoration
+  of a previously valid, older encrypted snapshot *when the Keystore namespace
+  is not rolled back*.
+- Extra unexpected aliases block reads, including after backend recreation.
+- Deleting the only active test Keystore alias blocks reads and replacement
+  without silently replacing the encrypted AtomicFile snapshot.
+- A **simulated** ambiguous return after a real AtomicFile replacement leaves two
+  Keystore epoch aliases and blocks reads/writes after backend recreation.
+  This does **not** simulate hardware power loss, storage persistence barriers or reboot.
+- Latency for two synthetic commits is logged, **not automatically approved**.
+  Measure warm, cold, repeated and post-reboot distributions separately before
+  choosing any production latency threshold.
+
+## Still mandatory, not demonstrated by this suite
+
+Reboot and process-death windows (before/after `startWrite`, `finishWrite`,
+and alias retirement), Android low-storage and key corruption scenarios,
+multi-process serialization, post-update/downgrade behavior, Android 10/13/14+
+device diversity, 100+ sustained writes, 95th/99th percentile latency,
+hardware-versus-software KeyMint/Keystore capabilities, secret-dependent memory,
+explicit destructive-recovery UX, KNS3/KSAE migration, and P01-P24 two-phone
+voice acceptance. An interrupted epoch switch can permanently disable old
+identity access by design; users must not be silently reset.
+
+Record a matrix with device/OS/build, HEAD, test counts, timings, security
+level, fail/skip reason, log location and reviewer before deciding whether
+this approach is viable. `main` and release v0.0.4 are unchanged.
