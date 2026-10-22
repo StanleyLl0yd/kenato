@@ -144,6 +144,44 @@ recovery requirements. If not, a different trustworthy continuity mechanism
 or architectural removal of live sensitive M3 handoffs is required. No
 release gate is relaxed.
 
+## Isolated epoch-bound continuity prototype (JVM, not Android acceptance)
+
+The draft #118 branch now contains `EpochBoundSessionStateStore` and
+`EpochBoundSessionStateStoreTest`, **separate from** the existing `KSAE` AEAD
+candidate and all production factories. The proposed `KAE2` envelope
+authenticates a dedicated 32-character epoch identifier as AES-GCM AAD.
+The `SessionEpochKeyBackend` interface is an *unimplemented platform boundary*:
+the JVM test fixture uses ordinary in-memory AES-GCM keys and a simulated
+atomic disk. It does NOT attest to Android Keystore behavior.
+
+The proof-of-concept serializes operations within one instance and uses a
+fresh epoch key per state write. An existing snapshot is authenticated with
+an exactly matching singleton alias namespace before mutation. After creating
+the new key, the candidate persists ciphertext, verifies the disk result,
+retires the previous key, checks the singleton namespace and reads back the
+committed value before returning success. Unexpected aliases, missing files
+with residual keys, key deletion failures, ambiguous AtomicFile outcomes and
+restored old ciphertext are **fail-closed**, not silently repaired. Implicit
+`clear()` and `KNS3` migration intentionally remain unimplemented.
+
+This testable design addresses the *specific adversary who can restore app
+files but cannot access or roll back Keystore aliases* in its **successfully
+completed** commits. It makes no guarantees against app-UID compromise,
+whole-device/Keystore rollback, other processes or a compromised OS.
+Interruption after new alias creation can make the identity unavailable;
+the prototype does not solve recovery or liveness. A JVM unit test accepting
+the older authentic original `KSAE` snapshot is retained as the distinct,
+unresolved existing-wrapper counterexample.
+
+**Required before any implementation or approval:** prove trustworthy
+namespace enumeration and irreversible alias retirement on Android 10/13/14+
+hardware; audit hardware-backed versus software-backed keys, reboot/power loss,
+AtomicFile backup recovery, and concurrent process interactions; benchmark
+per-message Keystore generation/deletion; design a user-confirmed destructive
+identity recovery and migration from both `KNS3` and `KSAE`. The new JVM
+fixture is only a fault-injection protocol model, not physical evidence.
+No voice, microphone, WebRTC or migration activation follows from it.
+
 ## Remaining design/security blockers before activation
 
 1. Confirm Android 10 and Android 13 (minimum), plus an Android 14+ device,
