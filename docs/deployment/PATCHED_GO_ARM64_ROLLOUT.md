@@ -79,10 +79,16 @@ pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-se
 ```
 
 The first command is local preflight only; the second requires the
-operator's existing SSH key and host-side sudo authorization. A successful
-return still requires independent public HTTPS, authenticated WSS and
-rollback-readiness checks. No deployment has been performed by adding this
-helper.
+operator's existing SSH key and **noninteractive, separately approved**
+host-side sudo authorization (`sudo -n`). The reviewable Bash helper is
+streamed directly through SSH stdin to privileged Bash; it is NOT uploaded
+into an unprivileged host directory and then executed as root. The four
+artifact files alone are copied to a temporary user-writable directory,
+but the root helper rechecks the fixed source and ELF digest, then stages
+the candidate in a root-owned private directory before any systemd change.
+A successful return still requires independent public HTTPS, authenticated
+WSS and rollback-readiness checks. No deployment has been performed by
+adding this helper.
 
 The source SHA is the **original verified backend artifact's** source, not
 the latest Android-only `main` SHA. The script deliberately refuses to
