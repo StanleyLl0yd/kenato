@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.security.KeyStore
 import java.security.SecureRandom
+import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -58,7 +59,8 @@ class EpochKeystoreInstrumentedTest {
             reopened.decrypt(id, encrypted, "WRONG-AAD".toByteArray())
         }
         val key = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            .getKey(prefix + id, null)
+            .getKey(prefix + id, null) as? SecretKey
+            ?: throw AssertionError("Expected AndroidKeyStore AES SecretKey")
         assertTrue("Expected non-exportable AndroidKeyStore AES key", key.encoded == null)
         val keyInfo = SecretKeyFactory.getInstance("AES", "AndroidKeyStore")
             .getKeySpec(key, KeyInfo::class.java) as KeyInfo
@@ -140,17 +142,17 @@ class EpochKeystoreInstrumentedTest {
 
     private fun canonicalState(revision: Long): ByteArray = SessionStateCodec.encode(
         SessionState(
-            ownerIdentityId = ByteArray(32) { 0x11 },
+            ownerIdentityId = ByteArray(32) { 0x11.toByte() },
             account = SessionAccountState(
                 accountGeneration = 1,
                 publicationRevision = revision,
                 nextOneTimeKeyId = 1,
-                olmEd25519IdentityKey = ByteArray(32) { 0x21 },
-                olmCurve25519IdentityKey = ByteArray(32) { 0x22 },
+                olmEd25519IdentityKey = ByteArray(32) { 0x21.toByte() },
+                olmCurve25519IdentityKey = ByteArray(32) { 0x22.toByte() },
                 oneTimeKeys = emptyList(),
                 snapshot = WrappedSessionSnapshot(
                     ciphertext = "synthetic-account-pickle".toByteArray(),
-                    wrappedPickleKey = ByteArray(32) { 0x31 },
+                    wrappedPickleKey = ByteArray(32) { 0x31.toByte() },
                 ),
             ),
             sessions = emptyList(),
