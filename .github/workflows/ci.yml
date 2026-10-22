@@ -147,6 +147,9 @@ jobs:
             exit 1
           }
 
+      - name: Exercise Windows acceptance helper against synthetic ADB
+        run: python3 scripts/test_run_kenato_m5_keystore_probe.py
+
       - name: Verify separate test-only Keystore APK package IDs and digests
         run: |
           set -euo pipefail
