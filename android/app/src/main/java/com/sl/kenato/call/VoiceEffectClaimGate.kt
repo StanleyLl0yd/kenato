@@ -73,9 +73,10 @@ internal class VoiceEffectClaimGate {
         ) {
             return null
         }
-        // A new call, teardown or state transition invalidates all old work.
-        if (live != expected) return null
+        // Even a single observed mismatch is fail-closed. Never make the
+        // same ticket usable again if a later snapshot happens to match.
         claimed.add(ticket.ordinal)
+        if (live != expected) return null
 
         if (ticket.kind != VoiceCallEffectKind.STOP_MEDIA) {
             // No external side effects. A rejected Keystore/pin/consent check
