@@ -163,6 +163,11 @@ jobs:
           tests_badging="$("$aapt" dump badging "$tests")"
           grep -Fq "package: name='com.sl.kenato.m5probe'" <<< "$probe_badging"
           grep -Fq "package: name='com.sl.kenato.m5probe.test'" <<< "$tests_badging"
+          probe_permissions="$("$aapt" dump permissions "$probe")"
+          if grep -Eq 'android[.]permission[.](INTERNET|RECORD_AUDIO|CAMERA|CAPTURE_AUDIO_OUTPUT)' <<< "$probe_permissions"; then
+            echo "The offline Keystore probe must not request network or media permissions." >&2
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/kenato-m5-keystore-probe"
           cp "$probe" "$tests" "$RUNNER_TEMP/kenato-m5-keystore-probe/"
           (
