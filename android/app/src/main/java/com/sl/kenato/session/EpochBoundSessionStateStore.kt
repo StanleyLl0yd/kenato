@@ -39,14 +39,14 @@ internal class EpochBoundSessionStateStore(
     private val backing: SessionStateStore,
     private val keys: SessionEpochKeyBackend,
 ) : SessionStateStore {
-    private companion object {
-        val MAGIC = byteArrayOf('K'.code.toByte(), 'A'.code.toByte(), 'E'.code.toByte(), '2'.code.toByte())
-        const val VERSION: Byte = 1
-        const val EPOCH_ID_BYTES = 32
-        const val HEADER_BYTES = 4 + 1 + EPOCH_ID_BYTES
-        const val MAX_BYTES = SessionStateCodec.MAX_STATE_BYTES + 128
-        val AAD_PREFIX = "KENATO-M3-EPOCH-CONTINUITY-V1\u0000".toByteArray(Charsets.UTF_8)
-        val EPOCH_PATTERN = Regex("[0-9a-f]{32}")
+    companion object {
+        private val MAGIC = byteArrayOf('K'.code.toByte(), 'A'.code.toByte(), 'E'.code.toByte(), '2'.code.toByte())
+        private const val VERSION: Byte = 1
+        private const val EPOCH_ID_BYTES = 32
+        private const val HEADER_BYTES = 4 + 1 + EPOCH_ID_BYTES
+        const val MAX_PERSISTED_BYTES = SessionStateCodec.MAX_STATE_BYTES + 128
+        private val AAD_PREFIX = "KENATO-M3-EPOCH-CONTINUITY-V1\u0000".toByteArray(Charsets.UTF_8)
+        private val EPOCH_PATTERN = Regex("[0-9a-f]{32}")
     }
 
     @Synchronized
@@ -74,7 +74,7 @@ internal class EpochBoundSessionStateStore(
         val expectedBefore = if (oldEpoch == null) setOf(fresh) else setOf(oldEpoch, fresh)
         requireEpochs(expectedBefore)
         val envelope = keys.encrypt(fresh, value, aad(fresh))
-        if (envelope.isEmpty() || envelope.size + HEADER_BYTES > MAX_BYTES) {
+        if (envelope.isEmpty() || envelope.size + HEADER_BYTES > MAX_PERSISTED_BYTES) {
             throw SessionStateException("Epoch M3 protected envelope length invalid")
         }
         val encoded = MAGIC + byteArrayOf(VERSION) + fresh.toByteArray(Charsets.US_ASCII) + envelope
@@ -110,7 +110,7 @@ internal class EpochBoundSessionStateStore(
             requireEpochs(emptySet())
             return null
         }
-        if (stored.size !in (HEADER_BYTES + 1)..MAX_BYTES ||
+        if (stored.size !in (HEADER_BYTES + 1)..MAX_PERSISTED_BYTES ||
             !stored.copyOfRange(0, 4).contentEquals(MAGIC) ||
             stored[4] != VERSION
         ) {
