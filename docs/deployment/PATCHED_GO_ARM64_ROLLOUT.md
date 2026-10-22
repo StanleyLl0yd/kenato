@@ -49,6 +49,13 @@ binary digest. Failures after service stoppage trigger automatic local
 executable rollback and a health recheck. No SSH, firewall, Nginx, TLS, SQLite,
 secrets, server feature, additional host or TURN changes are attempted.
 
+The helper is hard-pinned to the original reviewed
+`source_sha=04f8d78c3d730d512a9bca6462a4f4177db6ff58` and actual ELF
+SHA-256 `f651a2519ea555d224f49897944561447dd6a8810353dd34c4e87f5ff28b97e9`.
+A different source or executable cannot be supplied just by changing an
+untrusted archive's own `SHA256SUMS`. New builds require a separately
+reviewed change to these pins.
+
 **This script is not evidence of deployment**: it has not been run on OCI.
 Before executing it, the host operator must independently authenticate the
 GitHub Actions ZIP digest and inner `SHA256SUMS`, authorize a change window,
