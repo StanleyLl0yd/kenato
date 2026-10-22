@@ -93,10 +93,15 @@ jobs:
           :android:app:lintRelease
           :android:app:testDebugUnitTest
           :android:app:assembleDebug
-          :android:app:assembleM5Probe
-          :android:app:assembleM5ProbeAndroidTest
           :android:app:assembleRelease
           :android:app:bundleRelease
+
+      - name: Compile isolated M5 Keystore probe instrumentation
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5ProbeInstrumentation=true
+          :android:app:assembleM5Probe
+          :android:app:assembleM5ProbeAndroidTest
 
       - name: Validate bytecode audit negative tests
         run: python3 scripts/test_audit_kenato_jvm_target.py

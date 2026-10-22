@@ -123,9 +123,14 @@ jobs:
           :android:app:testDebugUnitTest
           :android:app:assembleDebug
           :android:app:assembleRelease
+          :android:app:bundleRelease
+
+      - name: Compile isolated M5 probe instrumentation without changing debug JVM tests
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5ProbeInstrumentation=true
           :android:app:assembleM5Probe
           :android:app:assembleM5ProbeAndroidTest
-          :android:app:bundleRelease
 
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61

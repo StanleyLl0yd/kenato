@@ -75,8 +75,11 @@ android {
         }
     }
 
-    // Instrumented KAE2 tests target only the isolated .m5probe package.
-    testBuildType = "m5Probe"
+    // Preserve the ordinary debug JVM unit-test task in every normal build.
+    // Only explicit, separate KAE2 instrumentation builds select m5Probe.
+    testBuildType = if (
+        providers.gradleProperty("kenatoM5ProbeInstrumentation").orNull == "true"
+    ) "m5Probe" else "debug"
 
     buildFeatures {
         compose = true

@@ -17,7 +17,7 @@ production device without a backup/consent to diagnostic testing.
    whether keys are hardware-backed. An emulator result is additional evidence
    only; it is not a physical-device pass.
 2. Build with JDK 25, pinned SDK/NDK and native M3 prerequisites (same as CI).
-   Run `./gradlew :android:app:assembleM5Probe :android:app:assembleM5ProbeAndroidTest`.
+   Run `./gradlew -PkenatoM5ProbeInstrumentation=true :android:app:assembleM5Probe :android:app:assembleM5ProbeAndroidTest`.
    The `m5Probe` build has application ID `com.sl.kenato.m5probe`,
    separate app-private data and a debug signature; do **not** uninstall,
    replace or clear the signed `com.sl.kenato` v0.0.4 production app.
