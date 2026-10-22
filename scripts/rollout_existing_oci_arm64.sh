@@ -33,7 +33,7 @@ target=/usr/local/bin/kenato-server
 backup_root=/var/backups/kenato
 binary=kenato-server-linux-arm64
 
-for cmd in systemctl sha256sum readelf install mktemp cp mv ss curl awk grep stat; do
+for cmd in systemctl sha256sum readelf install mktemp cp mv ss curl awk grep stat sync dirname rm; do
   command -v "$cmd" >/dev/null || { echo "Missing required command: $cmd" >&2; exit 1; }
 done
 [[ -d "$artifact_dir" && ! -L "$artifact_dir" ]] || { echo 'Invalid artifact directory' >&2; exit 1; }
@@ -96,6 +96,7 @@ install -o root -g root -m 0700 "$artifact_dir/$binary" "$work/candidate"
   echo 'Private staged candidate checksum mismatch' >&2; exit 1;
 }
 cp --preserve=mode,ownership,timestamps "$target" "$work/previous"
+sync -f "$work/previous"
 [[ "$(sha256sum "$work/previous" | awk '{print $1}')" == "$(sha256sum "$target" | awk '{print $1}')" ]] || {
   echo 'Previous binary backup mismatch' >&2; exit 1;
 }
@@ -105,15 +106,36 @@ if [[ "$previous_sha" == "$expected_binary" ]]; then
   exit 0
 fi
 
+# Stage in the TARGET directory, not under /var/backups: mv across
+# filesystems degrades to copy+unlink and is not an atomic executable swap.
+# A unique root-owned regular file also avoids predictable temp-path symlinks.
+target_dir="$(dirname -- "$target")"
+install_tmp="$(mktemp "$target_dir/.kenato-install.XXXXXXXX")"
+rollback_tmp=""
+cleanup_temps() {
+  [[ -z "$install_tmp" ]] || rm -f -- "$install_tmp"
+  [[ -z "$rollback_tmp" ]] || rm -f -- "$rollback_tmp"
+}
+install -o root -g root -m 0755 "$work/candidate" "$install_tmp"
+[[ "$(sha256sum "$install_tmp" | awk '{print $1}')" == "$expected_binary" ]]
+sync -f "$install_tmp"
+
 armed=1
 rollback() {
   status=$?
   trap - EXIT
+  cleanup_temps
   if (( armed )); then
     echo 'ROLLBACK: restoring previous Kenato executable' >&2
-    systemctl stop "$service" || true
-    install -o root -g root -m 0755 "$work/previous" "$work/restore.new"
-    mv -f "$work/restore.new" "$target"
+    if ! systemctl stop "$service"; then
+      echo 'WARNING: service stop during rollback failed; attempting recovery' >&2
+    fi
+    rollback_tmp="$(mktemp "$target_dir/.kenato-rollback.XXXXXXXX")"
+    install -o root -g root -m 0755 "$work/previous" "$rollback_tmp"
+    sync -f "$rollback_tmp"
+    mv -fT -- "$rollback_tmp" "$target"
+    rollback_tmp=""
+    sync -f "$target_dir"
     if ! systemctl start "$service" || ! local_health; then
       echo 'CRITICAL: rollback health failed; operator intervention required' >&2
       exit 1
@@ -127,8 +149,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 systemctl stop "$service"
-install -o root -g root -m 0755 "$work/candidate" "$work/install.new"
-mv -f "$work/install.new" "$target"
+mv -fT -- "$install_tmp" "$target"
+install_tmp=""
+sync -f "$target_dir"
 [[ "$(sha256sum "$target" | awk '{print $1}')" == "$expected_binary" ]]
 systemctl start "$service"
 local_health
@@ -139,6 +162,7 @@ pid="$(systemctl show --property=MainPID --value "$service")"
 [[ "$(sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_binary" ]]
 armed=0
 trap - EXIT
+cleanup_temps
 echo "LOCAL_ROLLOUT_PASS source=$expected_source binary_sha256=$expected_binary"
 echo "BACKUP_RETAINED $work/previous"
 echo 'PENDING: independently verify public HTTPS, authenticated WSS and rollback readiness.'
