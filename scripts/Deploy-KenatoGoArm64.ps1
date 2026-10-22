@@ -86,13 +86,18 @@ try {
     if (-not (Test-Path -LiteralPath $localHelper -PathType Leaf)) {
         throw 'Reviewed remote operator helper is missing next to this PowerShell script.'
     }
-    foreach ($file in @($localHelper) + @($expectedFiles | ForEach-Object { Join-Path $stage $_ })) {
+    foreach ($file in @($expectedFiles | ForEach-Object { Join-Path $stage $_ })) {
         & scp -- $file "${SshAlias}:${remoteDir}/"
         if ($LASTEXITCODE -ne 0) { throw 'Secure copy failed; no host deployment command issued.' }
     }
 
-    Write-Output 'Staging completed. Running the reviewed host-side update with automatic local rollback.'
-    & ssh -tt $SshAlias "sudo bash $remotePath/rollout_existing_oci_arm64.sh --apply $remotePath $sourceSha"
+    # Do NOT execute a root script from an unprivileged, mutable SSH home
+    # directory. Stream the locally reviewed script directly through the
+    # authenticated SSH channel to root bash on stdin (no writable copy).
+    # sudo -n deliberately fails closed if host-side approval is missing.
+    Write-Output 'Staging completed. Applying reviewed script via non-interactive sudo and SSH stdin.'
+    $scriptText = Get-Content -LiteralPath $localHelper -Raw
+    $scriptText | & ssh $SshAlias "sudo -n bash -s -- --apply $remotePath $sourceSha"
     if ($LASTEXITCODE -ne 0) { throw 'Host-side rollout failed; inspect its rollback status before proceeding.' }
 
     Write-Output 'LOCAL_HOST_ROLLOUT_RETURNED_SUCCESS'
