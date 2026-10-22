@@ -10,6 +10,7 @@ import com.sl.kenato.messaging.MessagingOutboundClock
 import com.sl.kenato.messaging.MessagingOutboundSessionDriver
 import com.sl.kenato.messaging.MessagingSessionHandoffRepository
 import com.sl.kenato.messaging.MessagingWire
+import com.sl.kenato.messaging.MessagingWssCoordinator
 import com.sl.kenato.session.NativeSessionMessage
 import com.sl.kenato.session.SESSION_OLM_MESSAGE_NORMAL
 import com.sl.kenato.session.SessionCiphertextWire
@@ -188,6 +189,32 @@ class VoiceOutboundHandoffStagerTest {
     }
 
     @Test
+    fun concurrentTextQueueAtWssCapacityCannotAddVoiceDuringM3Builder() {
+        val f = Fixture()
+        f.approve()
+        f.injectConcurrentTextHandoffs(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS)
+
+        assertThrows(VoiceOutboundStagingException::class.java) {
+            f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+        }
+        assertEquals(1, f.sessions.calls)
+        assertEquals(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS, f.sessions.commits.size)
+        assertTrue(f.sessions.commits.none { it.messageId.contentEquals(f.messageId) })
+    }
+
+    @Test
+    fun concurrentTextQueueOneBelowWssCapacityAllowsLastVoiceSlot() {
+        val f = Fixture()
+        f.approve()
+        f.injectConcurrentTextHandoffs(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS - 1)
+
+        val staged = f.stager().stage(OWNER, f.peer, CALL_ID, VoiceSignalKind.HANGUP, byteArrayOf(), 30)
+
+        assertEquals(MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS, f.sessions.commits.size)
+        assertArrayEquals(staged.messageId, f.sessions.commits.last().messageId)
+    }
+
+    @Test
     fun concurrentVoicePendingFailsInsideSerializedCommit() {
         val f = Fixture()
         f.approve()
@@ -259,6 +286,21 @@ class VoiceOutboundHandoffStagerTest {
             messageIds = MessagingMessageIdGenerator { messageId.copyOf() },
             clock = MessagingOutboundClock { now },
         )
+
+        fun injectConcurrentTextHandoffs(count: Int) {
+            sessions.beforeBuilder = {
+                repeat(count) { index ->
+                    sessions.commits += SessionMessageHandoff(
+                        localContactId = CONTACT_ID.copyOf(),
+                        peerIdentityId = peer.copyOf(),
+                        messageId = ByteArray(16) { 9 }.also { it[0] = (index + 1).toByte() },
+                        direction = SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND,
+                        encodedPlaintext = byteArrayOf(0x08, 0x01),
+                        encodedEnvelope = byteArrayOf(1),
+                    )
+                }
+            }
+        }
 
         fun approve() {
             val challenge = consent.issueChallenge(OWNER, peer, keys.public.encoded)
