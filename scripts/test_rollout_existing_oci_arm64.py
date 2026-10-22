@@ -79,4 +79,20 @@ for ss_output, should_accept in examples:
         "Incorrect exact-PID / loopback listener acceptance", ss_output
     )
 
+
+operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
+for token in (
+    "sudo -n bash -s -- --apply",
+    "$scriptText | & ssh",
+    "$expectedZipSha",
+    "$expectedElfSha",
+):
+    assert token in operator, f"Operator wrapper missing security marker: {token}"
+for unsafe in (
+    "ssh -tt",
+    "scp -- $localHelper",
+    "sudo bash $remotePath/rollout_existing_oci_arm64.sh",
+):
+    assert unsafe not in operator, f"Mutable unprivileged root script: {unsafe}"
+
 print("Existing-OCI rollout static policy: PASS (not host acceptance)")
