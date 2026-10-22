@@ -504,10 +504,34 @@ internal class MessagingWssCoordinator(
                 throw MessagingWssException("M4 staged send count exceeds the transport bound")
             }
         }
-        sendable.forEach { (key, recovered, now) ->
-            val envelope = decodeExactRecoveredEnvelope(recovered, owner, now)
+        sendable.forEach { (key, recovered, preflightTime) ->
+            val envelope = decodeExactRecoveredEnvelope(recovered, owner, preflightTime)
+            // Complete wire serialization before the final expiry check. A slow recovery
+            // plan or earlier send must not enqueue an already-expired M4/M5 envelope.
+            val encoded = MessagingWire.encodeClientFrame(MessagingClientFrame(send = envelope))
+            val dispatchTime = nowEpochSeconds()
+            if (dispatchTime < preflightTime) {
+                throw MessagingWssException("M4/M5 outbound clock regressed before socket dispatch")
+            }
+            if (dispatchTime >= envelope.expiresAtEpochSeconds) {
+                // The key is not in flight on this socket yet. Terminalize it while
+                // holding the transport lifecycle lock, not after socket enqueueing.
+                if (!recovery.expireOutboundIfDue(
+                        ownerIdentityId = owner,
+                        peerIdentityId = recovered.peerIdentityId,
+                        messageId = recovered.messageId,
+                        nowEpochSeconds = dispatchTime,
+                    )
+                ) {
+                    throw MessagingWssException("Expired M4/M5 send was not durably terminalized")
+                }
+                activeStagedSends--
+                return@forEach
+            }
             if (sentThisConnection.add(key)) {
-                sendFrame(socket, MessagingClientFrame(send = envelope))
+                if (!socket.sendBinary(encoded)) {
+                    throw MessagingWssRetryException("Unable to enqueue M4 WebSocket frame")
+                }
                 ensureSendAcceptanceTimeout(socket)
             }
         }
