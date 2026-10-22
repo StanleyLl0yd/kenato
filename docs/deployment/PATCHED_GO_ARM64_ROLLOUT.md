@@ -66,6 +66,24 @@ directory on the real host. Then on the host:
 sudo bash scripts/rollout_existing_oci_arm64.sh --apply /path/to/extracted-artifact 04f8d78c3d730d512a9bca6462a4f4177db6ff58
 ```
 
+For a Windows operator using PowerShell 7 and an existing SSH config alias
+`kenato`, the reviewed helper can verify the **exact original ZIP digest**
+and actual ELF hash locally, then optionally stage and invoke the on-host
+script without accepting any SSH credential or host address as a command
+argument:
+
+```powershell
+pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-server-linux-arm64.zip
+# After review and maintenance-window approval:
+pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-server-linux-arm64.zip -SshAlias kenato -Apply
+```
+
+The first command is local preflight only; the second requires the
+operator's existing SSH key and host-side sudo authorization. A successful
+return still requires independent public HTTPS, authenticated WSS and
+rollback-readiness checks. No deployment has been performed by adding this
+helper.
+
 The source SHA is the **original verified backend artifact's** source, not
 the latest Android-only `main` SHA. The script deliberately refuses to
 create an absent service or install onto an unhealthy host. A successful
