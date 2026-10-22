@@ -55,6 +55,14 @@ android {
     }
 
     buildTypes {
+        // Dedicated, side-by-side diagnostic application. Never reuse the
+        // signed com.sl.kenato production identity or its app-private files.
+        create("m5Probe") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".m5probe"
+            versionNameSuffix = "-m5probe"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = true
             if (hasReleaseSigning) {
@@ -66,6 +74,9 @@ android {
             )
         }
     }
+
+    // Instrumented KAE2 tests target only the isolated .m5probe package.
+    testBuildType = "m5Probe"
 
     buildFeatures {
         compose = true

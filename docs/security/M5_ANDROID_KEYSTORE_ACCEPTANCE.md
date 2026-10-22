@@ -16,14 +16,21 @@ production device without a backup/consent to diagnostic testing.
    security patch, API level, target SDK, Android Keystore implementation and
    whether keys are hardware-backed. An emulator result is additional evidence
    only; it is not a physical-device pass.
-2. Build with JDK 25, the pinned SDK/NDK and native M3 prerequisites (same as CI).
-   Run `./gradlew :android:app:assembleDebug :android:app:assembleDebugAndroidTest`.
-   Hosted CI builds only: it does **not** execute instrumented tests.
-3. Install the two debug artifacts using `adb install -r`. Test APK is normally
-   at `android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`;
-   confirm the actual Gradle output path before use.
+2. Build with JDK 25, pinned SDK/NDK and native M3 prerequisites (same as CI).
+   Run `./gradlew :android:app:assembleM5Probe :android:app:assembleM5ProbeAndroidTest`.
+   The `m5Probe` build has application ID `com.sl.kenato.m5probe`,
+   separate app-private data and a debug signature; do **not** uninstall,
+   replace or clear the signed `com.sl.kenato` v0.0.4 production app.
+   Hosted CI only compiles the instrumented package; it does **not** run it.
+3. Inspect both Gradle outputs and confirm the target package **before** installation.
+   The probe APK is normally `android/app/build/outputs/apk/m5Probe/app-m5Probe.apk`;
+   the test APK is normally
+   `android/app/build/outputs/apk/androidTest/m5Probe/app-m5Probe-androidTest.apk`.
+   Confirm the paths and IDs using `apkanalyzer manifest application-id FILE.apk`,
+   then use `adb install -r` for **only these two isolated test APKs**.
+   Never use the ordinary release/debug package in this acceptance procedure.
 4. Execute:
-   `adb shell am instrument -w -r -e class com.sl.kenato.session.EpochKeystoreInstrumentedTest com.sl.kenato.test/androidx.test.runner.AndroidJUnitRunner`
+   `adb shell am instrument -w -r -e class com.sl.kenato.session.EpochKeystoreInstrumentedTest com.sl.kenato.m5probe.test/androidx.test.runner.AndroidJUnitRunner`
 5. Capture redacted output and `adb logcat -d -s KenatoM5Acceptance:I`. The log
    contains timing, API and key security classification only; it must never
    contain aliases, encrypted material, identifiers, SDP/ICE or private keys.

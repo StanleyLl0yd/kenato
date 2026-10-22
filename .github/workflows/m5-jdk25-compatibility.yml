@@ -93,6 +93,8 @@ jobs:
           :android:app:lintRelease
           :android:app:testDebugUnitTest
           :android:app:assembleDebug
+          :android:app:assembleM5Probe
+          :android:app:assembleM5ProbeAndroidTest
           :android:app:assembleRelease
           :android:app:bundleRelease
 
