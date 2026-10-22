@@ -106,7 +106,11 @@ internal class VoiceOutboundHandoffStager(
             // Close the gap between initial ID/queue preflight and serialized M3 commit.
             // Production adapters must share the same LocalSessionRepository lock.
             val livePending = handoffs.pendingMessageHandoffs(ownerIdentityId)
+            val liveOutboundCount = livePending.count {
+                it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND
+            }
             if (livePending.size >= SessionStateCodec.MAX_MESSAGE_HANDOFFS ||
+                liveOutboundCount >= MessagingWssCoordinator.MAX_QUEUED_STAGED_SENDS ||
                 livePending.any { MessageDigest.isEqual(it.messageId, messageId) } ||
                 livePending.any {
                     it.direction == SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND &&
