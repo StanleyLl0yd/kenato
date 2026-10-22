@@ -132,6 +132,21 @@ jobs:
           :android:app:assembleM5Probe
           :android:app:assembleM5ProbeAndroidTest
 
+      - name: Parse physical M5 Keystore PowerShell acceptance helper
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/Run-KenatoM5KeystoreProbe.ps1',
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
       - name: Verify separate test-only Keystore APK package IDs and digests
         run: |
           set -euo pipefail
