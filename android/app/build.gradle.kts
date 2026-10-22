@@ -36,6 +36,7 @@ android {
         targetSdk = 37
         versionCode = 4
         versionName = "0.0.4"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
@@ -147,4 +148,6 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

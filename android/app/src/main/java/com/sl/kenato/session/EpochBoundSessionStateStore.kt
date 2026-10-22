@@ -31,7 +31,8 @@ internal interface SessionEpochKeyBackend {
  * epoch; verify the final file and key namespace. Once the new key exists, every failure
  * is deliberately terminal for this store until separately approved identity recovery.
  *
- * This is NOT an AndroidKeyStore implementation, release migration, or production M3
+ * This store can be paired with a dormant AndroidKeyStore backend for instrumented tests,
+ * but it is not an approved release migration or production M3
  * session store. Device performance/durability, legacy migration and multi-process
  * transactions have NOT been demonstrated.
  */

@@ -154,7 +154,9 @@ The `SessionEpochKeyBackend` interface is an *unimplemented platform boundary*:
 the JVM test fixture uses ordinary in-memory AES-GCM keys and a simulated
 atomic disk. A separate `AndroidKeystoreSessionEpochKeyBackend` implementation
 now supports an instrumented acceptance path using a dedicated AES-GCM key
-namespace, but has **not** been exercised on any Android device or emulator.
+namespace. Its keys can be exercised via the dedicated AndroidX instrumented acceptance
+APK described in `docs/security/M5_ANDROID_KEYSTORE_ACCEPTANCE.md`; no device results
+have been provided or accepted.
 It does NOT attest to Android Keystore durability, alias semantics or speed.
 
 The proof-of-concept serializes operations within one instance and uses a
@@ -182,7 +184,7 @@ hardware; audit hardware-backed versus software-backed keys, reboot/power loss,
 AtomicFile backup recovery, and concurrent process interactions; benchmark
 per-message Keystore generation/deletion; design a user-confirmed destructive
 identity recovery and migration from both `KNS3` and `KSAE`. The JVM fixture is only a fault-injection protocol model, not physical evidence;
-the uninvoked Android backend class is not physical evidence either.
+merely compiling the dormant Android backend or its acceptance APK is not physical evidence.
 No voice, microphone, WebRTC or migration activation follows from it.
 
 ## Remaining design/security blockers before activation

@@ -123,6 +123,7 @@ jobs:
           :android:app:testDebugUnitTest
           :android:app:assembleDebug
           :android:app:assembleRelease
+          :android:app:assembleDebugAndroidTest
           :android:app:bundleRelease
 
       - name: Guard Android Java17 bytecode after JDK25 build

@@ -14,7 +14,15 @@ import javax.crypto.spec.GCMParameterSpec
  * No production factory constructs this class. Physical Android 10/13/14+ Keystore
  * durability, enumeration and latency acceptance is mandatory before it may be used.
  */
-internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
+internal class AndroidKeystoreSessionEpochKeyBackend(
+    private val aliasPrefix: String = PRODUCTION_PREFIX,
+) : SessionEpochKeyBackend {
+    init {
+        require(
+            aliasPrefix == PRODUCTION_PREFIX ||
+                ACCEPTANCE_PREFIX.matches(aliasPrefix)
+        ) { "An isolated, random 128-bit acceptance namespace is required" }
+    }
     private val keystore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val random = SecureRandom()
 
@@ -23,10 +31,10 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
         val aliases = keystore.aliases()
         while (aliases.hasMoreElements()) {
             val alias = aliases.nextElement()
-            if (alias.startsWith(PREFIX)) {
+            if (alias.startsWith(aliasPrefix)) {
                 // Malformed namespace entries are deliberately visible to the caller;
                 // they must never be filtered away to manufacture a matching singleton.
-                result.add(alias.removePrefix(PREFIX))
+                result.add(alias.removePrefix(aliasPrefix))
             }
         }
         result
@@ -41,7 +49,7 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                PREFIX + id,
+                aliasPrefix + id,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setKeySize(256)
@@ -94,7 +102,7 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
     override fun retireEpoch(epochId: String) {
         checkId(epochId)
         try {
-            val alias = PREFIX + epochId
+            val alias = aliasPrefix + epochId
             if (!keystore.containsAlias(alias)) {
                 throw SessionStateException("Protected M3 epoch key already missing")
             }
@@ -108,7 +116,7 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
     }
 
     private fun existingKey(epochId: String): SecretKey =
-        (keystore.getKey(PREFIX + epochId, null) as? SecretKey)
+        (keystore.getKey(aliasPrefix + epochId, null) as? SecretKey)
             ?: throw SessionStateException("Protected M3 Keystore epoch key missing")
 
     private fun generateUniqueEpochId(): String {
@@ -121,7 +129,7 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
                 hex[index * 2 + 1] = HEX[unsigned and 0x0f]
             }
             val id = String(hex)
-            if (!keystore.containsAlias(PREFIX + id)) return id
+            if (!keystore.containsAlias(aliasPrefix + id)) return id
         }
         throw SessionStateException("Unable to allocate a unique M3 epoch alias")
     }
@@ -135,7 +143,9 @@ internal class AndroidKeystoreSessionEpochKeyBackend : SessionEpochKeyBackend {
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val AES_GCM = "AES/GCM/NoPadding"
-        const val PREFIX = "com.sl.kenato.session.epoch-continuity.v1."
+        const val PRODUCTION_PREFIX = "com.sl.kenato.session.epoch-continuity.v1."
+        private val ACCEPTANCE_PREFIX =
+            Regex("com[.]sl[.]kenato[.]session[.]epoch-acceptance[.]v1[.][0-9a-f]{32}[.]")
         const val IV_BYTES = 12
         const val TAG_BYTES = 16
         const val HEX = "0123456789abcdef"
