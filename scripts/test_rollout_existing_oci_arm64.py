@@ -28,10 +28,22 @@ required = [
     'trap rollback EXIT',
     'BACKUP_RETAINED',
     '/proc/$pid/exe',
+    'target_dir="$(dirname -- "$target")"',
+    'mktemp "$target_dir/.kenato-install.XXXXXXXX"',
+    'mktemp "$target_dir/.kenato-rollback.XXXXXXXX"',
+    'mv -fT -- "$install_tmp" "$target"',
+    'mv -fT -- "$rollback_tmp" "$target"',
+    'sync -f "$install_tmp"',
+    'sync -f "$target_dir"',
     'PENDING: independently verify public HTTPS, authenticated WSS',
 ]
 for marker in required:
     assert marker in text, f"Missing operator fail-safe marker: {marker}"
 for forbidden in ("ssh ", "scp ", "curl -k", "--insecure", "systemctl enable", "ufw ", "iptables "):
     assert forbidden not in text, f"Rollout must not mutate remote/perimeter scope: {forbidden}"
+for unsafe in (
+    'mv -f "$work/install.new" "$target"',
+    'mv -f "$work/restore.new" "$target"',
+):
+    assert unsafe not in text, f"Cross-filesystem, non-atomic executable swap: {unsafe}"
 print("Existing-OCI rollout static policy: PASS (not host acceptance)")
