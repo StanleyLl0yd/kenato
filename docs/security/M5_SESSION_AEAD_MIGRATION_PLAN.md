@@ -104,7 +104,7 @@ Until that decision is supported by actual Android 10/13/14+ evidence, keep
 the isolated wrapper Draft and **do not** turn it on in the production session
 repository, irrespective of JVM CI success.
 
-### Candidate no-server continuity protocol (design only; NOT implemented)
+### Candidate no-server continuity protocol (isolated prototype; NOT enabled)
 
 For an app-data-file rollback adversary *without permission to mutate the app's
 Android Keystore aliases*, a conservative candidate is a **new Keystore alias
@@ -152,7 +152,10 @@ candidate and all production factories. The proposed `KAE2` envelope
 authenticates a dedicated 32-character epoch identifier as AES-GCM AAD.
 The `SessionEpochKeyBackend` interface is an *unimplemented platform boundary*:
 the JVM test fixture uses ordinary in-memory AES-GCM keys and a simulated
-atomic disk. It does NOT attest to Android Keystore behavior.
+atomic disk. A separate `AndroidKeystoreSessionEpochKeyBackend` implementation
+now supports an instrumented acceptance path using a dedicated AES-GCM key
+namespace, but has **not** been exercised on any Android device or emulator.
+It does NOT attest to Android Keystore durability, alias semantics or speed.
 
 The proof-of-concept serializes operations within one instance and uses a
 fresh epoch key per state write. An existing snapshot is authenticated with
@@ -173,13 +176,13 @@ the prototype does not solve recovery or liveness. A JVM unit test accepting
 the older authentic original `KSAE` snapshot is retained as the distinct,
 unresolved existing-wrapper counterexample.
 
-**Required before any implementation or approval:** prove trustworthy
+**Required before any activation or approval:** prove trustworthy
 namespace enumeration and irreversible alias retirement on Android 10/13/14+
 hardware; audit hardware-backed versus software-backed keys, reboot/power loss,
 AtomicFile backup recovery, and concurrent process interactions; benchmark
 per-message Keystore generation/deletion; design a user-confirmed destructive
-identity recovery and migration from both `KNS3` and `KSAE`. The new JVM
-fixture is only a fault-injection protocol model, not physical evidence.
+identity recovery and migration from both `KNS3` and `KSAE`. The JVM fixture is only a fault-injection protocol model, not physical evidence;
+the uninvoked Android backend class is not physical evidence either.
 No voice, microphone, WebRTC or migration activation follows from it.
 
 ## Remaining design/security blockers before activation
