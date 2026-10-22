@@ -141,15 +141,18 @@ jobs:
           test -s "$tests"
           aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
           test -x "$aapt"
-          "$aapt" dump badging "$probe" | grep -Fq "package: name='com.sl.kenato.m5probe'"
-          "$aapt" dump badging "$tests" | grep -Fq "package: name='com.sl.kenato.m5probe.test'"
+          probe_badging="$("$aapt" dump badging "$probe")"
+          tests_badging="$("$aapt" dump badging "$tests")"
+          grep -Fq "package: name='com.sl.kenato.m5probe'" <<< "$probe_badging"
+          grep -Fq "package: name='com.sl.kenato.m5probe.test'" <<< "$tests_badging"
           mkdir -p "$RUNNER_TEMP/kenato-m5-keystore-probe"
           cp "$probe" "$tests" "$RUNNER_TEMP/kenato-m5-keystore-probe/"
           (
             cd "$RUNNER_TEMP/kenato-m5-keystore-probe"
             sha256sum app-m5Probe.apk app-m5Probe-androidTest.apk > SHA256SUMS
             sha256sum --check SHA256SUMS
-            printf 'source_sha=%s\n' "$GITHUB_SHA" > SCOPE.txt
+            printf 'checked_out_sha=%s\n' "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > SCOPE.txt
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha || github.sha }}" >> SCOPE.txt
             printf 'application_id=com.sl.kenato.m5probe\n' >> SCOPE.txt
             printf 'status=research_only_no_device_pass_no_voice\n' >> SCOPE.txt
             printf 'not_a_release=true\n' >> SCOPE.txt
