@@ -59,6 +59,19 @@ class VoiceEffectClaimGateTest {
     }
 
     @Test
+    fun aSingleMismatchedSnapshotIrreversiblyConsumesTheProposal() {
+        val f = Fixture()
+        val ticket = f.gate.replace(VoiceCallTransition(
+            connecting, listOf(VoiceCallEffect(VoiceCallEffectKind.START_MEDIA, key)),
+        )).single()
+        assertNull(f.claim(ticket, ringing))
+        // Even if a caller later supplies the expected snapshot, the proposal
+        // was already rejected and cannot reappear.
+        assertNull(f.claim(ticket, connecting))
+        assertEquals(0, f.approvals)
+    }
+
+    @Test
     fun oldStopTicketCannotCloseDifferentNewCall() {
         val f = Fixture()
         val stop = f.gate.replace(VoiceCallTransition(
