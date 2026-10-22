@@ -2,6 +2,7 @@
 """Offline, host-free fail-safe policy for the operator-only OCI updater."""
 from pathlib import Path
 import subprocess
+import re
 
 path = Path("scripts/rollout_existing_oci_arm64.sh")
 text = path.read_text(encoding="utf-8")
@@ -48,4 +49,34 @@ for unsafe in (
     'mv -f "$work/restore.new" "$target"',
 ):
     assert unsafe not in text, f"Cross-filesystem, non-atomic executable swap: {unsafe}"
+
+# Execute the real awk listener policy against synthetic ss output, without
+# contacting a host or starting a socket.
+listener = re.search(
+    r"""ss -H -ltnp \| awk -v wanted="\$service_pid" '(.*?)' \|\| return 1""",
+    text,
+    flags=re.DOTALL,
+)
+assert listener is not None, "Must retain isolated exact-PID socket guard"
+awk = listener.group(1)
+examples = (
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', True),
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-service",pid=5678,fd=8))\\n', False),
+    ('LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', False),
+    ('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n'
+     'LISTEN 0 4096 [::]:8080 [::]:* users:(("kenato-server",pid=1234,fd=10))\\n', False),
+    ('LISTEN 0 4096 127.0.0.1:8081 0.0.0.0:* users:(("kenato-server",pid=1234,fd=8))\\n', False),
+)
+for ss_output, should_accept in examples:
+    trial = subprocess.run(
+        ["awk", "-v", "wanted=1234", awk],
+        input=ss_output,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert (trial.returncode == 0) == should_accept, (
+        "Incorrect exact-PID / loopback listener acceptance", ss_output
+    )
+
 print("Existing-OCI rollout static policy: PASS (not host acceptance)")
