@@ -21,6 +21,13 @@ fi
 
 artifact_dir="$2"
 expected_source="$3"
+# Hard-pin the previously source-verified GitHub Actions artifact. A checksum
+# carried inside the same untrusted archive is not an independent trust anchor.
+pinned_source=04f8d78c3d730d512a9bca6462a4f4177db6ff58
+pinned_binary=f651a2519ea555d224f49897944561447dd6a8810353dd34c4e87f5ff28b97e9
+[[ "$expected_source" == "$pinned_source" ]] || {
+  echo 'Unreviewed backend source revision' >&2; exit 1;
+}
 service=kenato-server
 target=/usr/local/bin/kenato-server
 backup_root=/var/backups/kenato
@@ -44,6 +51,9 @@ expected_line="$(cat "$artifact_dir/SHA256SUMS")"
   echo 'Noncanonical SHA256SUMS: refusing rollout' >&2; exit 1;
 }
 expected_binary="${BASH_REMATCH[1]}"
+[[ "$expected_binary" == "$pinned_binary" ]] || {
+  echo 'Unreviewed ARM64 binary digest' >&2; exit 1;
+}
 [[ "$(sha256sum "$artifact_dir/$binary" | awk '{print $1}')" == "$expected_binary" ]] || {
   echo 'Artifact binary SHA-256 mismatch' >&2; exit 1;
 }
