@@ -46,3 +46,23 @@ M4 messaging, target SDK, microphone and production release remain unchanged.
   backups of Keystore state or hostile runtime hooks.
 
 **Do not merge as acceptance or enable voice based on passing JVM tests.**
+
+## Android 10+ Keystore/AtomicFile acceptance adapters (dormant)
+
+Two Android-only classes are now available for a separately approved *probe*:
+`AndroidKeystoreVoiceConsentEpochAcceptanceKeys` and
+`AndroidVoiceConsentEpochAcceptanceBacking`. Both require an explicit random
+128-bit hex probe ID and have dedicated test-only aliases/file names; neither
+can access the active KCS1 file or the M3 epoch namespace. No Android factory
+constructs either. They are compiled during Android CI, **not executed on a
+physical device**. No Android instrumentation harness, ABI/JNI acceptance,
+restart/kill/reboot measurements or existing-user migration is claimed.
+
+An eventual physical test harness must allocate a fresh unpredictable probe ID,
+install an **independent diagnostic package** and tear down only its own aliases
+and file after each test. Report exact APK SHA and observed Keystore security
+level without identifying device serials or exposing consent state. Before a
+release-capable implementation, this probe-only namespace must be replaced by
+an independently reviewed production namespace and an explicit KCS1-to-KCE2
+migration/recovery transaction; a passing synthetic or device probe does not
+by itself resolve P23.
