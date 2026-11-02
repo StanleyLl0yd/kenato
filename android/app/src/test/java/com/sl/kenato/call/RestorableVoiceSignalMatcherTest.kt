@@ -5,6 +5,9 @@ import com.sl.kenato.messaging.MessagingWire
 import com.sl.kenato.session.SessionMessageHandoff
 import com.sl.kenato.session.SessionStateCodec
 import java.security.SecureRandom
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -241,6 +244,38 @@ class RestorableVoiceSignalMatcherTest {
         }
         assertTrue(f.ledger().hasClaim(OWNER, original))
         assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+    }
+
+    @Test
+    fun concurrentGuardedSourcesAcrossSeparateCoordinatorsAdmitOnlyOneEffect() {
+        val f = Fixture()
+        f.accept(handoff(127))
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val pool = Executors.newFixedThreadPool(2)
+        val begin = CountDownLatch(1)
+        try {
+            val attempts = (1..2).map {
+                pool.submit<VoiceCallTransition?> {
+                    val guarded = EpochGuardedVoiceCallClaimedControlSource(
+                        f.matcher(), f.ledger(), admission, VoiceCallCoordinatorClock { NOW },
+                    )
+                    val coordinator = VoiceCallAdmissionCoordinator(
+                        OWNER, admission, guarded, VoiceCallCoordinatorClock { NOW },
+                    )
+                    begin.await()
+                    coordinator.receiveClaimedControl(PEER, id(127))
+                }
+            }
+            begin.countDown()
+            val outcomes = attempts.map { it.get(15, TimeUnit.SECONDS) }
+            assertEquals(1, outcomes.count { it != null })
+            assertEquals(1, outcomes.count { it == null })
+            assertEquals(VoiceCallPhase.INCOMING_RINGING, outcomes.filterNotNull().single().next.phase)
+            assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+            assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     @Test
