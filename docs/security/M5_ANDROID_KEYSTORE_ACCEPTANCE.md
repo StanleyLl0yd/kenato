@@ -49,19 +49,32 @@ The dedicated `m5Probe` manifest removes INTERNET, and CI rejects network,
 microphone, camera or audio capture permissions in the diagnostic APK.
 
 
-On Windows with PowerShell 7 and Android platform-tools (`adb`), extract
-the artifact to a local directory. The operator may run:
+On Windows with PowerShell 7 and Android platform-tools (`adb`), download the
+original Actions ZIP **without extracting it**. From the authenticated GitHub
+Actions artifact API metadata for the exact workflow run, independently record
+its `digest: sha256:...` (do not copy a digest from inside the downloaded ZIP).
+For example the reviewed 2026-11-02 exact-head artifact from CI run
+`41404111005`, artifact ID `13122997128`, has externally reported SHA-256
+`558b8635e14482e88db8d06e25d9cb64b3e600242213c070f9bebd41a8f7b123`.
+For a later run always fetch that run's own digest.
+
+The operator may run:
 
 ```powershell
 $head = 'REPLACE_WITH_THE_ARTIFACT_RUNS_40_CHARACTER_PR_HEAD_SHA'
-pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactDirectory C:\\KenatoM5Probe -ExpectedHeadSha $head -EvidenceDirectory C:\\KenatoM5Evidence
+$zipSha = 'REPLACE_WITH_THE_INDEPENDENT_GITHUB_ACTIONS_ZIP_SHA256'
+pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactZip C:\\KenatoM5Probe.zip -ExpectedArtifactZipSha256 $zipSha -ExpectedHeadSha $head -EvidenceDirectory C:\\KenatoM5Evidence
 ```
 
-The script requires the exact reviewed 40-character PR HEAD SHA from the
-original Actions artifact run; a mismatched/stale SCOPE.txt is rejected before
-ADB installation. SCOPE.txt is metadata, not independent cryptographic
-attestation: download from the trusted exact Actions run and validate
-provenance before accepting the report.
+The script requires the exact reviewed PR HEAD SHA and the independently
+reported original ZIP digest from the trusted GitHub Actions API. It checks
+the **outer ZIP before extraction**, extracts only into a new private temporary
+directory, rejects additional members, and also verifies both APK checksums
+and `SCOPE.txt`. An attacker cannot replace the entire ZIP with internally
+consistent forged `SHA256SUMS`/`SCOPE.txt` without failing the outer hash.
+The caller must obtain the ZIP digest from a trusted independent GitHub
+response; copying it from untrusted archive contents does not establish
+authenticity.
 
 The script verifies both inner APK hashes and scope, requires a physical
 API29+ Android device (specify `-DeviceSerial` if multiple devices are

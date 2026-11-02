@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/Run-KenatoM5KeystoreProbe.ps1"
@@ -64,20 +65,29 @@ def prepare_artifact(location: Path) -> None:
         "status=research_only_no_device_pass_no_voice\n"
         "not_a_release=true\n"
     )
+    with zipfile.ZipFile(location / "diagnostic.zip", "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry in sorted((location / "artifact").iterdir()):
+            archive.write(entry, arcname=entry.name)
     (location / "bin").mkdir()
     mock = location / "bin" / "adb"
     mock.write_text(FAKE_ADB)
     mock.chmod(0o700)
 
 
-def execute(folder: Path, *, expected_head: str = HEAD_SHA, **environ: str) -> subprocess.CompletedProcess[str]:
+def execute(
+    folder: Path, *, expected_head: str = HEAD_SHA,
+    expected_zip_sha: str | None = None, **environ: str
+) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
+    if expected_zip_sha is None:
+        expected_zip_sha = hashlib.sha256((folder / "diagnostic.zip").read_bytes()).hexdigest()
     environment["PATH"] = str(folder / "bin") + os.pathsep + environment["PATH"]
     environment.update(environ)
     return subprocess.run(
         [
             "pwsh", "-NoProfile", "-File", str(SCRIPT),
-            "-ArtifactDirectory", str(folder / "artifact"),
+            "-ArtifactZip", str(folder / "diagnostic.zip"),
+            "-ExpectedArtifactZipSha256", expected_zip_sha,
             "-ExpectedHeadSha", expected_head,
             "-EvidenceDirectory", str(folder / "evidence"),
         ],
@@ -101,6 +111,9 @@ with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     assert evidence["passed_expected"] == 5
     assert evidence["android_api"] == 34
     assert evidence["reviewed_pr_head_sha"] == HEAD_SHA
+    assert evidence["artifact_zip_sha256"] == hashlib.sha256(
+        (folder / "diagnostic.zip").read_bytes()
+    ).hexdigest()
     assert len(evidence["serial_sha256_prefix"]) == 12
     for forbidden in ("mock-qa-phone", "package:/dev/", "private", "ciphertext"):
         assert forbidden not in recorded[0].read_text(), f"Evidence leak: {forbidden}"
@@ -126,6 +139,18 @@ with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     prepare_artifact(folder)
     mismatched = execute(folder, expected_head="c" * 40)
     assert mismatched.returncode != 0, "Mismatched PR HEAD must fail before installation"
+    assert not (folder / "evidence").exists()
+
+
+with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
+    folder = Path(temp)
+    prepare_artifact(folder)
+    verified = hashlib.sha256((folder / "diagnostic.zip").read_bytes()).hexdigest()
+    with (folder / "diagnostic.zip").open("ab") as output:
+        output.write(b"whole-archive-substitution")
+    substituted = execute(folder, expected_zip_sha=verified)
+    assert substituted.returncode != 0, "Substituted Actions ZIP must fail before ADB"
+    assert "does not match" in substituted.stderr
     assert not (folder / "evidence").exists()
 
 print("M5 simulated ADB operator-script regressions PASS (NOT physical device evidence)")
