@@ -33,7 +33,13 @@ internal interface VoiceConsentEpochKeys {
 internal class EpochBoundVoiceConsentStore(
     private val backing: VoiceConsentEpochRawStore,
     private val keys: VoiceConsentEpochKeys,
-) {
+) : VoiceCapabilityEncryptedStore {
+    override fun read(): ByteArray? = readEncryptedConsent()
+
+    override fun write(bytes: ByteArray): Boolean = commitEncryptedConsent(bytes)
+
+    override fun clear(): Boolean = clearForIdentityRecovery()
+
     private var uncertainCommit = false
 
     @Synchronized
