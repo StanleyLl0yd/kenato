@@ -80,6 +80,34 @@ class M5VoiceUiSnapshotGuardTest {
     }
 
     @Test
+    fun completedOldWorkerCannotLaunderQrThroughNewForegroundSnapshot() {
+        val launchedEpoch = 20L
+        val newForeground = M45AcceptanceUiState(
+            voiceUiEpoch = launchedEpoch + 1,
+            selectedPeerIdentityId = "peer-new",
+            busy = true,
+            voiceCapabilityConfirmed = false,
+        )
+        // Build work may finish after a foreground transition. The controller
+        // stamps the response with the epoch captured BEFORE dispatch.
+        val finishedWorker = newForeground.copy(
+            voiceUiEpoch = launchedEpoch,
+            selectedPeerIdentityId = "peer-old",
+            voiceProofQr = "old-user-approved-signature",
+            voiceCapabilityConfirmed = true,
+            busy = false,
+        )
+        val unchanged = M5VoiceUiSnapshotGuard.redactStaleProofs(
+            newForeground, finishedWorker, true,
+        )
+        assertEquals(21L, unchanged.voiceUiEpoch)
+        assertEquals("peer-new", unchanged.selectedPeerIdentityId)
+        assertEquals(false, unchanged.voiceCapabilityConfirmed)
+        assertEquals(true, unchanged.busy)
+        assertNull(unchanged.voiceProofQr)
+    }
+
+    @Test
     fun sameEpochLegitimateContactSelectionStillApplies() {
         val old = M45AcceptanceUiState(selectedPeerIdentityId = "old", voiceUiEpoch = 3)
         val selected = old.copy(selectedPeerIdentityId = "new", voiceCapabilityConfirmed = true)
