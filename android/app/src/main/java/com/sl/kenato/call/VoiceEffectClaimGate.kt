@@ -111,8 +111,9 @@ internal class VoiceEffectClaimGate {
         claimed.clear()
     }
 
-    // Terminal snapshots retain only call IDs. STOP_MEDIA still requires
-    // exact-peer correlation at the future native media owner.
+    // Only the most recently retired call may generate terminal effects.
+    // Terminal snapshots do not retain peers: STOP_MEDIA still needs exact
+    // peer+call-key correlation at the future native media owner.
     private fun effectMatchesSnapshot(
         effect: VoiceCallEffect,
         next: VoiceCallSnapshot,
@@ -132,7 +133,8 @@ internal class VoiceEffectClaimGate {
         VoiceCallEffectKind.SEND_REJECT,
         VoiceCallEffectKind.SEND_HANGUP,
         VoiceCallEffectKind.STOP_MEDIA ->
-            next.phase == VoiceCallPhase.IDLE && effect.key.callId in next.retiredCallIds
+            next.phase == VoiceCallPhase.IDLE &&
+                effect.key.callId == next.retiredCallIds.lastOrNull()
     }
 
     private companion object {
