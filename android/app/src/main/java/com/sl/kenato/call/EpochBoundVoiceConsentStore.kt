@@ -153,7 +153,6 @@ internal class EpochBoundVoiceConsentStore(
         const val HEADER_BYTES = 4 + 1 + 32
         const val MAX_PERSISTED_BYTES = VoiceCapabilityConsentStateCodec.MAX_ENCRYPTED_BYTES + 128
         val EPOCH_PATTERN = Regex("[0-9a-f]{32}")
-        val AAD_PREFIX = "KENATO-M5-VOICE-CONSENT-EPOCH-V1\u005c\u00750000"
-            .toByteArray(Charsets.UTF_8)
+        val AAD_PREFIX = "KENATO-M5-VOICE-CONSENT-EPOCH-V1\u0000".toByteArray(Charsets.UTF_8)
     }
 }
