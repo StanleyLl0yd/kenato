@@ -14,7 +14,7 @@ exact-keyed media handle and reject callbacks from other calls.
 
 Registration additionally refuses effects inconsistent with the committed
 reducer snapshot: active-call key/phase for offer, accept and media start,
-busy-call ID reuse, and terminal effects lacking the retired call ID. A
+busy-call ID reuse, and terminal effects that do not reference the most recently retired call ID. A
 rejected registration invalidates older tickets. Terminal history does not
 retain peer identity; the future media owner MUST verify the exact peer and
 call ID before STOP_MEDIA.
