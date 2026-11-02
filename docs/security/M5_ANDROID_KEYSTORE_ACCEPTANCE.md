@@ -53,8 +53,15 @@ On Windows with PowerShell 7 and Android platform-tools (`adb`), extract
 the artifact to a local directory. The operator may run:
 
 ```powershell
-pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactDirectory C:\\KenatoM5Probe -EvidenceDirectory C:\\KenatoM5Evidence
+$head = 'REPLACE_WITH_THE_ARTIFACT_RUNS_40_CHARACTER_PR_HEAD_SHA'
+pwsh -File scripts/Run-KenatoM5KeystoreProbe.ps1 -ArtifactDirectory C:\\KenatoM5Probe -ExpectedHeadSha $head -EvidenceDirectory C:\\KenatoM5Evidence
 ```
+
+The script requires the exact reviewed 40-character PR HEAD SHA from the
+original Actions artifact run; a mismatched/stale SCOPE.txt is rejected before
+ADB installation. SCOPE.txt is metadata, not independent cryptographic
+attestation: download from the trusted exact Actions run and validate
+provenance before accepting the report.
 
 The script verifies both inner APK hashes and scope, requires a physical
 API29+ Android device (specify `-DeviceSerial` if multiple devices are
