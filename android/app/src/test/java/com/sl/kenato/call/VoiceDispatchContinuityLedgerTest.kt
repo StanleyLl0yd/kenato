@@ -167,7 +167,12 @@ class VoiceDispatchContinuityLedgerTest {
         val switchedCall = VoiceSignalReplayDispatchPermit(
             PEER, p.messageId, id(500), p.kind, p.envelopeDigest,
         )
-        assertFalse(f.newLedger().hasClaim(OWNER, switchedCall))
+        assertThrows(VoiceSignalReplayException::class.java) {
+            f.newLedger().hasClaim(OWNER, switchedCall)
+        }
+        assertThrows(VoiceSignalReplayException::class.java) {
+            f.newLedger().claim(OWNER, switchedCall)
+        }
         assertThrows(VoiceSignalReplayException::class.java) {
             f.newLedger().claim(ByteArray(32) { 7 }, p)
         }
@@ -177,6 +182,30 @@ class VoiceDispatchContinuityLedgerTest {
             ))
         }
         assertTrue(f.newLedger().hasClaim(OWNER, p))
+    }
+
+    @Test
+    fun sameMessageIdDifferentAuthenticatedEnvelopeDigestOrKindCannotObtainSecondClaim() {
+        val f = Fixture()
+        val original = permit(33)
+        assertTrue(f.ledger.claim(OWNER, original))
+        val forgedDigest = VoiceSignalReplayDispatchPermit(
+            PEER, original.messageId, original.callId, original.kind,
+            original.envelopeDigest.copyOf().also { it[0] = 99.toByte() },
+        )
+        val forgedKind = VoiceSignalReplayDispatchPermit(
+            PEER, original.messageId, original.callId, VoiceSignalKind.ANSWER,
+            original.envelopeDigest,
+        )
+        for (variant in listOf(forgedDigest, forgedKind)) {
+            assertThrows(VoiceSignalReplayException::class.java) {
+                f.newLedger().claim(OWNER, variant)
+            }
+            assertThrows(VoiceSignalReplayException::class.java) {
+                f.newLedger().hasClaim(OWNER, variant)
+            }
+        }
+        assertFalse(f.newLedger().claim(OWNER, original))
     }
 
     @Test
