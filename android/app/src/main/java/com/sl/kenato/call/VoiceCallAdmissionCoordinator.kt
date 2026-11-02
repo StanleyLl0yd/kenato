@@ -59,6 +59,65 @@ internal class MatcherVoiceCallClaimedControlSource(
     }
 }
 
+/**
+ * Explicit opt-in, research-only M5 control admission. Never silently fall
+ * back to the legacy checksum-only replay claim when the KDL1 epoch is lost.
+ *
+ * The immutable semantic payload must match an independently decrypted event,
+ * its prior authenticated journal receipt and the unique epoch claim. Pinned
+ * M2/M3/v2 consent is checked before and after the durable write. A failure
+ * consumes work or throws, but MUST NOT yield an event to the reducer.
+ *
+ * This is not the final M2/M3/WSS owner: the guard is not yet serialized with
+ * contact revocation, WSS ACK/recovery or the future media effect runner.
+ * No production Android factory creates this adapter.
+ */
+internal class EpochGuardedVoiceCallClaimedControlSource(
+    private val matcher: RestorableVoiceSignalMatcher,
+    private val continuity: VoiceDispatchContinuityLedger,
+    private val approved: VoiceCallVerifiedPeerAdmission,
+    private val clock: VoiceCallCoordinatorClock,
+) : VoiceCallClaimedControlSource {
+    @Synchronized
+    override fun claimControl(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+    ): VoiceSignalPlaintext? {
+        if (ownerIdentityId.size != 32 ||
+            peerIdentityId.size != 32 ||
+            messageId.size != 16 ||
+            nowEpochSeconds <= 0L
+        ) {
+            throw VoiceCallAdmissionException("Protected voice control key invalid")
+        }
+        approved.requireApproved(ownerIdentityId.copyOf(), peerIdentityId.copyOf())
+        val proposed = matcher.restorableCandidates(ownerIdentityId, nowEpochSeconds)
+            .singleOrNull {
+                MessageDigest.isEqual(it.senderIdentityId, peerIdentityId) &&
+                    MessageDigest.isEqual(it.messageId, messageId)
+            } ?: return null
+        if (proposed.kind !in CONTROL_SIGNAL_KINDS) return null
+
+        // Authorization is NOT granted by the replay journal, HTTP/WSS metadata
+        // or an effect-claim boolean alone. Revalidate before consuming a key.
+        approved.requireApproved(ownerIdentityId.copyOf(), peerIdentityId.copyOf())
+        val claimed = matcher.claimRestorableCandidateWithEpochLedger(
+            ownerIdentityId, peerIdentityId, messageId, nowEpochSeconds, continuity,
+        ) ?: return null
+
+        // Consent may have been revoked or the TTL elapsed during durable fsync.
+        // Both cases fail closed and permanently consume the claimed event.
+        approved.requireApproved(ownerIdentityId.copyOf(), peerIdentityId.copyOf())
+        val afterCommit = clock.nowEpochSeconds()
+        if (afterCommit < nowEpochSeconds || claimed.expiresAtEpochSeconds <= afterCommit) {
+            throw VoiceCallAdmissionException("Claimed voice control became stale during commit")
+        }
+        return claimed
+    }
+}
+
 internal fun interface VoiceCallCoordinatorClock {
     fun nowEpochSeconds(): Long
 }
