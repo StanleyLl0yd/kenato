@@ -199,11 +199,10 @@ and reports observed classfile major versions. Kenato's current Android CI build
 Java/Kotlin source and target bytecode **Java 17 (classfile major 61)**.
 The pinned m157 candidate contains Java 25 classfile major 69. Earlier
 JDK17-only wording is historical; JDK25 host compilation does not approve
-the vendor AAR or raise app bytecode target. A release that rewrites only
-a Java 21 classfile header
-from 65 to 61 may still contain incompatible instructions or API
-requirements; **passing the major-version gate does not prove such a
-rewrite is valid**. Independently compare upstream and Maven AAR
+the vendor AAR or raise app bytecode target. Rewriting a Java 25 vendor
+classfile header from major 69 to 61 without recompiling and auditing its
+instructions and runtime dependencies is invalid as a compatibility strategy;
+**passing a classfile-header check cannot establish binary compatibility**. Independently compare upstream and Maven AAR
 provenance, then run real D8/AGP and device loader checks. This nested
 ZIP scan is offline only and does not imply binary approval.
 
