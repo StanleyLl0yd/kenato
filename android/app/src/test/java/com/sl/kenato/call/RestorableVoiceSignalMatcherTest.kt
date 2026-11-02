@@ -207,6 +207,43 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun swappedAuthenticatedSemanticSnapshotAfterEpochCommitCannotReturnOldEvent() {
+        val f = Fixture()
+        f.accept(handoff(125))
+        val original = f.journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        f.ledgerRaw.afterWrite = {
+            // Adversarial private-file replacement during the protected commit:
+            // an independently valid encrypted semantic event with the same
+            // sender/message ID but a different call ID and outer envelope.
+            f.semanticStore.bytes = null
+            f.semantic.persistAuthenticatedVoiceEvent(OWNER, handoff(125, call = 99))
+        }
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(125), NOW, f.ledger(),
+            )
+        }
+        assertTrue(f.ledger().hasClaim(OWNER, original))
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
+    fun disappearanceOfSemanticFileDuringEpochCommitCannotReturnStalePlaintext() {
+        val f = Fixture()
+        f.accept(handoff(126))
+        val original = f.journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        f.ledgerRaw.afterWrite = { f.semanticStore.bytes = null }
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(126), NOW, f.ledger(),
+            )
+        }
+        assertTrue(f.ledger().hasClaim(OWNER, original))
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+    }
+
+    @Test
     fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
         val f = Fixture()
         f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))
