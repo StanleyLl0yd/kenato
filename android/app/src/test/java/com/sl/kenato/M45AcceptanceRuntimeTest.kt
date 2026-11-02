@@ -172,7 +172,7 @@ class M45AcceptanceRuntimeTest {
             assertEquals(
                 listOf(
                     "identity.load", "contacts.publish", "sessions.maintain",
-                    "contacts.create", "messaging.start",
+                    "contacts.create", "identity.load", "messaging.start",
                 ),
                 fixture.events,
             )
