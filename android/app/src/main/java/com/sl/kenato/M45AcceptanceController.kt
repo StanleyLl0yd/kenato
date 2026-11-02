@@ -99,6 +99,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     fun onAppForeground() {
         foreground = true
         mainHandler.removeCallbacks(pollRunnable)
+        val requestEpoch = state.voiceUiEpoch
         worker.execute {
             try {
                 if (
@@ -108,11 +109,13 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                 ) {
                     requireRuntime().startMessaging()
                 }
-                val snapshot = buildSnapshot()
+                val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
                 mainHandler.post { applySnapshot(snapshot) }
             } catch (error: Exception) {
                 mainHandler.post {
-                    state = state.copy(error = userError(error))
+                    if (state.voiceUiEpoch == requestEpoch) {
+                        state = state.copy(error = userError(error))
+                    }
                 }
             }
         }
@@ -250,20 +253,23 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
 
     private fun launchOperation(notice: String, operation: () -> Unit) {
         if (state.busy) return
+        val requestEpoch = state.voiceUiEpoch
         state = state.copy(busy = true, notice = null, error = null)
         worker.execute {
             try {
                 operation()
-                val snapshot = buildSnapshot()
+                val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
                 mainHandler.post {
                     applySnapshot(snapshot, notice = notice)
                 }
             } catch (error: Exception) {
-                val snapshot = runCatching { buildSnapshot() }.getOrNull()
+                val snapshot = runCatching {
+                    buildSnapshot().copy(voiceUiEpoch = requestEpoch)
+                }.getOrNull()
                 mainHandler.post {
                     if (snapshot != null) {
                         applySnapshot(snapshot, error = userError(error))
-                    } else {
+                    } else if (state.voiceUiEpoch == requestEpoch) {
                         state = state.copy(
                             busy = false,
                             notice = null,
@@ -277,8 +283,9 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
 
     private fun refreshSilently() {
         if (!silentRefreshInFlight.compareAndSet(false, true)) return
+        val requestEpoch = state.voiceUiEpoch
         worker.execute {
-            val result = runCatching { buildSnapshot() }
+            val result = runCatching { buildSnapshot().copy(voiceUiEpoch = requestEpoch) }
             mainHandler.post {
                 silentRefreshInFlight.set(false)
                 result.onSuccess { snapshot ->
