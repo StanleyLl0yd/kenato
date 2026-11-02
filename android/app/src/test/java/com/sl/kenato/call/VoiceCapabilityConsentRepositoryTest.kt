@@ -251,6 +251,20 @@ class VoiceCapabilityConsentRepositoryTest {
     }
 
     @Test
+    fun authenticOldGrantFileStillReapprovesPeerAfterRevokeWithFixedAlias_P23Blocker() {
+        val f = Fixture()
+        val challenge = f.issue()
+        f.repository.confirmSignedProof(OWNER, f.peer, f.keys.public.encoded, f.sign(challenge), true)
+        val oldAuthenticGrant = f.store.bytes!!.copyOf()
+        f.repository.revoke(OWNER, f.peer)
+        assertFalse(f.repository.isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded))
+        // This is an adversarial demonstration of the current defect, NOT an
+        // anti-rollback PASS. KCE2 remains completely unwired to production.
+        f.store.bytes = oldAuthenticGrant
+        assertTrue(f.newRepository().isVoiceVersion2Confirmed(OWNER, f.peer, f.keys.public.encoded))
+    }
+
+    @Test
     fun restoredEncryptedGrantCannotSurviveIdentityKeyDeletion() {
         val f = Fixture()
         val challenge = f.issue()

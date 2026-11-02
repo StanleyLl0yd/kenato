@@ -1,0 +1,202 @@
+package com.sl.kenato.call
+
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Offline fault injection only, NOT Android Keystore or physical P23 evidence. */
+class EpochBoundVoiceConsentStoreTest {
+    @Test
+    fun authenticOlderConsentFileIsRejectedAfterRevocationCommit() {
+        val f = Fixture()
+        val grant = byteArrayOf(1, 2, 3)
+        val revoked = byteArrayOf(4, 5, 6)
+        assertTrue(f.store.commitEncryptedConsent(grant))
+        val olderAuthenticFile = f.backing.bytes!!.clone()
+        assertTrue(f.store.commitEncryptedConsent(revoked))
+        assertArrayEquals(revoked, f.newStore().readEncryptedConsent())
+        f.backing.bytes = olderAuthenticFile
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+    }
+
+    @Test
+    fun freshAndExistingEpochsPersistAcrossObjectRecreation() {
+        val f = Fixture()
+        assertEquals(null, f.store.readEncryptedConsent())
+        f.store.commitEncryptedConsent(byteArrayOf(1))
+        assertArrayEquals(byteArrayOf(1), f.newStore().readEncryptedConsent())
+        f.newStore().commitEncryptedConsent(byteArrayOf(2))
+        assertArrayEquals(byteArrayOf(2), f.newStore().readEncryptedConsent())
+        assertEquals(1, f.keys.epochIds().size)
+    }
+
+    @Test
+    fun orphanKeyOrMissingFileIsNotTreatedAsFreshInstall() {
+        val f = Fixture()
+        f.store.commitEncryptedConsent(byteArrayOf(1))
+        f.backing.bytes = null
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().commitEncryptedConsent(byteArrayOf(2))
+        }
+    }
+
+    @Test
+    fun extraAliasOrLostActiveKeyFailsClosed() {
+        val f = Fixture()
+        f.store.commitEncryptedConsent(byteArrayOf(3))
+        val active = f.keys.epochIds().single()
+        f.keys.createEpoch()
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+        f.keys.retire(active)
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+    }
+
+    @Test
+    fun failedWriteLeavesUncertainNamespaceAndCannotReturnAnOldGrant() {
+        for (failure in listOf("before", "after")) {
+            val f = Fixture()
+            f.store.commitEncryptedConsent(byteArrayOf(7))
+            f.backing.failure = failure
+            assertThrows(Exception::class.java) {
+                f.store.commitEncryptedConsent(byteArrayOf(8))
+            }
+            assertThrows(VoiceCapabilityConsentException::class.java) {
+                f.store.readEncryptedConsent()
+            }
+            assertThrows(VoiceCapabilityConsentException::class.java) {
+                f.newStore().readEncryptedConsent()
+            }
+        }
+    }
+
+    @Test
+    fun retirementErrorLeavesNoApprovableState() {
+        val f = Fixture()
+        f.store.commitEncryptedConsent(byteArrayOf(9))
+        f.keys.failRetirement = true
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.store.commitEncryptedConsent(byteArrayOf(10))
+        }
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+    }
+
+    @Test
+    fun createKeyFailureAfterCreationDoesNotAllowASecondMutation() {
+        val f = Fixture()
+        f.keys.failAfterCreation = true
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.store.commitEncryptedConsent(byteArrayOf(1))
+        }
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.store.commitEncryptedConsent(byteArrayOf(2))
+        }
+    }
+
+    @Test
+    fun tamperedAndLegacyEnvelopeNeverTriggersImplicitMigration() {
+        val f = Fixture()
+        f.store.commitEncryptedConsent(byteArrayOf(1))
+        val original = f.backing.bytes!!.clone()
+        f.backing.bytes = original.clone().also {
+            it[it.lastIndex] = (it.last().toInt() xor 1).toByte()
+        }
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+        f.backing.bytes = byteArrayOf(1, 2, 3)
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+        f.backing.bytes = original + ByteArray(VoiceCapabilityConsentStateCodec.MAX_ENCRYPTED_BYTES + 128)
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.newStore().readEncryptedConsent()
+        }
+    }
+
+    @Test
+    fun destructiveClearIsExplicitlyUnimplemented() {
+        val f = Fixture()
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            f.store.clearForIdentityRecovery()
+        }
+    }
+
+    private class Fixture {
+        val backing = MemoryRaw()
+        val keys = TestKeys()
+        val store = newStore()
+        fun newStore() = EpochBoundVoiceConsentStore(backing, keys)
+    }
+
+    private class MemoryRaw : VoiceConsentEpochRawStore {
+        var bytes: ByteArray? = null
+        var failure: String? = null
+        override fun read(): ByteArray? = bytes?.clone()
+        override fun write(bytes: ByteArray): Boolean {
+            if (failure == "before") return false
+            this.bytes = bytes.clone()
+            if (failure == "after") throw IllegalStateException("Simulated uncertain disk return")
+            return true
+        }
+    }
+
+    private class TestKeys : VoiceConsentEpochKeys {
+        private val random = SecureRandom()
+        private val epochKeys = linkedMapOf<String, SecretKeySpec>()
+        private var next = 1
+        var failAfterCreation = false
+        var failRetirement = false
+
+        override fun epochIds(): Set<String> = epochKeys.keys.toSet()
+        override fun createEpoch(): String {
+            val epoch = next++.toString(16).padStart(32, '0')
+            epochKeys[epoch] = SecretKeySpec(ByteArray(32).also(random::nextBytes), "AES")
+            if (failAfterCreation) throw VoiceCapabilityConsentException("Uncertain Keystore creation")
+            return epoch
+        }
+
+        override fun seal(epoch: String, ciphertext: ByteArray, aad: ByteArray): ByteArray {
+            val iv = ByteArray(12).also(random::nextBytes)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.ENCRYPT_MODE, requireNotNull(epochKeys[epoch]), GCMParameterSpec(128, iv))
+            c.updateAAD(aad)
+            return iv + c.doFinal(ciphertext)
+        }
+
+        override fun open(epoch: String, envelope: ByteArray, aad: ByteArray): ByteArray {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(
+                Cipher.DECRYPT_MODE,
+                requireNotNull(epochKeys[epoch]),
+                GCMParameterSpec(128, envelope.copyOfRange(0, 12)),
+            )
+            c.updateAAD(aad)
+            return c.doFinal(envelope.copyOfRange(12, envelope.size))
+        }
+
+        override fun retire(epoch: String) {
+            if (failRetirement) throw VoiceCapabilityConsentException("Keystore retire failed")
+            check(epochKeys.remove(epoch) != null)
+        }
+    }
+}
