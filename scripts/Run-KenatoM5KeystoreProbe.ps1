@@ -14,6 +14,9 @@ param(
     [ValidateScript({ Test-Path $_ -PathType Container })]
     [string] $ArtifactDirectory,
 
+    [Parameter(Mandatory)]
+    [string] $ExpectedHeadSha,
+
     [string] $DeviceSerial,
 
     [string] $EvidenceDirectory = (Join-Path (Get-Location) 'kenato-m5-device-evidence')
@@ -21,6 +24,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($ExpectedHeadSha -cnotmatch '^[0-9a-f]{40}$') {
+    throw 'ExpectedHeadSha must be a lowercase 40-character commit SHA.'
+}
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     throw 'Android SDK platform-tools (adb) is required.'
 }
@@ -33,6 +39,15 @@ if (-not (Test-Path -LiteralPath $sumPath -PathType Leaf) -or
     throw 'Diagnostic SHA256SUMS or SCOPE.txt is missing.'
 }
 $scope = Get-Content -LiteralPath $scopePath -Raw
+$scopeLines = @($scope -split '\r?\n' | Where-Object { $_ -ne '' })
+$heads = @($scopeLines | Where-Object { $_ -clike 'pr_head_sha=*' })
+$checkouts = @($scopeLines | Where-Object { $_ -clike 'checked_out_sha=*' })
+if ($scopeLines.Count -ne 5 -or $heads.Count -ne 1 -or
+    $heads[0] -cne "pr_head_sha=$ExpectedHeadSha" -or
+    $checkouts.Count -ne 1 -or
+    $checkouts[0] -cnotmatch '^checked_out_sha=[0-9a-f]{40}$') {
+    throw 'Artifact PR HEAD does not match the reviewed commit.'
+}
 foreach ($fragment in @('application_id=com.sl.kenato.m5probe',
     'status=research_only_no_device_pass_no_voice',
     'not_a_release=true')) {
@@ -122,6 +137,7 @@ $evidence = [ordered]@{
     serial_sha256_prefix = [Convert]::ToHexString($serialSha).Substring(0, 12).ToLowerInvariant()
     production_package_present_before_and_after = $prodBefore
     package = 'com.sl.kenato.m5probe'
+    reviewed_pr_head_sha = $ExpectedHeadSha
     probe_sha256 = $hashes['app-m5Probe.apk']
     instrument_sha256 = $hashes['app-m5Probe-androidTest.apk']
     started_utc = $started
