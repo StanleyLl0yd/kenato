@@ -223,3 +223,15 @@ in Draft until its own acceptance criteria, migration decision, and
 physical-device evidence are reviewed. No direct WebRTC or third-party
 STUN/TURN activation, no backend changes and no test release follow from
 this document.
+
+## Process-local epoch rotation concurrency
+
+Additional M5 review found that isolated KAE2 adapters used only per-instance
+`@Synchronized` monitors. Two independently constructed wrappers around the
+same raw M3 file and Keystore alias namespace could overlap key creation,
+AtomicFile writes and key retirement. KAE2 now holds a shared process-local
+monitor throughout authenticated read and complete write/verification.
+A concurrent eight-adapter JVM regression verifies successful sequential
+commits and exactly one remaining epoch. This is defensive research only,
+not a process-wide shared M2/M3/WSS/effect owner, cross-process lock,
+release migration or physical Android Keystore approval.

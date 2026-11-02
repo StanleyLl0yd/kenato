@@ -1,6 +1,10 @@
 package com.sl.kenato.session
 
 import java.security.SecureRandom
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -157,6 +161,29 @@ class EpochBoundSessionStateStoreTest {
         assertThrows(SessionStateException::class.java) { f.store.clear() }
         assertEquals(0, f.keys.epochIds().size)
         assertEquals(0, f.disk.writes)
+    }
+
+    @Test
+    fun separateProcessLocalAdaptersSerializeEpochRotations() {
+        val f = Fixture()
+        val start = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(8)
+        try {
+            val mutations = (0..7).map { n ->
+                pool.submit(Callable {
+                    check(start.await(10, TimeUnit.SECONDS))
+                    EpochBoundSessionStateStore(f.disk, f.keys).write(state(withVoice = n % 2 == 0))
+                })
+            }
+            start.countDown()
+            mutations.forEach { assertTrue(it.get(20, TimeUnit.SECONDS)) }
+            assertEquals(1, f.keys.epochIds().size)
+            val live = requireNotNull(EpochBoundSessionStateStore(f.disk, f.keys).read())
+            assertTrue(live.contentEquals(state()) || live.contentEquals(state(withVoice = true)))
+        } finally {
+            start.countDown()
+            pool.shutdownNow()
+        }
     }
 
     @Test

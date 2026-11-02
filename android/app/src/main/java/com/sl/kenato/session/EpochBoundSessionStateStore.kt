@@ -41,6 +41,9 @@ internal class EpochBoundSessionStateStore(
     private val keys: SessionEpochKeyBackend,
 ) : SessionStateStore {
     companion object {
+        // Protect one physical epoch namespace against separate adapters in one process.
+        // This is not a cross-process lock or a multi-store transaction.
+        private val WRITE_LOCK = Any()
         private val MAGIC = byteArrayOf('K'.code.toByte(), 'A'.code.toByte(), 'E'.code.toByte(), '2'.code.toByte())
         private const val VERSION: Byte = 1
         private const val EPOCH_ID_BYTES = 32
@@ -51,13 +54,12 @@ internal class EpochBoundSessionStateStore(
     }
 
     @Synchronized
-    override fun read(): ByteArray? {
-        val current = readAuthenticated() ?: return null
-        return current.second
+    override fun read(): ByteArray? = synchronized(WRITE_LOCK) {
+        readAuthenticated()?.second
     }
 
     @Synchronized
-    override fun write(value: ByteArray): Boolean {
+    override fun write(value: ByteArray): Boolean = synchronized(WRITE_LOCK) {
         if (value.isEmpty() || value.size > SessionStateCodec.MAX_STATE_BYTES) {
             throw SessionStateException("Epoch M3 plaintext state length invalid")
         }
@@ -97,7 +99,7 @@ internal class EpochBoundSessionStateStore(
         } finally {
             check.second.fill(0)
         }
-        return true
+        true
     }
 
     /** No implicit destructive recovery from an uncertain commit. */
