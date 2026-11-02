@@ -42,8 +42,15 @@ internal class IsolatedVoiceForegroundOwner(
     fun receiveControl(peerIdentityId: ByteArray, messageId: ByteArray): Result? {
         requireOpen()
         return try {
-            coordinator.receiveClaimedControl(peerIdentityId.copyOf(), messageId.copyOf())
-                ?.let(::register)
+            val transition = coordinator.receiveClaimedControl(
+                peerIdentityId.copyOf(), messageId.copyOf(),
+            )
+            if (transition == null) {
+                proposals.cancel()
+                null
+            } else {
+                register(transition)
+            }
         } catch (error: Exception) {
             proposals.cancel()
             throw error

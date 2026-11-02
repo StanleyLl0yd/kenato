@@ -299,6 +299,21 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun isolatedForegroundOwnerCancelsOutstandingTicketWhenInboundControlIsNotClaimed() {
+        val f = Fixture()
+        val guard = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, guard, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val outbound = owner.userDial(PEER, explicitUserApproval = true)
+        val oldTicket = outbound.tickets.single()
+        assertEquals(null, owner.receiveControl(PEER, id(200)))
+        assertEquals(null, owner.claimProposal(oldTicket))
+        assertEquals(VoiceCallPhase.OUTGOING_RINGING, owner.snapshot().phase)
+        owner.close()
+    }
+
+    @Test
     fun isolatedForegroundOwnerUsesKdl1OnIncomingControlAndExpiresOldTickets() {
         val f = Fixture()
         f.accept(handoff(128))
