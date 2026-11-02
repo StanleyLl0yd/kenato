@@ -12,6 +12,13 @@ exception is `STOP_MEDIA`, which remains available for exact local teardown
 even when trust is revoked. The future media adapter must own a separate
 exact-keyed media handle and reject callbacks from other calls.
 
+Registration additionally refuses effects inconsistent with the committed
+reducer snapshot: active-call key/phase for offer, accept and media start,
+busy-call ID reuse, and terminal effects lacking the retired call ID. A
+rejected registration invalidates older tickets. Terminal history does not
+retain peer identity; the future media owner MUST verify the exact peer and
+call ID before STOP_MEDIA.
+
 These JVM checks cannot prove the eventual Android runtime's correctness:
 the gate currently has **no production call site** and never opens a socket,
 stages M3 E2EE signaling, claims a durable effect, accesses audio hardware,
