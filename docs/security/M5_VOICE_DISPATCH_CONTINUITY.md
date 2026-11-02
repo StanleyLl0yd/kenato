@@ -115,3 +115,20 @@ legacy source instead. Production activation must prevent that fallback,
 serialize revocation and effect execution with this admission, close and
 verify process-restart/downgrade paths, and conduct physical P13/P14.
 All tests remain synthetic and no microphone, network or media is enabled.
+
+## Post-commit semantic reauthentication (still not an atomic multi-file commit)
+
+The isolated matcher now reopens the independently AES-GCM-authenticated
+semantic state **after** KDL1 reports a durable successful commit. It refuses
+to return the earlier plaintext if the exact sender/message ID vanished,
+the associated encrypted-envelope hash changed, or canonical voice
+plaintext changed. Two adversarial JVM tests replace the semantic file
+after the initial pairing with either a different but authentic encrypted
+voice event or no file. Both yield **zero returned effect proposals** while
+keeping the epoch claim consumed.
+
+This narrows one pre-/post-claim time-of-check/time-of-use window but is
+not cross-store atomicity: a separate writer could still replace the file
+after the last check. All sanctioned M2/M3/WSS writes, consent revocation
+and effect execution need the same reviewed owner and durable recovery
+protocol. No user-visible media is executed.
