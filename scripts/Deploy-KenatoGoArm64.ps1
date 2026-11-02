@@ -96,7 +96,10 @@ try {
     # authenticated SSH channel to root bash on stdin (no writable copy).
     # sudo -n deliberately fails closed if host-side approval is missing.
     Write-Output 'Staging completed. Applying reviewed script via non-interactive sudo and SSH stdin.'
-    $scriptText = Get-Content -LiteralPath $localHelper -Raw
+    $scriptText = (Get-Content -LiteralPath $localHelper -Raw) -replace "`r`n", "`n"
+    if ($scriptText.Contains("`r")) {
+        throw 'The reviewed shell script has unsupported CR-only line endings.'
+    }
     $scriptText | & ssh $SshAlias "sudo -n bash -s -- --apply $remotePath $sourceSha"
     if ($LASTEXITCODE -ne 0) { throw 'Host-side rollout failed; inspect its rollback status before proceeding.' }
 
