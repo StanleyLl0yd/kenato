@@ -1,5 +1,7 @@
 package com.sl.kenato.session
 
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
+
 import android.content.Context
 import java.security.MessageDigest
 
@@ -980,7 +982,7 @@ internal class LocalSessionRepository(
 
         // All Android factory callers targeting the same app storage use one process-local
         // M3 monitor. Do not equate this with inter-process or multi-store transactions.
-        private val applicationOwners = SessionRepositoryRegistry<LocalSessionRepository>()
+        private val applicationOwners = ProcessLocalOwnerRegistry<LocalSessionRepository>()
 
         fun create(context: Context): LocalSessionRepository {
             val applicationContext = context.applicationContext
@@ -996,16 +998,4 @@ internal class LocalSessionRepository(
     }
 }
 
-/**
- * Single owner per app-process storage location. It does not lock another process and does not
- * make separate M2/contact/history writes part of an M3 transaction.
- */
-internal class SessionRepositoryRegistry<T : Any> {
-    private val owners = HashMap<String, T>()
 
-    @Synchronized
-    fun getOrCreate(storageDirectory: String, create: () -> T): T {
-        require(storageDirectory.isNotBlank()) { "M3 storage location is required" }
-        return owners.getOrPut(storageDirectory, create)
-    }
-}

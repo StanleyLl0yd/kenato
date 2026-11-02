@@ -615,7 +615,7 @@ internal class SessionCoordinator(
             return SessionCoordinator(
                 identity = ContactSessionIdentityBoundary(identityProvider),
                 contacts = LocalSessionContactBoundary(
-                    ContactLocalState(SharedPreferencesContactStateStore(context)),
+                    ContactLocalState.create(context),
                 ),
                 sessions = LocalSessionBoundary(sessionRepository),
                 transport = HttpSessionTransport(serviceOrigin),

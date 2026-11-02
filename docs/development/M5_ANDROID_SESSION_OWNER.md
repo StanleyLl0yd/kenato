@@ -82,3 +82,23 @@ afterwards. A stale ticket can never release a newer action. Three JVM
 regressions assert this operation/epoch distinction. This remains process-local
 UI correctness only: not a durable M3/WSS lifecycle transaction or physical
 P17 acceptance.
+
+## Process-local M1/M2/M3 repository ownership
+
+Follow-up semantic review found that Android factory callers constructed
+independent `LocalIdentityRepository` (M1) and `ContactLocalState` (M2)
+monitors over the same SharedPreferences files. A per-instance
+`@Synchronized` cannot serialize these independent factory objects.
+The M45 controller, contact repository, session coordinator and messaging
+boundary now use dedicated process-local M1 and M2 singleton factories,
+keyed by canonical app `noBackupFilesDir`, alongside the M3 singleton.
+The common `ProcessLocalOwnerRegistry` has concurrent-construction,
+same/different directory and failed-create retry JVM regressions.
+
+**Security limit:** these are **three independent** per-store monitors,
+not one transaction or durable root owner. An M2 pin mutation may still
+interleave with M3 ratchet/handoff, M4 WSS state and M5 semantic/effect
+claims. Multiple app processes have no common lock, and file rollback
+is not addressed by this factory consolidation. #116 shared durable
+M2/M3/WSS/effect owner, P13/P14/P17 physical acceptance and #118/#170/#171
+anti-rollback research remain mandatory before audio activation.

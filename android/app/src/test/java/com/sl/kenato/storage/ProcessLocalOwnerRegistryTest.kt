@@ -1,4 +1,4 @@
-package com.sl.kenato.session
+package com.sl.kenato.storage
 
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
@@ -11,10 +11,10 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
-class SessionRepositoryRegistryTest {
+class ProcessLocalOwnerRegistryTest {
     @Test
     fun sameStorageLocationReusesOwnerAndDistinctLocationsDoNot() {
-        val registry = SessionRepositoryRegistry<Any>()
+        val registry = ProcessLocalOwnerRegistry<Any>()
         val first = registry.getOrCreate("/data/app/a") { Any() }
         val again = registry.getOrCreate("/data/app/a") {
             throw AssertionError("Second owner must never be constructed")
@@ -30,7 +30,7 @@ class SessionRepositoryRegistryTest {
 
     @Test
     fun concurrentCallersCannotConstructIndependentOwnersForOneLocation() {
-        val registry = SessionRepositoryRegistry<Any>()
+        val registry = ProcessLocalOwnerRegistry<Any>()
         val created = AtomicInteger()
         val gate = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(8)
@@ -56,7 +56,7 @@ class SessionRepositoryRegistryTest {
 
     @Test
     fun failedConstructionIsNotCachedAndMayBeRetried() {
-        val registry = SessionRepositoryRegistry<Any>()
+        val registry = ProcessLocalOwnerRegistry<Any>()
         val attempts = AtomicInteger()
         assertThrows(IllegalStateException::class.java) {
             registry.getOrCreate("/data/app/session") {

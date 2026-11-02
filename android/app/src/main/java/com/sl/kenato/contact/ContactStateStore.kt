@@ -1,5 +1,7 @@
 package com.sl.kenato.contact
 
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
+
 import android.content.Context
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -312,6 +314,17 @@ internal class ContactLocalState(
     private fun requireOwner(ownerIdentityId: ByteArray) {
         if (ownerIdentityId.size != CONTACT_ID_BYTES) {
             throw ContactStateException("Local owner identity id is invalid")
+        }
+    }
+
+    companion object {
+        private val applicationOwners = ProcessLocalOwnerRegistry<ContactLocalState>()
+
+        fun create(context: Context): ContactLocalState {
+            val appContext = context.applicationContext
+            return applicationOwners.getOrCreate(appContext.noBackupFilesDir.canonicalPath) {
+                ContactLocalState(SharedPreferencesContactStateStore(appContext))
+            }
         }
     }
 }

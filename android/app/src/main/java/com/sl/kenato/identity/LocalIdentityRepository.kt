@@ -1,5 +1,7 @@
 package com.sl.kenato.identity
 
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
+
 import android.content.Context
 
 /**
@@ -271,11 +273,18 @@ class LocalIdentityRepository internal constructor(
         private const val FIRST_PREKEY_ID = 1
         private const val MAX_PROTOCOL_SIGNING_BYTES = 64 shl 10
 
-        fun create(context: Context): LocalIdentityRepository = LocalIdentityRepository(
-            keyBackend = AndroidIdentityKeyBackend(),
-            stateStore = SharedPreferencesIdentityStateStore(context),
-            clock = SystemIdentityClock,
-        )
+        private val applicationOwners = ProcessLocalOwnerRegistry<LocalIdentityRepository>()
+
+        fun create(context: Context): LocalIdentityRepository {
+            val appContext = context.applicationContext
+            return applicationOwners.getOrCreate(appContext.noBackupFilesDir.canonicalPath) {
+                LocalIdentityRepository(
+                    keyBackend = AndroidIdentityKeyBackend(),
+                    stateStore = SharedPreferencesIdentityStateStore(appContext),
+                    clock = SystemIdentityClock,
+                )
+            }
+        }
     }
 }
 

@@ -58,7 +58,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val identityRepository = LocalIdentityRepository.create(appContext)
     private val diagnosticJournal = M45DiagnosticJournal(appContext)
-    private val contactState = ContactLocalState(SharedPreferencesContactStateStore(appContext))
+    private val contactState = ContactLocalState.create(appContext)
     private val voiceCapability by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         M5VoiceCapabilityLocalBridge(appContext, identityRepository, contactState)
     }
