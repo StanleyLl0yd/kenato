@@ -69,9 +69,14 @@ class M5VoiceUiSnapshotGuardTest {
         assertEquals(false, updated.voiceCapabilityConfirmed)
         assertEquals(12L, updated.voiceUiEpoch)
         assertEquals("Current operation", updated.notice)
-        assertEquals(false, updated.busy)
+        // The stale completion must not release a newer operation's UI lock.
+        assertEquals(true, updated.busy)
         assertNull(updated.voiceChallengeQr)
         assertNull(updated.voiceProofQr)
+
+        val fresh = updated.copy(busy = false, voiceUiEpoch = 12)
+        val settled = M5VoiceUiSnapshotGuard.redactStaleProofs(updated, fresh, true)
+        assertEquals(false, settled.busy)
     }
 
     @Test
