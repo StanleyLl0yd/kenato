@@ -84,6 +84,8 @@ operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
 for token in (
     "sudo -n bash -s -- --apply",
     "$scriptText | & ssh",
+    '$scriptText = (Get-Content -LiteralPath $localHelper -Raw) -replace "`r`n", "`n"',
+    '$scriptText.Contains("`r")',
     "$expectedZipSha",
     "$expectedElfSha",
 ):
