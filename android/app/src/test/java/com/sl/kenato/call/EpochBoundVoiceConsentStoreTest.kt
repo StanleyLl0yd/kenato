@@ -5,6 +5,10 @@ import java.security.KeyPairGenerator
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -172,6 +176,29 @@ class EpochBoundVoiceConsentStoreTest {
         f.backing.bytes = original + ByteArray(VoiceCapabilityConsentStateCodec.MAX_ENCRYPTED_BYTES + 128)
         assertThrows(VoiceCapabilityConsentException::class.java) {
             f.newStore().readEncryptedConsent()
+        }
+    }
+
+    @Test
+    fun concurrentConsentStoresSerializeEpochCommitAndReadWithinOneProcess() {
+        val f = Fixture()
+        val release = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(8)
+        try {
+            val writes = (1..8).map { n ->
+                pool.submit(Callable {
+                    check(release.await(10, TimeUnit.SECONDS))
+                    f.newStore().commitEncryptedConsent(byteArrayOf(n.toByte()))
+                })
+            }
+            release.countDown()
+            writes.forEach { assertTrue(it.get(20, TimeUnit.SECONDS)) }
+            assertEquals(1, f.keys.epochIds().size)
+            val latest = requireNotNull(f.newStore().readEncryptedConsent())
+            assertTrue(latest.single().toInt() in 1..8)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
         }
     }
 

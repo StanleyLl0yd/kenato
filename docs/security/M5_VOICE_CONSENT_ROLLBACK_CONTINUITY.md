@@ -77,3 +77,15 @@ or publish diagnostic APKs. A device test requires independent APK provenance
 and owner-approved physical P23 protocol; process kill/reboot, upgrade, real
 migration and two-phone audio are not covered. No existing KCS1 user consent
 is modified by this separate instrumentation build.
+
+## Single-process multi-adapter rotation serialization
+
+An independent source review found the candidate's `@Synchronized` lock was
+per instance: two adapters pointing to the same KCE2 file and Keystore alias
+namespace could interleave distinct epoch creations and write/retire steps.
+The isolated candidate now protects authenticated reads and entire commits
+with a shared process-local monitor, in addition to per-instance locking.
+A concurrent eight-adapter JVM regression checks successful serialized writes
+and exactly one live epoch after all commits. This prevents accidental
+multi-adapter rotation overlap **within one process only**; cross-process,
+crash-consistency, Android Keystore and production migration are NOT solved.

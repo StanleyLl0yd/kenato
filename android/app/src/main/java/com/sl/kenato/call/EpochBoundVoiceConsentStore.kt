@@ -43,13 +43,13 @@ internal class EpochBoundVoiceConsentStore(
     private var uncertainCommit = false
 
     @Synchronized
-    fun readEncryptedConsent(): ByteArray? {
+    fun readEncryptedConsent(): ByteArray? = synchronized(WRITE_LOCK) {
         requireUnpoisoned()
-        return authenticated()?.second
+        authenticated()?.second
     }
 
     @Synchronized
-    fun commitEncryptedConsent(ciphertext: ByteArray): Boolean {
+    fun commitEncryptedConsent(ciphertext: ByteArray): Boolean = synchronized(WRITE_LOCK) {
         requireUnpoisoned()
         if (ciphertext.isEmpty() ||
             ciphertext.size > VoiceCapabilityConsentStateCodec.MAX_ENCRYPTED_BYTES
@@ -91,7 +91,7 @@ internal class EpochBoundVoiceConsentStore(
             check.second.fill(0)
         }
         uncertainCommit = false
-        return true
+        true
     }
 
     /** No implicit deletion/recreation of keys or loss of explicit revocations. */
@@ -154,6 +154,9 @@ internal class EpochBoundVoiceConsentStore(
     private fun aad(epoch: String) = AAD_PREFIX + epoch.toByteArray(Charsets.US_ASCII)
 
     private companion object {
+        // An instance monitor alone does not guard the same epoch namespace across
+        // separately constructed adapters in this process.
+        val WRITE_LOCK = Any()
         val MAGIC = byteArrayOf('K'.code.toByte(), 'C'.code.toByte(), 'E'.code.toByte(), '2'.code.toByte())
         const val VERSION: Byte = 1
         const val HEADER_BYTES = 4 + 1 + 32
