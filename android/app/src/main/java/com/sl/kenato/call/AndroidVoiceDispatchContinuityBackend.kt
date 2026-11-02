@@ -47,21 +47,7 @@ internal class AndroidKeystoreVoiceDispatchLedgerEpochKeys(
     }
 
     override fun createEpoch(): String = try {
-        var id: String? = null
-        repeat(4) {
-            val candidate = ByteArray(16).also(random::nextBytes).joinToString("") {
-                HEX[(it.toInt() and 0xff) ushr 4].toString() +
-                    HEX[it.toInt() and 0x0f].toString()
-            }
-            if (!store.containsAlias(aliasPrefix + candidate)) {
-                id = candidate
-                return@repeat
-            }
-        }
-        val allocated = id ?: throw VoiceSignalReplayException("Cannot allocate a fresh dispatch epoch")
-        if (store.containsAlias(aliasPrefix + allocated)) {
-            throw VoiceSignalReplayException("Dispatch Keystore epoch alias collision")
-        }
+        val allocated = allocateUniqueEpochId()
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
@@ -132,6 +118,17 @@ internal class AndroidKeystoreVoiceDispatchLedgerEpochKeys(
         } catch (error: Exception) {
             throw VoiceSignalReplayException("Cannot retire isolated dispatch epoch", error)
         }
+    }
+
+    private fun allocateUniqueEpochId(): String {
+        repeat(4) {
+            val candidate = ByteArray(16).also(random::nextBytes).joinToString("") {
+                HEX[(it.toInt() and 0xff) ushr 4].toString() +
+                    HEX[it.toInt() and 0x0f].toString()
+            }
+            if (!store.containsAlias(aliasPrefix + candidate)) return candidate
+        }
+        throw VoiceSignalReplayException("Cannot allocate an unused dispatch Keystore epoch")
     }
 
     private fun requireExistingKey(epoch: String): SecretKey =
