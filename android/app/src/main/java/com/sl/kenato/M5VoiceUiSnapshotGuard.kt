@@ -20,11 +20,11 @@ internal object M5VoiceUiSnapshotGuard {
         incoming: M45AcceptanceUiState,
         foreground: Boolean,
     ): M45AcceptanceUiState {
-        // An old Activity epoch cannot overwrite current contact/message/UI state.
-        // Preserve only the completed worker's busy release; QR data remains redacted.
+        // A stale Activity callback cannot finish a newer UI operation or
+        // overwrite its contact/message snapshot. The fresh-epoch foreground
+        // refresh or matching operation callback must release its own busy state.
         if (current.voiceUiEpoch != incoming.voiceUiEpoch) {
             return current.copy(
-                busy = incoming.busy,
                 voiceChallengeQr = null,
                 voiceProofQr = null,
             )
