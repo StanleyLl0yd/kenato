@@ -119,6 +119,7 @@ class VoiceConsentEpochKeystoreInstrumentedTest {
         }
         val keystore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val alias = "com.sl.kenato.m5.consent.epoch-acceptance.v1.$id.$epoch"
-        assertEquals(null, keystore.getKey(alias, null)?.encoded)
+        val key = requireNotNull(keystore.getKey(alias, null)) { "Expected probe Keystore key" }
+        assertEquals(null, key.encoded)
     }
 }
