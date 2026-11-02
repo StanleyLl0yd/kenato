@@ -52,7 +52,9 @@ internal class IsolatedVoiceForegroundOwner(
                 register(transition)
             }
         } catch (error: Exception) {
-            proposals.cancel()
+            // An uncertain authenticated claim must not leave this owner able
+            // to issue new outbound/media proposals with a stale lifecycle.
+            close()
             throw error
         }
     }

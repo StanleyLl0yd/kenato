@@ -389,6 +389,55 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun isolatedForegroundOwnerClosesAfterUncertainDurableInboundClaim() {
+        val f = Fixture()
+        f.accept(handoff(130))
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, admission, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val outbound = owner.userDial(PEER, explicitUserApproval = true)
+        f.ledgerRaw.failWrite = true
+        assertThrows(VoiceSignalReplayException::class.java) {
+            owner.receiveControl(PEER, id(130))
+        }
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.claimProposal(outbound.tickets.single())
+        }
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.userDial(PEER, explicitUserApproval = true)
+        }
+        assertThrows(VoiceCallAdmissionException::class.java) { owner.snapshot() }
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+        owner.close()
+    }
+
+    @Test
+    fun isolatedForegroundOwnerCannotResumeAfterConsentRevokedDuringClaim() {
+        val f = Fixture()
+        f.accept(handoff(131))
+        var allowed = true
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ ->
+            if (!allowed) throw VoiceCallAdmissionException("Consent revoked")
+        }
+        f.ledgerRaw.afterWrite = { allowed = false }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, admission, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.receiveControl(PEER, id(131))
+        }
+        allowed = true
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.userDial(PEER, explicitUserApproval = true)
+        }
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.receiveControl(PEER, id(131))
+        }
+        owner.close()
+    }
+
+    @Test
     fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
         val f = Fixture()
         f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))

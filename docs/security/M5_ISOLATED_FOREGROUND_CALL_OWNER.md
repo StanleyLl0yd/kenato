@@ -20,8 +20,12 @@ three independently tested pieces:
    and current approval. `STOP_MEDIA` is still permitted after revoked
    consent, strictly for the already correlated retired call.
 
-A closed owner cancels tickets and timeout fences. A rejected operation
-invalidates outstanding proposals. No socket send, encrypted M3 staging,
+A closed owner cancels tickets and timeout fences. A rejected local operation
+invalidates outstanding proposals. Any exception during protected inbound claim
+terminates the isolated owner, cancels its timers and blocks all subsequent
+proposals—even if consent is later restored. A normal absent/duplicate inbound
+candidate returns null without closing the owner. This conservative synthetic
+fault policy is not a substitute for coordinated durable recovery. No socket send, encrypted M3 staging,
 WebRTC, microphone, audio route, user-visible ring or process restart occurs
 in the synthetic tests. This is a **volatile foreground-only composer** and
 must never be called a complete durable voice runtime.
