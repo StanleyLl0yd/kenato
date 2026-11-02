@@ -66,3 +66,14 @@ release-capable implementation, this probe-only namespace must be replaced by
 an independently reviewed production namespace and an explicit KCS1-to-KCE2
 migration/recovery transaction; a passing synthetic or device probe does not
 by itself resolve P23.
+
+## Standalone instrumentation build (not yet executed)
+
+The `m5ConsentProbe` build type is a separate app identity
+(`com.sl.kenato.m5consentprobe`), with INTERNET permission removed.
+The Android CI job compiles five test-only methods and rejects diagnostic APKs
+requesting network or microphone access. It does not install, execute, upload
+or publish diagnostic APKs. A device test requires independent APK provenance
+and owner-approved physical P23 protocol; process kill/reboot, upgrade, real
+migration and two-phone audio are not covered. No existing KCS1 user consent
+is modified by this separate instrumentation build.
