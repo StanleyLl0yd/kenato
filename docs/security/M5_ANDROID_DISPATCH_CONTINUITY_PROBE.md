@@ -19,7 +19,8 @@ execute Android Keystore or an AtomicFile physical transaction.
 ## Strict gates before any physical test
 
 - Build a separate application ID / instrumented diagnostic package. It must
-  strip INTERNET, RECORD_AUDIO and camera permissions, and must never install
+  have no INTERNET, RECORD_AUDIO or camera permissions in **either** the probe
+  or its AndroidTest APK, and must never install
   as `com.sl.kenato`. Verify signer, package, exact APK SHA and device API
   before installation. No test on an irreplaceable real identity.
 - Add five or more isolated AndroidX tests: actual key persistence after
