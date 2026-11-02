@@ -97,6 +97,116 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun epochGuardedControlAdmitsOneVerifiedOfferIntoReducerAndNoSecondOne() {
+        val f = Fixture()
+        f.accept(handoff(120))
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val guarded = EpochGuardedVoiceCallClaimedControlSource(
+            f.matcher(), f.ledger(), admission, VoiceCallCoordinatorClock { NOW },
+        )
+        val coordinator = VoiceCallAdmissionCoordinator(
+            OWNER, admission, guarded, VoiceCallCoordinatorClock { NOW },
+        )
+        val accepted = requireNotNull(coordinator.receiveClaimedControl(PEER, id(120)))
+        assertEquals(VoiceCallPhase.INCOMING_RINGING, accepted.next.phase)
+        assertTrue(accepted.effects.isEmpty())
+        assertEquals(null, coordinator.receiveClaimedControl(PEER, id(120)))
+        assertEquals(VoiceCallPhase.INCOMING_RINGING, coordinator.snapshot().phase)
+        assertTrue(f.ledger().hasClaim(
+            OWNER,
+            VoiceSignalReplayDispatchPermit(
+                PEER, id(120), id(77), VoiceSignalKind.OFFER,
+                f.journal.pendingLiveReceipts(OWNER, NOW).single().envelopeDigest,
+            ),
+        ))
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
+    fun epochGuardedSourceRejectsRevokedConsentWithoutConsumingAnyClaim() {
+        val f = Fixture()
+        f.accept(handoff(121))
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ ->
+            throw VoiceCallAdmissionException("Consent revoked")
+        }
+        val coordinator = VoiceCallAdmissionCoordinator(
+            OWNER, admission,
+            EpochGuardedVoiceCallClaimedControlSource(
+                f.matcher(), f.ledger(), admission, VoiceCallCoordinatorClock { NOW },
+            ),
+            VoiceCallCoordinatorClock { NOW },
+        )
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            coordinator.receiveClaimedControl(PEER, id(121))
+        }
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(null, f.ledgerRaw.bytes)
+        assertEquals(VoiceCallPhase.IDLE, coordinator.snapshot().phase)
+    }
+
+    @Test
+    fun revokeDuringDurableCommitReturnsNoControlAndCannotRetryTheClaim() {
+        val f = Fixture()
+        f.accept(handoff(122))
+        var allowed = true
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ ->
+            if (!allowed) throw VoiceCallAdmissionException("Revoked while writing claim")
+        }
+        f.ledgerRaw.afterWrite = { allowed = false }
+        val coordinator = VoiceCallAdmissionCoordinator(
+            OWNER, admission,
+            EpochGuardedVoiceCallClaimedControlSource(
+                f.matcher(), f.ledger(), admission, VoiceCallCoordinatorClock { NOW },
+            ),
+            VoiceCallCoordinatorClock { NOW },
+        )
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            coordinator.receiveClaimedControl(PEER, id(122))
+        }
+        assertEquals(VoiceCallPhase.IDLE, coordinator.snapshot().phase)
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+        allowed = true
+        assertEquals(null, coordinator.receiveClaimedControl(PEER, id(122)))
+        assertEquals(VoiceCallPhase.IDLE, coordinator.snapshot().phase)
+    }
+
+    @Test
+    fun expiryDuringDurableCommitReturnsNoControlButConsumesTheClaim() {
+        val f = Fixture()
+        f.accept(handoff(123))
+        var clockValue = NOW
+        f.ledgerRaw.afterWrite = { clockValue = NOW + 60L }
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val currentClock = VoiceCallCoordinatorClock { clockValue }
+        val coordinator = VoiceCallAdmissionCoordinator(
+            OWNER, admission,
+            EpochGuardedVoiceCallClaimedControlSource(
+                f.matcher(), f.ledger(), admission, currentClock,
+            ), currentClock,
+        )
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            coordinator.receiveClaimedControl(PEER, id(123))
+        }
+        assertEquals(VoiceCallPhase.IDLE, coordinator.snapshot().phase)
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+    }
+
+    @Test
+    fun epochGuardedControlIgnoresIceWithoutConsumingItsDedicatedMediaClaim() {
+        val f = Fixture()
+        f.accept(handoff(124, kind = VoiceSignalKind.ICE_CANDIDATE))
+        val admission = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val guarded = EpochGuardedVoiceCallClaimedControlSource(
+            f.matcher(), f.ledger(), admission, VoiceCallCoordinatorClock { NOW },
+        )
+        assertEquals(null, guarded.claimControl(OWNER, PEER, id(124), NOW))
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(null, f.ledgerRaw.bytes)
+    }
+
+    @Test
     fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
         val f = Fixture()
         f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))
@@ -253,10 +363,12 @@ class RestorableVoiceSignalMatcherTest {
     private class MemoryLedgerRaw : VoiceDispatchLedgerRawStore {
         var bytes: ByteArray? = null
         var failWrite = false
+        var afterWrite: (() -> Unit)? = null
         override fun read(): ByteArray? = bytes?.copyOf()
         override fun write(bytes: ByteArray): Boolean {
             if (failWrite) return false
             this.bytes = bytes.copyOf()
+            afterWrite?.invoke()
             return true
         }
     }
