@@ -139,7 +139,17 @@ if ((Invoke-DeviceAdb -Arguments @('shell', 'pm', 'path', 'com.sl.kenato.m5dispa
 $output = Invoke-DeviceAdb -Arguments @('shell', 'am', 'instrument', '-w', '-r', '-e', 'class',
     'com.sl.kenato.call.VoiceDispatchEpochKeystoreInstrumentedTest',
     'com.sl.kenato.m5dispatchprobe.test/androidx.test.runner.AndroidJUnitRunner')
-$passed = $output -match 'OK \(5 tests\)'
+# Require an unambiguous full AndroidJUnitRunner result, not a substring.
+# A mixed OK line and an instrumentation failure must never count as PASS.
+$instrumentLines = @($output -split '\r?\n' | ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -ne '' })
+$okLines = @($instrumentLines | Where-Object { $_ -ceq 'OK (5 tests)' })
+$exitLines = @($instrumentLines | Where-Object { $_ -clike 'INSTRUMENTATION_CODE:*' })
+$failureLines = @($instrumentLines | Where-Object {
+    $_ -match '^(FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED|Error in)'
+})
+$passed = $okLines.Count -eq 1 -and $exitLines.Count -eq 1 -and
+    $exitLines[0] -ceq 'INSTRUMENTATION_CODE: -1' -and $failureLines.Count -eq 0
 $prodAfter = (Invoke-DeviceAdb -Arguments @('shell', 'pm', 'path', 'com.sl.kenato')) -ne ''
 if ($prodBefore -ne $prodAfter) { throw 'Unexpected production package-presence change.' }
 
