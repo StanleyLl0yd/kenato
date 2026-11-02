@@ -15,6 +15,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/Run-KenatoM5KeystoreProbe.ps1"
+HEAD_SHA = "a" * 40
+CHECKOUT_SHA = "b" * 40
 FAKE_ADB = """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "devices" ]]; then
@@ -56,6 +58,8 @@ def prepare_artifact(location: Path) -> None:
         sums.append(f"{hashlib.sha256(content).hexdigest()}  {name}")
     (location / "artifact" / "SHA256SUMS").write_text("\n".join(sums) + "\n")
     (location / "artifact" / "SCOPE.txt").write_text(
+        f"checked_out_sha={CHECKOUT_SHA}\n"
+        f"pr_head_sha={HEAD_SHA}\n"
         "application_id=com.sl.kenato.m5probe\n"
         "status=research_only_no_device_pass_no_voice\n"
         "not_a_release=true\n"
@@ -66,7 +70,7 @@ def prepare_artifact(location: Path) -> None:
     mock.chmod(0o700)
 
 
-def execute(folder: Path, **environ: str) -> subprocess.CompletedProcess[str]:
+def execute(folder: Path, *, expected_head: str = HEAD_SHA, **environ: str) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment["PATH"] = str(folder / "bin") + os.pathsep + environment["PATH"]
     environment.update(environ)
@@ -74,6 +78,7 @@ def execute(folder: Path, **environ: str) -> subprocess.CompletedProcess[str]:
         [
             "pwsh", "-NoProfile", "-File", str(SCRIPT),
             "-ArtifactDirectory", str(folder / "artifact"),
+            "-ExpectedHeadSha", expected_head,
             "-EvidenceDirectory", str(folder / "evidence"),
         ],
         text=True,
@@ -95,6 +100,7 @@ with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     assert evidence["result"] == "PASS"
     assert evidence["passed_expected"] == 5
     assert evidence["android_api"] == 34
+    assert evidence["reviewed_pr_head_sha"] == HEAD_SHA
     assert len(evidence["serial_sha256_prefix"]) == 12
     for forbidden in ("mock-qa-phone", "package:/dev/", "private", "ciphertext"):
         assert forbidden not in recorded[0].read_text(), f"Evidence leak: {forbidden}"
@@ -114,5 +120,12 @@ with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     recorded = list((folder / "evidence").glob("*.json"))
     assert len(recorded) == 1
     assert json.loads(recorded[0].read_text(encoding="utf-8-sig"))["result"] == "FAIL"
+
+with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
+    folder = Path(temp)
+    prepare_artifact(folder)
+    mismatched = execute(folder, expected_head="c" * 40)
+    assert mismatched.returncode != 0, "Mismatched PR HEAD must fail before installation"
+    assert not (folder / "evidence").exists()
 
 print("M5 simulated ADB operator-script regressions PASS (NOT physical device evidence)")
