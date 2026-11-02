@@ -130,6 +130,63 @@ class VoiceEffectClaimGateTest {
         }
     }
 
+    @Test
+    fun invalidNewSendCannotLeavePreviouslyIssuedTicketAlive() {
+        val f = Fixture()
+        val original = f.gate.replace(VoiceCallTransition(
+            ringing, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_OFFER, key)),
+        )).single()
+        assertThrows(IllegalArgumentException::class.java) {
+            f.gate.replace(VoiceCallTransition(
+                ringing, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_OFFER, otherKey)),
+            ))
+        }
+        assertNull(f.claim(original, ringing))
+        assertEquals(0, f.approvals)
+    }
+
+    @Test
+    fun mediaStartMustMatchConnectingActiveCall() {
+        val f = Fixture()
+        for (transition in listOf(
+            VoiceCallTransition(ringing, listOf(VoiceCallEffect(VoiceCallEffectKind.START_MEDIA, key))),
+            VoiceCallTransition(connecting, listOf(VoiceCallEffect(VoiceCallEffectKind.START_MEDIA, otherKey))),
+        )) {
+            assertThrows(IllegalArgumentException::class.java) { f.gate.replace(transition) }
+        }
+    }
+
+    @Test
+    fun busyCallCannotAliasActiveCallId() {
+        val f = Fixture()
+        val aliased = VoiceCallKey(key.callId, encoded(other))
+        assertThrows(IllegalArgumentException::class.java) {
+            f.gate.replace(VoiceCallTransition(
+                ringing, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_BUSY, aliased)),
+            ))
+        }
+    }
+
+    @Test
+    fun terminalEffectMustMatchRetiredCallId() {
+        val f = Fixture()
+        assertThrows(IllegalArgumentException::class.java) {
+            f.gate.replace(VoiceCallTransition(
+                retired, listOf(VoiceCallEffect(VoiceCallEffectKind.STOP_MEDIA, otherKey)),
+            ))
+        }
+    }
+
+    @Test
+    fun incomingAcceptAllowsOnlyMatchingKey() {
+        val f = Fixture()
+        val incoming = connecting.copy(direction = VoiceCallDirection.INCOMING)
+        val ticket = f.gate.replace(VoiceCallTransition(
+            incoming, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_ACCEPT, key)),
+        )).single()
+        assertEquals(VoiceCallEffect(VoiceCallEffectKind.SEND_ACCEPT, key), f.claim(ticket, incoming))
+    }
+
     private inner class Fixture {
         val gate = VoiceEffectClaimGate()
         var consent = true
