@@ -40,3 +40,34 @@ execute Android Keystore or an AtomicFile physical transaction.
 The code does not activate voice, WebRTC, microphone, WSS, media or network.
 It does not approve M5 P13/P14, producer JNI/CVE/license, or a new release.
 Protected main and published v0.0.4 must remain unchanged. M6 forbidden.
+
+## Trusted temporary APK artifact and Windows operator helper
+
+When exact-head Android CI passes, the pipeline produces one short-lived
+14-day `kenato-m5-dispatch-research-apks` GitHub Actions ZIP with only the
+separate diagnostic APK, the matching test APK, `SHA256SUMS` and `SCOPE.txt`.
+This is **NOT a release, not an approved APK for ordinary installation, and
+not physical evidence**. The workflow runs no Android instrumented tests.
+
+An operator using PowerShell 7 and ADB may, **only after acceptance of the
+native-free disposable diagnostic scope**, download the original ZIP and
+independently obtain its SHA-256 digest from the authenticated GitHub Actions
+artifact API for the exact reviewed PR HEAD. The helper verifies the original
+ZIP *before* extraction, matches exact HEAD/SCOPE and both APK SHA-256 values,
+requires a real Android API 29+ physical device, installs only
+`com.sl.kenato.m5dispatchprobe` and its test package, then runs five
+isolated methods. It never uninstalls or clears `com.sl.kenato`, prints no
+identifiers, stores sanitized JSON only, and rejects emulators. The harness
+will not diagnose real power-loss or process-death/reboot durability.
+
+```powershell
+$head = 'REPLACE_WITH_REVIEWED_PR_HEAD_SHA_40_LOWERCASE_HEX'
+$zipSha = 'REPLACE_WITH_INDEPENDENT_GITHUB_ACTIONS_ZIP_SHA256'
+pwsh -File scripts/Run-KenatoM5DispatchProbe.ps1 -ArtifactZip C:\\KenatoDispatchProbe.zip -ExpectedArtifactZipSha256 $zipSha -ExpectedHeadSha $head -EvidenceDirectory C:\\KenatoDispatchEvidence
+```
+
+`scripts/test_run_kenato_m5_dispatch_probe.py` uses a **synthetic ADB binary**
+and synthetic non-APK ZIP in CI; its passing tests verify operator helper
+policy and evidence sanitization, not actual physical Keystore/AtomicFile.
+Android 10/13/14+ real hardware P13/P14 and independent security review remain
+required, and none has yet passed.
