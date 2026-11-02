@@ -15,6 +15,33 @@ internal object M5VoiceUiSnapshotGuard {
             false
         }
 
+    /** A foreground refresh is not an operation completion. It must not
+     * release another action's busy flag, even inside the same UI epoch. */
+    fun mayApplyForegroundRefresh(
+        current: M45AcceptanceUiState,
+        requestEpoch: Long,
+    ): Boolean = !current.busy && current.voiceUiEpoch == requestEpoch
+
+    /** The exact operation ticket may release busy after Activity recreation
+     * without applying any stale QR, contact, notice or error snapshot. */
+    fun settleStaleOperation(
+        current: M45AcceptanceUiState,
+        operationEpoch: Long,
+        completedTicket: Long,
+        activeTicket: Long?,
+    ): M45AcceptanceUiState {
+        if (completedTicket != activeTicket || current.voiceUiEpoch == operationEpoch) {
+            return current
+        }
+        return current.copy(
+            busy = false,
+            notice = null,
+            error = null,
+            voiceChallengeQr = null,
+            voiceProofQr = null,
+        )
+    }
+
     fun redactStaleProofs(
         current: M45AcceptanceUiState,
         incoming: M45AcceptanceUiState,

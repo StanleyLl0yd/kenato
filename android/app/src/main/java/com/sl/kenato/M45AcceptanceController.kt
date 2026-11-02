@@ -75,6 +75,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private var foreground = false
     private var runtime: M45AcceptanceRuntime? = null
     private var runtimeOrigin: String? = null
+    // Main-thread ownership of explicit UI operations. Epoch and ticket are
+    // separate: an old-epoch completion can release only its own UI lock.
+    private var nextOperationTicket = 0L
+    private var activeOperationTicket: Long? = null
 
     var state by mutableStateOf(
         M45AcceptanceUiState(
@@ -110,10 +114,14 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                     requireRuntime().startMessaging()
                 }
                 val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
-                mainHandler.post { applySnapshot(snapshot) }
+                mainHandler.post {
+                    if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
+                        applySnapshot(snapshot)
+                    }
+                }
             } catch (error: Exception) {
                 mainHandler.post {
-                    if (state.voiceUiEpoch == requestEpoch) {
+                    if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
                         state = state.copy(error = userError(error))
                     }
                 }
@@ -252,7 +260,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     private fun launchOperation(notice: String, operation: () -> Unit) {
-        if (state.busy) return
+        if (state.busy || activeOperationTicket != null) return
+        check(nextOperationTicket < Long.MAX_VALUE) { "UI operation ticket exhausted" }
+        val ticket = ++nextOperationTicket
+        activeOperationTicket = ticket
         val requestEpoch = state.voiceUiEpoch
         state = state.copy(busy = true, notice = null, error = null)
         worker.execute {
@@ -260,24 +271,40 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                 operation()
                 val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
                 mainHandler.post {
-                    applySnapshot(snapshot, notice = notice)
+                    finishOperation(ticket, requestEpoch, snapshot, notice, null)
                 }
             } catch (error: Exception) {
                 val snapshot = runCatching {
                     buildSnapshot().copy(voiceUiEpoch = requestEpoch)
                 }.getOrNull()
+                val message = userError(error)
                 mainHandler.post {
-                    if (snapshot != null) {
-                        applySnapshot(snapshot, error = userError(error))
-                    } else if (state.voiceUiEpoch == requestEpoch) {
-                        state = state.copy(
-                            busy = false,
-                            notice = null,
-                            error = userError(error),
-                        )
-                    }
+                    finishOperation(ticket, requestEpoch, snapshot, null, message)
                 }
             }
+        }
+    }
+
+    private fun finishOperation(
+        ticket: Long,
+        requestEpoch: Long,
+        snapshot: M45AcceptanceUiState?,
+        notice: String?,
+        error: String?,
+    ) {
+        if (activeOperationTicket != ticket) return
+        activeOperationTicket = null
+        if (state.voiceUiEpoch != requestEpoch) {
+            // The old operation really ended, but its snapshot, proof, notice
+            // and error belong to a previous foreground and must be discarded.
+            state = M5VoiceUiSnapshotGuard.settleStaleOperation(
+                state, requestEpoch, ticket, ticket,
+            )
+            if (foreground) refreshSilently()
+        } else if (snapshot != null) {
+            applySnapshot(snapshot, notice = notice, error = error)
+        } else {
+            state = state.copy(busy = false, notice = null, error = error)
         }
     }
 

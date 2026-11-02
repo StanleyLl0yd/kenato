@@ -108,6 +108,52 @@ class M5VoiceUiSnapshotGuardTest {
     }
 
     @Test
+    fun foregroundRefreshDoesNotReleaseActiveOperationEvenInMatchingEpoch() {
+        val action = M45AcceptanceUiState(voiceUiEpoch = 8, busy = true)
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(action, 8))
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(
+            action.copy(busy = false), 7,
+        ))
+        assertEquals(true, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(
+            action.copy(busy = false), 8,
+        ))
+    }
+
+    @Test
+    fun actualStaleCompletionReleasesOnlyItsOwnTicketWithoutShowingOldProof() {
+        val resumed = M45AcceptanceUiState(
+            voiceUiEpoch = 31,
+            busy = true,
+            voiceProofQr = "should-not-survive",
+            notice = "obsolete",
+            error = "old error",
+        )
+        val staleOtherAction = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            resumed, operationEpoch = 30, completedTicket = 12, activeTicket = 13,
+        )
+        assertEquals(true, staleOtherAction.busy)
+        assertEquals("obsolete", staleOtherAction.notice)
+
+        val matchingCompletion = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            resumed, operationEpoch = 30, completedTicket = 13, activeTicket = 13,
+        )
+        assertEquals(false, matchingCompletion.busy)
+        assertNull(matchingCompletion.voiceProofQr)
+        assertNull(matchingCompletion.notice)
+        assertNull(matchingCompletion.error)
+        assertEquals(31L, matchingCompletion.voiceUiEpoch)
+    }
+
+    @Test
+    fun matchingEpochCompletionCannotPrematurelyReleaseBusyWithoutSnapshot() {
+        val active = M45AcceptanceUiState(voiceUiEpoch = 40, busy = true)
+        val unchanged = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            active, operationEpoch = 40, completedTicket = 14, activeTicket = 14,
+        )
+        assertEquals(true, unchanged.busy)
+    }
+
+    @Test
     fun sameEpochLegitimateContactSelectionStillApplies() {
         val old = M45AcceptanceUiState(selectedPeerIdentityId = "old", voiceUiEpoch = 3)
         val selected = old.copy(selectedPeerIdentityId = "new", voiceCapabilityConfirmed = true)

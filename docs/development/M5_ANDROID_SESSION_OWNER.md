@@ -66,3 +66,19 @@ JVM regressions cover stale QR output, preservation of the newer busy flag
 and eventual matching-epoch release.
 The controller's worker serialization does **not** establish a durable
 M2/M3/M4/M5 transaction or replace physical lifecycle tests.
+
+## Exact-operation completion fencing
+
+Further asynchronous review identified a second race: a foreground refresh
+posted during an unrelated same-epoch operation could call `applySnapshot()`
+and clear `busy` early. Conversely, ignoring all older-epoch operation
+completions could leave the UI permanently busy after Activity pause/resume.
+
+The controller now gives each explicit operation a monotonic main-thread ticket.
+Foreground refreshes cannot release an outstanding operation. The precise
+ticket may release the busy flag after an epoch transition but discards the
+obsolete snapshot, signed QR, notice and error; a fresh silent refresh runs
+afterwards. A stale ticket can never release a newer action. Three JVM
+regressions assert this operation/epoch distinction. This remains process-local
+UI correctness only: not a durable M3/WSS lifecycle transaction or physical
+P17 acceptance.
