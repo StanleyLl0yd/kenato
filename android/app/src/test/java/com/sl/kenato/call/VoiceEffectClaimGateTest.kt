@@ -178,6 +178,23 @@ class VoiceEffectClaimGateTest {
     }
 
     @Test
+    fun terminalEffectRejectsOldRetiredCallEvenIfStillInHistory() {
+        val f = Fixture()
+        val terminal = VoiceCallSnapshot(
+            retiredCallIds = listOf(otherKey.callId, key.callId),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            f.gate.replace(VoiceCallTransition(
+                terminal, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_HANGUP, otherKey)),
+            ))
+        }
+        val latest = f.gate.replace(VoiceCallTransition(
+            terminal, listOf(VoiceCallEffect(VoiceCallEffectKind.STOP_MEDIA, key)),
+        )).single()
+        assertEquals(VoiceCallEffect(VoiceCallEffectKind.STOP_MEDIA, key), f.claim(latest, terminal))
+    }
+
+    @Test
     fun incomingAcceptAllowsOnlyMatchingKey() {
         val f = Fixture()
         val incoming = connecting.copy(direction = VoiceCallDirection.INCOMING)
