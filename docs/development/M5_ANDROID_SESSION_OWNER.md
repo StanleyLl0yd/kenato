@@ -52,3 +52,13 @@ mutation, and process-registry identity/concurrent factory creation. They
 do **not** prove Android Context factory wiring, inter-process exclusion or
 multi-step M3/M2/M4 transaction semantics. Activity recreation and physical
 device verification remain requirements.
+
+## Foreground callback fencing (research-only UI)
+
+The UI snapshot guard rejects callbacks from a previous Activity foreground
+epoch. A stale callback must **not** release the `busy` flag of a newer UI
+operation, even if that older callback completed successfully. Only a
+matching-epoch operation callback or fresh foreground snapshot may clear it.
+JVM tests cover stale activity snapshots and eventual matching-epoch release.
+The controller's worker serialization does **not** establish a durable
+M2/M3/M4/M5 transaction or replace physical lifecycle tests.
