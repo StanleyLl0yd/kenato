@@ -71,3 +71,15 @@ and synthetic non-APK ZIP in CI; its passing tests verify operator helper
 policy and evidence sanitization, not actual physical Keystore/AtomicFile.
 Android 10/13/14+ real hardware P13/P14 and independent security review remain
 required, and none has yet passed.
+
+## Physical runner result gate
+
+The Windows PowerShell 7 helper requires the independently attested original
+GitHub Actions ZIP digest and exact reviewed PR HEAD before any extraction
+or ADB action. Its instrumented test result is PASS only if AndroidJUnitRunner
+returns **exactly one full `OK (5 tests)` line**, exactly one
+`INSTRUMENTATION_CODE: -1` completion line and no explicit failure or
+abort marker. A partial/mixed, duplicated, absent or non-success completion
+is a FAIL even if it contains the success substring. Synthetic ADB tests
+cover these cases but are **not physical device evidence**. The result is
+still not P13/P14 acceptance until the real device protocol is reviewed.
