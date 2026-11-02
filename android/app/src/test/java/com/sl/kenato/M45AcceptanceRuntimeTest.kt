@@ -163,7 +163,11 @@ class M45AcceptanceRuntimeTest {
             assertFalse(started.await(250, TimeUnit.MILLISECONDS))
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
-            explicitStart.get(10, TimeUnit.SECONDS)
+            assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                explicitStart.get(10, TimeUnit.SECONDS)
+            }
+            assertFalse(fixture.messaging.started)
+            runtime.startMessaging()
             assertTrue(started.await(10, TimeUnit.SECONDS))
             assertEquals(
                 listOf(
@@ -172,6 +176,45 @@ class M45AcceptanceRuntimeTest {
                 ),
                 fixture.events,
             )
+        } finally {
+            release.countDown()
+            workers.shutdownNow()
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun queuedStartCannotResurrectWssAfterFailedTrustMutation() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val started = CountDownLatch(1)
+        fixture.sessions.failMaintain = true
+        fixture.sessions.maintainEntered = entered
+        fixture.sessions.maintainRelease = release
+        fixture.messaging.startEntered = started
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val mutation = workers.submit { runtime.createInvite() }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val dispatched = CountDownLatch(1)
+            val queuedStart = workers.submit {
+                dispatched.countDown()
+                runtime.startMessaging()
+            }
+            assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            release.countDown()
+            assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                mutation.get(10, TimeUnit.SECONDS)
+            }
+            assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                queuedStart.get(10, TimeUnit.SECONDS)
+            }
+            assertFalse(fixture.messaging.started)
+            assertFalse(started.await(250, TimeUnit.MILLISECONDS))
+            runtime.startMessaging()
+            assertTrue(fixture.messaging.started)
         } finally {
             release.countDown()
             workers.shutdownNow()

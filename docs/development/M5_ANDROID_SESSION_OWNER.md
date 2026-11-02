@@ -117,3 +117,14 @@ lease or a multi-store/M2 consent transaction. Distinct runtime instances,
 interprocess operation, M3/consent rollback and pending network callbacks
 remain separate pre-voice acceptance blockers; no media or v2 transport is
 activated by this change.
+
+### Stale queued WSS-start rejection
+
+A simple monitor was insufficient on the failure path: a start requested
+*during* an unfinished mutation could wait for the monitor and then restart
+WSS immediately after the mutation failed. The runtime now captures a volatile
+mutation epoch **before** taking its start monitor and rejects actions whose
+epoch changed or was in progress. The epoch advances on both successful and
+failed trust mutations, and a subsequent fresh explicit start remains possible.
+Two-worker JVM cases check both success and failure, including a queued stale
+start after a failed bootstrap. This is not durable, cross-runtime admission.

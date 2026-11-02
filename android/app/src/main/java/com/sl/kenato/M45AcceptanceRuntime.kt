@@ -121,6 +121,7 @@ internal class M45AcceptanceRuntime(
     private val messaging: M45MessagingBoundary,
 ) : AutoCloseable {
     private var messagingStarted = false
+    @Volatile private var trustMutationEpoch = 0L
 
     fun initializeIdentity(): IdentityBundle = identity.loadOrCreate()
 
@@ -167,11 +168,18 @@ internal class M45AcceptanceRuntime(
         return contacts.contacts()
     }
 
-    @Synchronized
     fun startMessaging() {
-        identity.loadOrCreate()
-        messaging.start()
-        messagingStarted = true
+        // Reject an action queued before/during a trust mutation. A fresh user action
+        // after failure is required to reconnect; a stale queued start is not enough.
+        val requestedEpoch = trustMutationEpoch
+        synchronized(this) {
+            if (requestedEpoch != trustMutationEpoch || requestedEpoch % 2L != 0L) {
+                throw IllegalStateException("Transport start was superseded by a trust mutation")
+            }
+            identity.loadOrCreate()
+            messaging.start()
+            messagingStarted = true
+        }
     }
 
     @Synchronized
@@ -204,22 +212,29 @@ internal class M45AcceptanceRuntime(
     }
 
     private inline fun <T> withMessagingPaused(block: () -> T): T {
-        val restart = messagingStarted
-        if (restart) {
-            messagingStarted = false
-            messaging.stop()
+        if (trustMutationEpoch >= Long.MAX_VALUE - 2) {
+            throw IllegalStateException("Trust mutation generation exhausted")
         }
-        return try {
-            block().also {
-                if (restart) {
-                    messaging.start()
-                    messagingStarted = true
-                }
+        trustMutationEpoch++ // Odd: mutation in progress.
+        try {
+            val restart = messagingStarted
+            if (restart) {
+                messagingStarted = false
+                messaging.stop()
             }
-        } catch (error: Exception) {
-            // A failed trust/session mutation leaves transport stopped. The user must explicitly
-            // reconnect after inspecting/retrying the failed acceptance step.
-            throw error
+            return try {
+                block().also {
+                    if (restart) {
+                        messaging.start()
+                        messagingStarted = true
+                    }
+                }
+            } catch (error: Exception) {
+                // Failure leaves the WSS stopped. A later fresh user request is needed.
+                throw error
+            }
+        } finally {
+            trustMutationEpoch++ // Even: queued starts must validate generation.
         }
     }
 
