@@ -279,6 +279,101 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun isolatedForegroundOwnerClaimsSendOfferProposalOnceAndNeverRunsNetwork() {
+        val f = Fixture()
+        val guard = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, guard, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val proposed = owner.userDial(PEER, explicitUserApproval = true)
+        assertEquals(VoiceCallPhase.OUTGOING_RINGING, proposed.snapshot.phase)
+        assertEquals(1, proposed.tickets.size)
+        val ticket = proposed.tickets.single()
+        val effect = requireNotNull(owner.claimProposal(ticket))
+        assertEquals(VoiceCallEffectKind.SEND_OFFER, effect.kind)
+        assertEquals(proposed.snapshot.active, effect.key)
+        assertEquals(null, owner.claimProposal(ticket))
+        assertEquals(VoiceCallPhase.OUTGOING_RINGING, owner.snapshot().phase)
+        owner.close()
+        assertThrows(VoiceCallAdmissionException::class.java) { owner.claimProposal(ticket) }
+    }
+
+    @Test
+    fun isolatedForegroundOwnerUsesKdl1OnIncomingControlAndExpiresOldTickets() {
+        val f = Fixture()
+        f.accept(handoff(128))
+        val guard = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, guard, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val received = requireNotNull(owner.receiveControl(PEER, id(128)))
+        assertEquals(VoiceCallPhase.INCOMING_RINGING, received.snapshot.phase)
+        assertTrue(received.tickets.isEmpty())
+        assertEquals(null, owner.receiveControl(PEER, id(128)))
+        val key = requireNotNull(received.snapshot.active)
+        val accepted = owner.userAction(VoiceCallEventKind.LOCAL_ACCEPT, key, true)
+        assertEquals(VoiceCallPhase.CONNECTING, accepted.snapshot.phase)
+        assertEquals(2, accepted.tickets.size)
+        assertEquals(
+            VoiceCallEffectKind.SEND_ACCEPT,
+            owner.claimProposal(accepted.tickets[0])!!.kind,
+        )
+        assertEquals(
+            VoiceCallEffectKind.START_MEDIA,
+            owner.claimProposal(accepted.tickets[1])!!.kind,
+        )
+        assertEquals(null, owner.claimProposal(accepted.tickets[1]))
+        owner.close()
+    }
+
+    @Test
+    fun isolatedForegroundOwnerRejectsRevokedStartButStillProposesExactMediaStop() {
+        val f = Fixture()
+        f.accept(handoff(129))
+        var allowed = true
+        val guard = VoiceCallVerifiedPeerAdmission { _, _ ->
+            if (!allowed) throw VoiceCallAdmissionException("Consent revoked")
+        }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, guard, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val ringing = requireNotNull(owner.receiveControl(PEER, id(129)))
+        val key = requireNotNull(ringing.snapshot.active)
+        val connecting = owner.userAction(VoiceCallEventKind.LOCAL_ACCEPT, key, true)
+        allowed = false
+        assertEquals(null, owner.claimProposal(connecting.tickets[0]))
+        assertEquals(null, owner.claimProposal(connecting.tickets[1]))
+        val terminated = owner.revalidateActiveCall()
+        assertEquals(VoiceCallPhase.IDLE, terminated.snapshot.phase)
+        assertEquals(1, terminated.tickets.size)
+        val stop = requireNotNull(owner.claimProposal(terminated.tickets.single()))
+        assertEquals(VoiceCallEffectKind.STOP_MEDIA, stop.kind)
+        assertEquals(key, stop.key)
+        owner.close()
+    }
+
+    @Test
+    fun isolatedForegroundOwnerInvalidatesPreviousTicketsOnTransitionAndClose() {
+        val f = Fixture()
+        val guard = VoiceCallVerifiedPeerAdmission { _, _ -> }
+        val owner = IsolatedVoiceForegroundOwner(
+            OWNER, guard, f.matcher(), f.ledger(), VoiceCallCoordinatorClock { NOW },
+        )
+        val dial = owner.userDial(PEER, true)
+        val oldTicket = dial.tickets.single()
+        val active = requireNotNull(dial.snapshot.active)
+        val cancelled = owner.userAction(VoiceCallEventKind.LOCAL_HANGUP, active)
+        assertEquals(VoiceCallPhase.IDLE, cancelled.snapshot.phase)
+        assertEquals(null, owner.claimProposal(oldTicket))
+        owner.close()
+        assertThrows(VoiceCallAdmissionException::class.java) { owner.userDial(PEER, true) }
+        assertThrows(VoiceCallAdmissionException::class.java) {
+            owner.receiveControl(PEER, id(1))
+        }
+        owner.close()
+    }
+
+    @Test
     fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
         val f = Fixture()
         f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))
