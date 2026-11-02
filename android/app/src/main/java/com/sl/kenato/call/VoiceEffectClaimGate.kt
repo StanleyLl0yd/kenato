@@ -38,12 +38,18 @@ internal class VoiceEffectClaimGate {
         if (generation == Long.MAX_VALUE) {
             throw IllegalStateException("Voice effect generation exhausted")
         }
-        if (transition.effects.size > MAX_EFFECTS_PER_TRANSITION) {
-            throw IllegalArgumentException("Too many voice effect proposals")
-        }
+        // Fail closed on rejected registration too: an old proposal must
+        // never survive a newer committed transition with invalid effects.
         generation++
-        expected = transition.next.copy(retiredCallIds = transition.next.retiredCallIds.toList())
+        outstanding = emptyList()
         claimed.clear()
+        require(transition.effects.size <= MAX_EFFECTS_PER_TRANSITION) {
+            "Too many voice effect proposals"
+        }
+        require(transition.effects.all { effectMatchesSnapshot(it, transition.next) }) {
+            "Voice effect key or phase conflicts with committed snapshot"
+        }
+        expected = transition.next.copy(retiredCallIds = transition.next.retiredCallIds.toList())
         outstanding = transition.effects.mapIndexed { index, effect ->
             Ticket(effect.key, effect.kind, generation, index)
         }
@@ -103,6 +109,30 @@ internal class VoiceEffectClaimGate {
         generation++
         outstanding = emptyList()
         claimed.clear()
+    }
+
+    // Terminal snapshots retain only call IDs. STOP_MEDIA still requires
+    // exact-peer correlation at the future native media owner.
+    private fun effectMatchesSnapshot(
+        effect: VoiceCallEffect,
+        next: VoiceCallSnapshot,
+    ): Boolean = when (effect.kind) {
+        VoiceCallEffectKind.SEND_OFFER ->
+            next.phase == VoiceCallPhase.OUTGOING_RINGING &&
+                next.direction == VoiceCallDirection.OUTGOING && next.active == effect.key
+        VoiceCallEffectKind.SEND_ACCEPT ->
+            next.phase == VoiceCallPhase.CONNECTING &&
+                next.direction == VoiceCallDirection.INCOMING && next.active == effect.key
+        VoiceCallEffectKind.START_MEDIA ->
+            next.phase == VoiceCallPhase.CONNECTING && next.active == effect.key
+        VoiceCallEffectKind.SEND_BUSY ->
+            next.active != null && next.active != effect.key &&
+                next.active.callId != effect.key.callId &&
+                effect.key.callId !in next.retiredCallIds
+        VoiceCallEffectKind.SEND_REJECT,
+        VoiceCallEffectKind.SEND_HANGUP,
+        VoiceCallEffectKind.STOP_MEDIA ->
+            next.phase == VoiceCallPhase.IDLE && effect.key.callId in next.retiredCallIds
     }
 
     private companion object {
