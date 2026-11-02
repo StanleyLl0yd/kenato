@@ -55,10 +55,14 @@ device verification remain requirements.
 
 ## Foreground callback fencing (research-only UI)
 
-The UI snapshot guard rejects callbacks from a previous Activity foreground
-epoch. A stale callback must **not** release the `busy` flag of a newer UI
-operation, even if that older callback completed successfully. Only a
+The controller stamps foreground refreshes, silent refreshes and explicit
+operation results with the UI epoch captured **before** dispatching background
+work. A worker may finish building a snapshot after Activity pause/resume,
+but must not relabel old QR/proof output as belonging to the new foreground.
+The UI snapshot guard rejects callbacks from a previous Activity epoch and
+must **not** release the `busy` flag of a newer UI operation. Only a
 matching-epoch operation callback or fresh foreground snapshot may clear it.
-JVM tests cover stale activity snapshots and eventual matching-epoch release.
+JVM regressions cover stale QR output, preservation of the newer busy flag
+and eventual matching-epoch release.
 The controller's worker serialization does **not** establish a durable
 M2/M3/M4/M5 transaction or replace physical lifecycle tests.
