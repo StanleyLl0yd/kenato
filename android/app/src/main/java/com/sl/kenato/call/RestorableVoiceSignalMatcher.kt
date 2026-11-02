@@ -74,7 +74,29 @@ internal class RestorableVoiceSignalMatcher(
         if (!replay.claimLiveDispatchPermit(ownerIdentityId, matched.permit, nowEpochSeconds)) {
             return null
         }
-        return if (continuity.claim(ownerIdentityId, matched.permit)) matched.signal else null
+        if (!continuity.claim(ownerIdentityId, matched.permit)) return null
+
+        // A separately encrypted semantic file may change after the initial
+        // matcher snapshot but before the KDL1/fsync commitment. Never return
+        // the earlier plaintext if the authenticated counterpart changed.
+        // A mismatch consumes this permit and refuses an effect.
+        val current = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+            .singleOrNull {
+                MessageDigest.isEqual(it.signal.senderIdentityId, matched.signal.senderIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, matched.signal.messageId)
+            }
+        if (current == null ||
+            !MessageDigest.isEqual(current.envelopeDigest, matched.permit.envelopeDigest) ||
+            !MessageDigest.isEqual(
+                VoiceSignalingWire.encode(current.signal),
+                VoiceSignalingWire.encode(matched.signal),
+            )
+        ) {
+            throw RestorableVoiceSignalMismatchException(
+                "Durable M5 semantic state changed after protected effect claim",
+            )
+        }
+        return matched.signal
     }
 
     @Synchronized
