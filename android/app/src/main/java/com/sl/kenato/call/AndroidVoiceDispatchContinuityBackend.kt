@@ -14,6 +14,21 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** Pure validation shared by acceptance-only Android constructors and JVM tests. */
+internal object VoiceDispatchAcceptanceNamespace {
+    private val ALIAS_PREFIX =
+        Regex("com[.]sl[.]kenato[.]dispatch[.]epoch-acceptance[.]v1[.][0-9a-f]{32}[.]")
+    private val FILE_NAME = Regex("kenato_m5_dispatch_probe_[0-9a-f]{32}[.]bin")
+
+    fun requireAliasPrefix(value: String) {
+        require(ALIAS_PREFIX.matches(value)) { "KDL1 requires a random 128-bit test-only alias prefix" }
+    }
+
+    fun requireFileName(value: String) {
+        require(FILE_NAME.matches(value)) { "KDL1 requires a separate random disposable file" }
+    }
+}
+
 /**
  * Dormant M5 dispatch-ledger experiment, NOT a production voice implementation.
  * Only a random test-only Keystore alias prefix is permitted; the production
@@ -23,9 +38,7 @@ internal class AndroidKeystoreVoiceDispatchLedgerEpochKeys(
     private val aliasPrefix: String,
 ) : VoiceDispatchLedgerEpochKeys {
     init {
-        require(ACCEPTANCE_PREFIX.matches(aliasPrefix)) {
-            "KDL1 requires a fresh 128-bit isolated acceptance Keystore prefix"
-        }
+        VoiceDispatchAcceptanceNamespace.requireAliasPrefix(aliasPrefix)
     }
 
     private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -159,8 +172,7 @@ internal class AndroidKeystoreVoiceDispatchLedgerEpochKeys(
         const val MAX_ENVELOPE_BYTES = MAX_PLAINTEXT_BYTES + IV_BYTES + TAG_BYTES
         val AAD_PREFIX = "KENATO-M5-DISPATCH-EPOCH-V1\u0000".toByteArray(Charsets.UTF_8)
         val EPOCH_PATTERN = Regex("[0-9a-f]{32}")
-        val ACCEPTANCE_PREFIX =
-            Regex("com[.]sl[.]kenato[.]dispatch[.]epoch-acceptance[.]v1[.][0-9a-f]{32}[.]")
+
     }
 }
 
@@ -173,9 +185,7 @@ internal class AndroidAtomicFileVoiceDispatchLedgerRawStore(
     fileName: String,
 ) : VoiceDispatchLedgerRawStore {
     init {
-        require(ACCEPTANCE_FILE.matches(fileName)) {
-            "KDL1 probe requires its own random disposable no-backup file"
-        }
+        VoiceDispatchAcceptanceNamespace.requireFileName(fileName)
     }
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, fileName))
 
@@ -236,6 +246,6 @@ internal class AndroidAtomicFileVoiceDispatchLedgerRawStore(
 
     private companion object {
         const val MAX_FILE_BYTES = 70 * 1024
-        val ACCEPTANCE_FILE = Regex("kenato_m5_dispatch_probe_[0-9a-f]{32}[.]bin")
+
     }
 }
