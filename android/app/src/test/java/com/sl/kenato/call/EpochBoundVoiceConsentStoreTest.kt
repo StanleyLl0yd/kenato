@@ -1,6 +1,10 @@
 package com.sl.kenato.call
 
+import com.sl.kenato.contact.ContactCrypto
+import java.security.KeyPairGenerator
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -12,6 +16,44 @@ import org.junit.Test
 
 /** Offline fault injection only, NOT Android Keystore or physical P23 evidence. */
 class EpochBoundVoiceConsentStoreTest {
+    @Test
+    fun verifiedSignedConsentCannotReappearFromAnAuthenticRestoredGrant() {
+        val f = Fixture()
+        val owner = ByteArray(32) { 1 }
+        val identity = KeyPairGenerator.getInstance("EC").run {
+            initialize(ECGenParameterSpec("secp256r1"))
+            generateKeyPair()
+        }
+        val peer = ContactCrypto.identityId(identity.public.encoded)
+        val now = 1_780_000_000L
+        val cipher = InnerAesGcmCipher()
+        fun consent() = DurableVoiceCapabilityConsentRepository(
+            f.newStore(), cipher, SecureRandom(), VoiceCapabilityConsentClock { now },
+        )
+        val repo = consent()
+        val challenge = repo.issueChallenge(owner, peer, identity.public.encoded)
+        val proof = VoiceCapabilityProofWire.encode(
+            VoiceCapabilityProofWire.sign(
+                peer, owner, challenge.challenge, now, now + 300,
+            ) { payload ->
+                Signature.getInstance("SHA256withECDSA").run {
+                    initSign(identity.private)
+                    update(payload)
+                    sign()
+                }
+            },
+        )
+        repo.confirmSignedProof(owner, peer, identity.public.encoded, proof, true)
+        assertTrue(consent().isVoiceVersion2Confirmed(owner, peer, identity.public.encoded))
+        val authenticPositiveFile = f.backing.bytes!!.clone()
+        repo.revoke(owner, peer)
+        assertEquals(false, consent().isVoiceVersion2Confirmed(owner, peer, identity.public.encoded))
+        f.backing.bytes = authenticPositiveFile
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            consent().isVoiceVersion2Confirmed(owner, peer, identity.public.encoded)
+        }
+    }
+
     @Test
     fun authenticOlderConsentFileIsRejectedAfterRevocationCommit() {
         val f = Fixture()
@@ -138,6 +180,29 @@ class EpochBoundVoiceConsentStoreTest {
         val f = Fixture()
         assertThrows(VoiceCapabilityConsentException::class.java) {
             f.store.clearForIdentityRecovery()
+        }
+    }
+
+    private class InnerAesGcmCipher : VoiceCapabilityPayloadCipher {
+        private val key = SecretKeySpec(ByteArray(32) { 17 }, "AES")
+        private val random = SecureRandom()
+        override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+            val iv = ByteArray(12).also(random::nextBytes)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+            c.updateAAD(aad)
+            return byteArrayOf(1) + iv + c.doFinal(plaintext)
+        }
+        override fun encryptExisting(plaintext: ByteArray, aad: ByteArray): ByteArray =
+            encrypt(plaintext, aad)
+        override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encrypted.copyOfRange(1, 13)))
+            c.updateAAD(aad)
+            return c.doFinal(encrypted.copyOfRange(13, encrypted.size))
+        }
+        override fun deleteCapabilityKeyForIdentityRecovery() {
+            throw VoiceCapabilityConsentException("KCE2 recovery is not implemented")
         }
     }
 
