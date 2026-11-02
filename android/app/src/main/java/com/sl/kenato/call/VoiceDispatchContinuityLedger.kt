@@ -52,19 +52,28 @@ internal class VoiceDispatchContinuityLedger(
     ): Boolean = synchronized(WRITE_LOCK) {
         requireHealthy()
         requireOwner(ownerIdentityId)
-        val digest = permitDigest(ownerIdentityId, permit)
+        val keyDigest = messageKeyDigest(ownerIdentityId, permit)
+        val binding = permitDigest(ownerIdentityId, permit)
         val current = readAuthenticated()
         if (current != null && !MessageDigest.isEqual(current.second.owner, ownerIdentityId)) {
             throw VoiceSignalReplayException("Durable dispatch ledger belongs to a different identity")
         }
-        if (current?.second?.claims?.any { MessageDigest.isEqual(it, digest) } == true) {
+        val prior = current?.second?.claims?.singleOrNull {
+            MessageDigest.isEqual(it.messageKey, keyDigest)
+        }
+        if (prior != null) {
+            if (!MessageDigest.isEqual(prior.permitBinding, binding)) {
+                throw VoiceSignalReplayException(
+                    "Conflicting authenticated metadata for already claimed voice message id"
+                )
+            }
             return@synchronized false
         }
         val oldClaims = current?.second?.claims.orEmpty()
         if (oldClaims.size >= MAX_CLAIMS) {
             throw VoiceSignalReplayException("Durable dispatch ledger is full; refuse further effects")
         }
-        val next = State(ownerIdentityId.copyOf(), oldClaims + digest)
+        val next = State(ownerIdentityId.copyOf(), oldClaims + ClaimRecord(keyDigest, binding))
         val plaintext = encode(next)
         val previousEpoch = current?.first
         // Even a throwing createEpoch() can have left a new durable key behind.
@@ -94,7 +103,10 @@ internal class VoiceDispatchContinuityLedger(
             if (verified.first != fresh ||
                 !MessageDigest.isEqual(verified.second.owner, ownerIdentityId) ||
                 verified.second.claims.size != next.claims.size ||
-                verified.second.claims.zip(next.claims).any { (a, b) -> !MessageDigest.isEqual(a, b) }
+                verified.second.claims.zip(next.claims).any { (a, b) ->
+                    !MessageDigest.isEqual(a.messageKey, b.messageKey) ||
+                        !MessageDigest.isEqual(a.permitBinding, b.permitBinding)
+                }
             ) {
                 throw VoiceSignalReplayException("Dispatch ledger final verification failed")
             }
@@ -111,12 +123,21 @@ internal class VoiceDispatchContinuityLedger(
         synchronized(WRITE_LOCK) {
             requireHealthy()
             requireOwner(ownerIdentityId)
-            val target = permitDigest(ownerIdentityId, permit)
+            val keyDigest = messageKeyDigest(ownerIdentityId, permit)
+            val binding = permitDigest(ownerIdentityId, permit)
             val state = readAuthenticated()?.second ?: return@synchronized false
             if (!MessageDigest.isEqual(state.owner, ownerIdentityId)) {
                 throw VoiceSignalReplayException("Durable dispatch ledger owner mismatch")
             }
-            state.claims.any { MessageDigest.isEqual(it, target) }
+            val prior = state.claims.singleOrNull {
+                MessageDigest.isEqual(it.messageKey, keyDigest)
+            } ?: return@synchronized false
+            if (!MessageDigest.isEqual(prior.permitBinding, binding)) {
+                throw VoiceSignalReplayException(
+                    "Conflicting authenticated metadata for already claimed voice message id"
+                )
+            }
+            true
         }
 
     @Synchronized
@@ -177,7 +198,14 @@ internal class VoiceDispatchContinuityLedger(
         }
     }
 
-    private fun permitDigest(owner: ByteArray, permit: VoiceSignalReplayDispatchPermit): ByteArray {
+    private fun messageKeyDigest(owner: ByteArray, permit: VoiceSignalReplayDispatchPermit): ByteArray {
+        validatePermit(owner, permit)
+        return MessageDigest.getInstance("SHA-256").digest(
+            MESSAGE_KEY_DOMAIN + owner + permit.peerIdentityId + permit.messageId
+        )
+    }
+
+    private fun validatePermit(owner: ByteArray, permit: VoiceSignalReplayDispatchPermit) {
         if (permit.peerIdentityId.size != OWNER_BYTES ||
             permit.peerIdentityId.all { it == 0.toByte() } ||
             MessageDigest.isEqual(owner, permit.peerIdentityId) ||
@@ -188,6 +216,10 @@ internal class VoiceDispatchContinuityLedger(
         ) {
             throw VoiceSignalReplayException("Dispatch ledger permit key is invalid")
         }
+    }
+
+    private fun permitDigest(owner: ByteArray, permit: VoiceSignalReplayDispatchPermit): ByteArray {
+        validatePermit(owner, permit)
         val buffer = ByteArrayOutputStream().use { bytes ->
             DataOutputStream(bytes).use { out ->
                 out.write(PERMIT_DOMAIN)
@@ -207,14 +239,19 @@ internal class VoiceDispatchContinuityLedger(
         }
     }
 
-    private data class State(val owner: ByteArray, val claims: List<ByteArray>)
+    /** One message key is claimable once, independent of its forged call/digest fields. */
+    private data class ClaimRecord(val messageKey: ByteArray, val permitBinding: ByteArray)
+    private data class State(val owner: ByteArray, val claims: List<ClaimRecord>)
 
     private fun encode(state: State): ByteArray = ByteArrayOutputStream().use { bytes ->
         DataOutputStream(bytes).use { output ->
             output.write(STATE_MAGIC)
             output.write(state.owner)
             output.writeInt(state.claims.size)
-            state.claims.forEach(output::write)
+            state.claims.forEach {
+                output.write(it.messageKey)
+                output.write(it.permitBinding)
+            }
         }
         bytes.toByteArray()
     }
@@ -232,16 +269,17 @@ internal class VoiceDispatchContinuityLedger(
                 val owner = ByteArray(OWNER_BYTES).also(input::readFully)
                 requireOwner(owner)
                 val count = input.readInt()
-                if (count !in 1..MAX_CLAIMS || input.available() != count * DIGEST_BYTES) {
+                if (count !in 1..MAX_CLAIMS || input.available() != count * CLAIM_RECORD_BYTES) {
                     throw VoiceSignalReplayException("Protected dispatch claim count invalid")
                 }
                 val seen = HashSet<List<Byte>>()
                 val claims = List(count) {
-                    ByteArray(DIGEST_BYTES).also(input::readFully).also {
-                        if (!seen.add(it.toList())) {
-                            throw VoiceSignalReplayException("Duplicate claim digest in protected ledger")
-                        }
+                    val key = ByteArray(DIGEST_BYTES).also(input::readFully)
+                    val binding = ByteArray(DIGEST_BYTES).also(input::readFully)
+                    if (!seen.add(key.toList())) {
+                        throw VoiceSignalReplayException("Duplicate message key in protected ledger")
                     }
+                    ClaimRecord(key, binding)
                 }
                 State(owner, claims)
             }
@@ -257,8 +295,9 @@ internal class VoiceDispatchContinuityLedger(
     private companion object {
         val WRITE_LOCK = Any()
         val MAGIC = "KDL1".toByteArray(Charsets.US_ASCII)
-        val STATE_MAGIC = "KDC1".toByteArray(Charsets.US_ASCII)
+        val STATE_MAGIC = "KDC2".toByteArray(Charsets.US_ASCII)
         val PERMIT_DOMAIN = "KENATO-M5-DISPATCH-PERMIT-V1\u0000".toByteArray(Charsets.UTF_8)
+        val MESSAGE_KEY_DOMAIN = "KENATO-M5-DISPATCH-MESSAGE-V1\u0000".toByteArray(Charsets.UTF_8)
         val AAD_DOMAIN = "KENATO-M5-DISPATCH-EPOCH-V1\u0000".toByteArray(Charsets.UTF_8)
         val EPOCH_ID = Regex("[0-9a-f]{32}")
         const val VERSION: Byte = 1
@@ -267,9 +306,10 @@ internal class VoiceDispatchContinuityLedger(
         const val DIGEST_BYTES = 32
         const val MAX_CLAIMS = 1024
         const val STATE_HEADER_BYTES = 4 + OWNER_BYTES + 4
-        const val MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_CLAIMS * DIGEST_BYTES
+        const val CLAIM_RECORD_BYTES = 2 * DIGEST_BYTES
+        const val MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_CLAIMS * CLAIM_RECORD_BYTES
         const val HEADER_BYTES = 4 + 1 + 32
-        const val MIN_CIPHERTEXT_BYTES = 12 + 16 + STATE_HEADER_BYTES + DIGEST_BYTES
+        const val MIN_CIPHERTEXT_BYTES = 12 + 16 + STATE_HEADER_BYTES + CLAIM_RECORD_BYTES
         const val MAX_FILE_BYTES = HEADER_BYTES + MAX_STATE_BYTES + 128
     }
 }
