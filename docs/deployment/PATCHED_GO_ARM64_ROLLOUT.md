@@ -78,6 +78,14 @@ pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-se
 pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-server-linux-arm64.zip -SshAlias kenato -Apply
 ```
 
+The PowerShell wrapper independently pins the **reviewed LF-normalized
+root-executed Bash helper** to SHA-256 `7dcc74001e17416e0c0c7c149eb75a11290b7b8684ce7108f927e1e8d6d24df8`
+and checks that digest before opening an SSH connection or changing the host.
+A locally modified or substituted helper is rejected, even if the verified
+server executable ZIP is unchanged. Windows CRLF is normalized to LF before
+this check; CR-only line endings are refused. A new reviewed Bash helper
+requires an explicit corresponding pin update and code review.
+
 The first command is local preflight only; the second requires the
 operator's existing SSH key and **noninteractive, separately approved**
 host-side sudo authorization (`sudo -n`). The reviewable Bash helper is

@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess
 import re
+import hashlib
 
 path = Path("scripts/rollout_existing_oci_arm64.sh")
 text = path.read_text(encoding="utf-8")
@@ -81,10 +82,18 @@ for ss_output, should_accept in examples:
 
 
 operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
+reviewed_digest = "7dcc74001e17416e0c0c7c149eb75a11290b7b8684ce7108f927e1e8d6d24df8"
+assert hashlib.sha256(path.read_bytes()).hexdigest() == reviewed_digest
+assert f"$expectedRootHelperSha = '{reviewed_digest}'" in operator
+assert operator.index("$scriptHash -cne $expectedRootHelperSha") < operator.index(
+    '& ssh $SshAlias "umask 077; mkdir -p'
+), "Unreviewed shell helper must be rejected before any SSH host mutation"
+assert hashlib.sha256(path.read_bytes() + b"\n# unreviewed change").hexdigest() != reviewed_digest
+
 for token in (
     "sudo -n bash -s -- --apply",
     "$scriptText | & ssh",
-    '$scriptText = (Get-Content -LiteralPath $localHelper -Raw) -replace "`r`n", "`n"',
+    '$scriptText = (Get-Content -LiteralPath $localHelper -Raw -Encoding utf8) -replace "`r`n", "`n"',
     '$scriptText.Contains("`r")',
     "$expectedZipSha",
     "$expectedElfSha",
