@@ -223,6 +223,23 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun closedRuntimeCannotRestartWssOrStageNewOutgoingWork() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        runtime.close()
+        assertFalse(fixture.messaging.started)
+        assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
+        assertThrows(IllegalStateException::class.java) {
+            runtime.sendText(ByteArray(32) { 2 }, "test")
+        }
+        runtime.stopMessaging()
+        runtime.close()
+        assertFalse(fixture.messaging.started)
+    }
+
+    @Test
     fun failedTrustMutationLeavesMessagingStopped() {
         val fixture = Fixture()
         val runtime = fixture.runtime()

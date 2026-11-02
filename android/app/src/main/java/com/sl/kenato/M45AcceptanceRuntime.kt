@@ -121,6 +121,7 @@ internal class M45AcceptanceRuntime(
     private val messaging: M45MessagingBoundary,
 ) : AutoCloseable {
     private var messagingStarted = false
+    private var closed = false
     @Volatile private var trustMutationEpoch = 0L
 
     fun initializeIdentity(): IdentityBundle = identity.loadOrCreate()
@@ -173,6 +174,7 @@ internal class M45AcceptanceRuntime(
         // after failure is required to reconnect; a stale queued start is not enough.
         val requestedEpoch = trustMutationEpoch
         synchronized(this) {
+            requireOpen()
             if (requestedEpoch != trustMutationEpoch || requestedEpoch % 2L != 0L) {
                 throw IllegalStateException("Transport start was superseded by a trust mutation")
             }
@@ -184,6 +186,7 @@ internal class M45AcceptanceRuntime(
 
     @Synchronized
     fun stopMessaging() {
+        if (closed) return
         messagingStarted = false
         messaging.stop()
     }
@@ -192,6 +195,7 @@ internal class M45AcceptanceRuntime(
 
     @Synchronized
     fun sendText(peerIdentityId: ByteArray, text: String): MessagingConversationMessage {
+        requireOpen()
         val owner = currentIdentityId()
         return messaging.sendText(owner, peerIdentityId.copyOf(), text)
     }
@@ -201,9 +205,14 @@ internal class M45AcceptanceRuntime(
 
     @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
         messagingStarted = false
-        messaging.stop()
-        messaging.close()
+        try {
+            messaging.stop()
+        } finally {
+            messaging.close()
+        }
     }
 
     private fun currentIdentityId(): ByteArray {
@@ -211,7 +220,12 @@ internal class M45AcceptanceRuntime(
         return decodeM45IdentityId(bundle.identityId)
     }
 
+    private fun requireOpen() {
+        if (closed) throw IllegalStateException("Acceptance runtime is closed")
+    }
+
     private inline fun <T> withMessagingPaused(block: () -> T): T {
+        requireOpen()
         if (trustMutationEpoch >= Long.MAX_VALUE - 2) {
             throw IllegalStateException("Trust mutation generation exhausted")
         }

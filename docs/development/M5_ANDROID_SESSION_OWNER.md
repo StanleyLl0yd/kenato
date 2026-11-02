@@ -128,3 +128,12 @@ epoch changed or was in progress. The epoch advances on both successful and
 failed trust mutations, and a subsequent fresh explicit start remains possible.
 Two-worker JVM cases check both success and failure, including a queued stale
 start after a failed bootstrap. This is not durable, cross-runtime admission.
+
+### Closed owner denies transport resurrection
+
+`close()` now sets an idempotent terminal state before disposing of WSS and
+scheduler resources, including when transport shutdown throws. Later or queued
+start, trust mutation and outbound staging cannot reuse a closed runtime; stop
+and close remain idempotent. A JVM regression checks denied reopen/staging.
+This does not replace Android lifecycle/device tests or the missing shared
+M2/M3/WSS/effect transaction.
