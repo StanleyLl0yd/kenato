@@ -88,3 +88,30 @@ before production integration: KDC2 stores the unique owner/peer/message key
 separately from the complete binding, and JVM regressions require hard
 rejection of changed authenticated metadata. This remains synthetic proof
 only; real trusted inbound provenance and device lifecycle are unverified.
+
+## Opt-in reducer-facing control admission (Draft #175)
+
+`EpochGuardedVoiceCallClaimedControlSource` is a separately constructed
+`VoiceCallClaimedControlSource` that integrates the KDL1 authenticated
+matcher path with existing `VoiceCallAdmissionCoordinator`. Control signals
+only (OFFER/ANSWER/REJECT/BUSY/HANGUP) may enter the volatile reducer after
+the signed-current-contact admission check, exact semantic/journal match,
+durable journal flag, independent KDL1 claim and a second current-consent
+and TTL check. An ICE candidate remains unclaimed and requires its own
+reviewed media-owner dispatch. Neither the legacy call source nor the
+production factory is modified.
+
+JVM coverage checks a single inbound offer entering the reducer, duplicate
+denial, revoked consent before commit, revoked consent **during** the durable
+write, expiry during the same write and ICE not consumed. When revocation or
+expiry happens after a durable claim, the event is intentionally lost, not
+passed to the reducer; existing ACK may still be eligible. This is
+**at-most-once fail-closed behavior, not exactly-once delivery**.
+
+**Remaining race:** current-contact revocation and future effect execution
+do NOT yet share the guard's monitor. There is no durable global
+M2/M3/WSS/consent/effect owner, and a caller could use the still-present
+legacy source instead. Production activation must prevent that fallback,
+serialize revocation and effect execution with this admission, close and
+verify process-restart/downgrade paths, and conduct physical P13/P14.
+All tests remain synthetic and no microphone, network or media is enabled.
