@@ -58,3 +58,20 @@ serialize one app process and cannot prove multi-process durability.
 The only claim established by the synthetic tests is resistance to the
 specified file-only rollback adversary assuming a faithful, non-rolled-back
 Keystore epoch namespace and successful durable atomic writes.
+## Independently authenticated matcher composition (still nonproduction)
+
+The research-only `RestorableVoiceSignalMatcher.claimRestorableCandidateWithEpochLedger`
+first pairs an already authenticated AES-GCM semantic event with its exact
+replay receipt, then persists the legacy claim, and finally persists the
+separate KDL1 claim. It **returns no event** unless *both* writes succeed.
+If KDL1 refuses or faults after the first journal write, the event can be
+permanently lost rather than executed twice; an at-most-once failure mode,
+not exactly-once delivery. Three focused JVM tests include a previously
+authentic unclaimed journal restored after an executed research claim,
+faulted KDL1 persistence and a missing semantic counterpart.
+
+This is NOT a durable single M2/M3/WSS transaction or a permission check.
+The legacy matcher entry point remains unchanged; no production call site
+has been migrated, and no media side effect is executed in these tests.
+Future adoption must remove the unsafe legacy dispatch path rather than
+silently choosing it as fallback when Keystore continuity is unavailable.
