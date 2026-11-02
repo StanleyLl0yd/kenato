@@ -126,12 +126,14 @@ internal class M45AcceptanceRuntime(
 
     fun currentIdentity(): IdentityBundle? = identity.current()
 
+    @Synchronized
     fun prepareForAcceptance() = withMessagingPaused {
         identity.loadOrCreate()
         contacts.publishIdentity()
         sessions.maintainBootstrap()
     }
 
+    @Synchronized
     fun createInvite(): ShareableInvite = withMessagingPaused {
         identity.loadOrCreate()
         // Do not expose a shareable invite until the creator's authenticated M3 bootstrap is
@@ -141,6 +143,7 @@ internal class M45AcceptanceRuntime(
         contacts.createInvite()
     }
 
+    @Synchronized
     fun redeemAndEstablish(inviteUri: String): PinnedContact = withMessagingPaused {
         identity.loadOrCreate()
         val pin = contacts.redeemInvite(inviteUri)
@@ -148,6 +151,7 @@ internal class M45AcceptanceRuntime(
         pin
     }
 
+    @Synchronized
     fun claimAndEstablish(inviteUri: String): EstablishedSession = withMessagingPaused {
         identity.loadOrCreate()
         sessions.claimInbound(inviteUri)
@@ -163,12 +167,14 @@ internal class M45AcceptanceRuntime(
         return contacts.contacts()
     }
 
+    @Synchronized
     fun startMessaging() {
         identity.loadOrCreate()
         messaging.start()
         messagingStarted = true
     }
 
+    @Synchronized
     fun stopMessaging() {
         messagingStarted = false
         messaging.stop()
@@ -176,6 +182,7 @@ internal class M45AcceptanceRuntime(
 
     fun messagingState(): MessagingWssState = messaging.currentState()
 
+    @Synchronized
     fun sendText(peerIdentityId: ByteArray, text: String): MessagingConversationMessage {
         val owner = currentIdentityId()
         return messaging.sendText(owner, peerIdentityId.copyOf(), text)
@@ -184,6 +191,7 @@ internal class M45AcceptanceRuntime(
     fun conversation(peerIdentityId: ByteArray): MessagingConversationState =
         messaging.conversation(currentIdentityId(), peerIdentityId.copyOf())
 
+    @Synchronized
     override fun close() {
         messagingStarted = false
         messaging.stop()

@@ -13,6 +13,9 @@ import com.sl.kenato.messaging.MessagingWssState
 import com.sl.kenato.session.EstablishedSession
 import com.sl.kenato.session.SessionBootstrapRole
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -138,6 +141,45 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun explicitStartCannotResumeWssDuringAnUnfinishedTrustMutation() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val started = CountDownLatch(1)
+        fixture.sessions.maintainEntered = entered
+        fixture.sessions.maintainRelease = release
+        fixture.messaging.startEntered = started
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val mutation = workers.submit { runtime.createInvite() }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val dispatched = CountDownLatch(1)
+            val explicitStart = workers.submit {
+                dispatched.countDown()
+                runtime.startMessaging()
+            }
+            assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            assertFalse(started.await(250, TimeUnit.MILLISECONDS))
+            release.countDown()
+            mutation.get(10, TimeUnit.SECONDS)
+            explicitStart.get(10, TimeUnit.SECONDS)
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            assertEquals(
+                listOf(
+                    "identity.load", "contacts.publish", "sessions.maintain",
+                    "contacts.create", "messaging.start",
+                ),
+                fixture.events,
+            )
+        } finally {
+            release.countDown()
+            workers.shutdownNow()
+            runtime.close()
+        }
+    }
+
+    @Test
     fun failedTrustMutationLeavesMessagingStopped() {
         val fixture = Fixture()
         val runtime = fixture.runtime()
@@ -238,10 +280,16 @@ class M45AcceptanceRuntimeTest {
         private val pin: PinnedContact,
     ) : M45SessionBoundary {
         var failMaintain = false
+        var maintainEntered: CountDownLatch? = null
+        var maintainRelease: CountDownLatch? = null
         var outboundLocalContactId: ByteArray? = null
 
         override fun maintainBootstrap() {
             events += "sessions.maintain"
+            maintainEntered?.countDown()
+            if (maintainRelease?.await(10, TimeUnit.SECONDS) == false) {
+                throw IllegalStateException("simulated bootstrap gate timed out")
+            }
             if (failMaintain) throw IllegalStateException("simulated bootstrap failure")
         }
 
@@ -276,8 +324,10 @@ class M45AcceptanceRuntimeTest {
         private val events: MutableList<String>,
     ) : M45MessagingBoundary {
         var started = false
+        var startEntered: CountDownLatch? = null
 
         override fun start() {
+            startEntered?.countDown()
             events += "messaging.start"
             started = true
         }

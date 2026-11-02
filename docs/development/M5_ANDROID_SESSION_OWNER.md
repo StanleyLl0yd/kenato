@@ -102,3 +102,18 @@ claims. Multiple app processes have no common lock, and file rollback
 is not addressed by this factory consolidation. #116 shared durable
 M2/M3/WSS/effect owner, P13/P14/P17 physical acceptance and #118/#170/#171
 anti-rollback research remain mandatory before audio activation.
+
+## Runtime-local serialized transport admission
+
+The acceptance runtime now serializes trust/session mutations, explicit WSS
+start/stop, outbound text staging and close on its own monitor. An explicit
+start cannot resume the same runtime's transport while an invite/bootstrap
+mutation is still running. A two-worker JVM regression holds M3 bootstrap
+between trust mutation and completion and verifies that a second caller
+cannot start WSS until the mutation completes.
+
+This is **only a single-runtime process monitor**, not a process-wide WSS
+lease or a multi-store/M2 consent transaction. Distinct runtime instances,
+interprocess operation, M3/consent rollback and pending network callbacks
+remain separate pre-voice acceptance blockers; no media or v2 transport is
+activated by this change.
