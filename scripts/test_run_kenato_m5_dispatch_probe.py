@@ -39,8 +39,23 @@ case "$*" in
     if [[ "${ADB_TEST_INSTRUMENT_FAIL:-0}" == 1 ]]; then
       echo 'FAILURES!!!'
       echo 'Tests run: 5,  Failures: 1'
+      echo 'INSTRUMENTATION_CODE: 0'
+    elif [[ "${ADB_TEST_INSTRUMENT_MIXED:-0}" == 1 ]]; then
+      echo 'OK (5 tests)'
+      echo 'FAILURES!!!'
+      echo 'INSTRUMENTATION_CODE: -1'
+    elif [[ "${ADB_TEST_INSTRUMENT_NO_CODE:-0}" == 1 ]]; then
+      echo 'OK (5 tests)'
+    elif [[ "${ADB_TEST_INSTRUMENT_WRONG_CODE:-0}" == 1 ]]; then
+      echo 'OK (5 tests)'
+      echo 'INSTRUMENTATION_CODE: 0'
+    elif [[ "${ADB_TEST_INSTRUMENT_DUP_OK:-0}" == 1 ]]; then
+      echo 'OK (5 tests)'
+      echo 'OK (5 tests)'
+      echo 'INSTRUMENTATION_CODE: -1'
     else
       echo 'OK (5 tests)'
+      echo 'INSTRUMENTATION_CODE: -1'
     fi
     ;;
   *) echo 'UNEXPECTED SYNTHETIC ADB INVOCATION' >&2; exit 18 ;;
@@ -133,6 +148,23 @@ with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     recorded = list((folder / "evidence").glob("*.json"))
     assert len(recorded) == 1
     assert json.loads(recorded[0].read_text(encoding="utf-8-sig"))["result"] == "FAIL"
+
+# A synthetic stdout containing OK must not be enough for physical PASS.
+for failure_mode in (
+    "ADB_TEST_INSTRUMENT_MIXED",
+    "ADB_TEST_INSTRUMENT_NO_CODE",
+    "ADB_TEST_INSTRUMENT_WRONG_CODE",
+    "ADB_TEST_INSTRUMENT_DUP_OK",
+):
+    with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
+        folder = Path(temp)
+        prepare_artifact(folder)
+        rejected = execute(folder, **{failure_mode: "1"})
+        assert rejected.returncode != 0, f"{failure_mode}: ambiguous runner output must fail closed"
+        recorded = list((folder / "evidence").glob("*.json"))
+        assert len(recorded) == 1
+        assert json.loads(recorded[0].read_text(encoding="utf-8-sig"))["result"] == "FAIL"
+
 
 with tempfile.TemporaryDirectory(prefix="kenato-m5-fake-adb-") as temp:
     folder = Path(temp)
