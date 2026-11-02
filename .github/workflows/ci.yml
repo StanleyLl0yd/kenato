@@ -125,6 +125,30 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Compile isolated M5 dispatch Keystore instrumentation (NOT EXECUTED)
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5DispatchProbeInstrumentation=true
+          :android:app:assembleM5DispatchProbe
+          :android:app:assembleM5DispatchProbeAndroidTest
+
+      - name: Verify isolated dispatch diagnostic APK package and permissions
+        run: |
+          set -euo pipefail
+          probe=android/app/build/outputs/apk/m5DispatchProbe/app-m5DispatchProbe.apk
+          tests=android/app/build/outputs/apk/androidTest/m5DispatchProbe/app-m5DispatchProbe-androidTest.apk
+          test -s "$probe"
+          test -s "$tests"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          test -x "$aapt"
+          "$aapt" dump badging "$probe" | grep -Fq "package: name='com.sl.kenato.m5dispatchprobe'"
+          "$aapt" dump badging "$tests" | grep -Fq "package: name='com.sl.kenato.m5dispatchprobe.test'"
+          permissions="$("$aapt" dump permissions "$probe")"
+          if grep -Eq 'android[.]permission[.](INTERNET|RECORD_AUDIO|CAMERA|CAPTURE_AUDIO_OUTPUT)' <<< "$permissions"; then
+            echo "Dispatch probe unexpectedly requests network or media permissions" >&2
+            exit 1
+          fi
+
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 
