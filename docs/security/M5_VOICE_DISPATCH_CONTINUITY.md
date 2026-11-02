@@ -12,9 +12,12 @@ recomputing that checksum permits a second claim in the journal. Passing
 regressions in #171 deliberately demonstrate the flaw, not remediation.
 
 `VoiceDispatchContinuityLedger` adds a distinct **KDL1 research boundary**:
-given an already authenticated permit, it commits the SHA-256 digest of
-owner/peer/message/call/kind/envelope-hash under one dedicated, per-commit
-Keystore epoch. A claim only returns true after a new AtomicFile-like write,
+given an already authenticated permit, it commits two domain-separated
+SHA-256 digests: **owner/peer/message ID** as the unique one-use key and the
+complete owner/peer/message/call/kind/envelope-hash as its authenticated
+binding. A changed call ID, event kind or envelope hash for an already used
+message ID is a hard conflict, not a fresh claim. The serialized KDC2 state
+is protected under one dedicated, per-commit Keystore epoch. A claim only returns true after a new AtomicFile-like write,
 read-back verification, retirement of the previous independent key, and final
 namespace/file verification. An older restored file no longer matches
 the remaining key; a forged plaintext journal cannot alter the independent
@@ -75,3 +78,13 @@ The legacy matcher entry point remains unchanged; no production call site
 has been migrated, and no media side effect is executed in these tests.
 Future adoption must remove the unsafe legacy dispatch path rather than
 silently choosing it as fallback when Keystore continuity is unavailable.
+
+### Conflicting metadata adversarial review
+
+The initial research ledger keyed uniqueness on the *entire* permit digest,
+which would incorrectly treat the same authenticated peer/message ID with a
+changed call ID, kind or envelope digest as a new claim. That was corrected
+before production integration: KDC2 stores the unique owner/peer/message key
+separately from the complete binding, and JVM regressions require hard
+rejection of changed authenticated metadata. This remains synthetic proof
+only; real trusted inbound provenance and device lifecycle are unverified.
