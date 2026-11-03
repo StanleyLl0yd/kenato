@@ -31,8 +31,11 @@ class NoticeTests(unittest.TestCase):
             gaps = result["component_license_gap_register"]
             self.assertEqual([item["notice_component"] for item in gaps],
                              sorted(note.COMPONENTS))
-            self.assertEqual(len({item["notice_section_sha256"]
-                                  for item in gaps}), 34)
+            expected_section_digest = hashlib.sha256(
+                ("\nCopyright " + "x"*200 + "\n").encode()).hexdigest()
+            self.assertEqual(
+                {item["notice_section_sha256"] for item in gaps},
+                {expected_section_digest})
             for item in gaps:
                 self.assertEqual(len(item["notice_section_sha256"]), 64)
                 self.assertEqual(item["license_declared_spdx"], "NOASSERTION")

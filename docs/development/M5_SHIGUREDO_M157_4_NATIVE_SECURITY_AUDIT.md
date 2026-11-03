@@ -59,7 +59,7 @@ Any subsequent research commit requires fresh exact-HEAD verification.
 
 The existing exact-digest `probe_shiguredo_m157_notice.py` now writes a
 **34-entry unresolved license gap register** to the *sanitized research JSON*
-for the SHA-pinned AAR notice. Every NOTICE section has a unique per-section
+for the SHA-pinned AAR notice. Every NOTICE section has a deterministic per-section
 SHA-256 evidence anchor; every attributed component explicitly remains
 `license_declared_spdx=NOASSERTION`,
 `license_concluded_spdx=NOASSERTION`, with no verified upstream license,
