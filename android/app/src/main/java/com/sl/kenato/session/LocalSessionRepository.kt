@@ -1,5 +1,6 @@
 package com.sl.kenato.session
 
+import com.sl.kenato.storage.M45CrossProcessLease
 import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 
 import android.content.Context
@@ -986,8 +987,9 @@ internal class LocalSessionRepository(
 
         fun create(context: Context): LocalSessionRepository {
             val applicationContext = context.applicationContext
-            val storageDirectory = applicationContext.noBackupFilesDir.canonicalPath
-            return applicationOwners.getOrCreate(storageDirectory) {
+            val storageDirectory = applicationContext.noBackupFilesDir.canonicalFile
+            M45CrossProcessLease.shared(storageDirectory)
+            return applicationOwners.getOrCreate(storageDirectory.path) {
                 LocalSessionRepository(
                     engine = JniSessionEngine(),
                     keyBackend = AndroidSessionPickleKeyBackend(),

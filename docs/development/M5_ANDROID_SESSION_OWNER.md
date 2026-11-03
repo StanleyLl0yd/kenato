@@ -315,11 +315,14 @@ buffer independence and oversized rejection. No physical or interprocess claim.
 
 ## Process-lifetime OS lock for M4.5 Android factory entrypoints
 
-The Android M4.5 acceptance factory now obtains one app-private, process-lifetime
+The default Android M1/M2/M3 repository factories **and** the M4.5 acceptance
+factory now obtain the same app-private, process-lifetime
 `FileChannel.tryLock` lease before admitting its first runtime for a canonical
 `noBackupFilesDir`. All later acceptance runtimes in that process reuse the same
-gate and held descriptor. Competing Android processes using **this factory**
-fail closed rather than concurrently owning a socket or M3 store. JVM tests
+gate and held descriptor. Competing Android processes using these **default
+factories** fail closed before constructing a conflicting M1/M2/M3 owner or
+acceptance runtime. Direct constructors that bypass the factories are not
+protected. JVM tests
 cover contention, clean close/reacquire, separate directories, invalid directories
 and a symbolic-link lock-path rejection. A lock file is never deleted at close,
 so an inode replacement cannot silently split waiting owners. The adapter
@@ -327,7 +330,7 @@ rejects callbacks after a lost lease. The operating system releases the lock
 after process death; this alone does not establish safe restart.
 
 This is an **advisory entrypoint exclusion**, not a durable transaction:
-direct M1/M2/M3 factory use in another process, M4 history, M5 semantic state,
+direct in-memory M1/M2/M3 constructors, M4 history, M5 semantic state,
 M2 revocation, the KDL1 claim ledger, and actual effect execution are not
 integrated into a common owner. An Android process can die after one local
 store commits and before the others; the lock has no pending-intent journal,

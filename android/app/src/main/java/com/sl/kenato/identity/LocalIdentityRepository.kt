@@ -1,5 +1,6 @@
 package com.sl.kenato.identity
 
+import com.sl.kenato.storage.M45CrossProcessLease
 import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 
 import android.content.Context
@@ -277,7 +278,9 @@ class LocalIdentityRepository internal constructor(
 
         fun create(context: Context): LocalIdentityRepository {
             val appContext = context.applicationContext
-            return applicationOwners.getOrCreate(appContext.noBackupFilesDir.canonicalPath) {
+            val directory = appContext.noBackupFilesDir.canonicalFile
+            M45CrossProcessLease.shared(directory)
+            return applicationOwners.getOrCreate(directory.path) {
                 LocalIdentityRepository(
                     keyBackend = AndroidIdentityKeyBackend(),
                     stateStore = SharedPreferencesIdentityStateStore(appContext),

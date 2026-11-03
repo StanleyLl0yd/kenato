@@ -1,5 +1,6 @@
 package com.sl.kenato.contact
 
+import com.sl.kenato.storage.M45CrossProcessLease
 import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 
 import android.content.Context
@@ -322,7 +323,9 @@ internal class ContactLocalState(
 
         fun create(context: Context): ContactLocalState {
             val appContext = context.applicationContext
-            return applicationOwners.getOrCreate(appContext.noBackupFilesDir.canonicalPath) {
+            val directory = appContext.noBackupFilesDir.canonicalFile
+            M45CrossProcessLease.shared(directory)
+            return applicationOwners.getOrCreate(directory.path) {
                 ContactLocalState(SharedPreferencesContactStateStore(appContext))
             }
         }

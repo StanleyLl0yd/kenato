@@ -1,9 +1,11 @@
 package com.sl.kenato.storage
 
+import com.sl.kenato.M45ProcessTransportGate
 import java.nio.file.Files
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -60,6 +62,32 @@ class M45CrossProcessLeaseTest {
             M45CrossProcessLease.acquire(root)
         }
         assertTrue(Files.isSymbolicLink(link))
+    }
+
+    @Test
+    fun defaultFactoriesCanReuseOneLifetimeLeaseButNewOwnersCannotBypassIt() {
+        val directory = temporary.newFolder()
+        val first = M45CrossProcessLease.shared(directory)
+        try {
+            val second = M45CrossProcessLease.shared(directory)
+            assertSame(first, second)
+            assertThrows(IllegalStateException::class.java) {
+                M45CrossProcessLease.acquire(directory)
+            }
+            val gate = M45ProcessTransportGate(first)
+            gate.requireAvailable(Any())
+            assertTrue(gate.permitsTransportCallbacks())
+            first.close()
+            assertFalse(gate.permitsTransportCallbacks())
+            assertThrows(IllegalStateException::class.java) {
+                gate.requireAvailable(Any())
+            }
+            assertThrows(IllegalStateException::class.java) {
+                M45CrossProcessLease.shared(directory)
+            }
+        } finally {
+            first.close()
+        }
     }
 
     @Test

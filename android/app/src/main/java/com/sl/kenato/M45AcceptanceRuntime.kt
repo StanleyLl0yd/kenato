@@ -176,7 +176,7 @@ private fun sharedM45ProcessGate(context: Context): M45ProcessTransportGate =
         // Hold the advisory inode lock for the lifetime of this process, including Activity
         // recreation. Closing one runtime must not admit a competing Android process.
         M45ProcessTransportGate(
-            M45CrossProcessLease.acquire(context.applicationContext.noBackupFilesDir.canonicalFile),
+            M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir.canonicalFile),
         )
     }
 

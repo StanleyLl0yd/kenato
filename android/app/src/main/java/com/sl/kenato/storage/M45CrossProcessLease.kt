@@ -41,6 +41,14 @@ internal class M45CrossProcessLease private constructor(
 
     companion object {
         const val LOCK_FILE_NAME = "kenato_m45_process_owner.lock"
+        private val applicationLeases = ProcessLocalOwnerRegistry<M45CrossProcessLease>()
+
+        fun shared(noBackupDirectory: File): M45CrossProcessLease {
+            val directory = noBackupDirectory.canonicalFile
+            return applicationLeases.getOrCreate(directory.path) { acquire(directory) }.also {
+                check(it.permitsOperations()) { "Cross-process state owner lease was lost" }
+            }
+        }
 
         fun acquire(noBackupDirectory: File): M45CrossProcessLease {
             require(noBackupDirectory.isDirectory) { "Private M4.5 storage directory is missing" }
