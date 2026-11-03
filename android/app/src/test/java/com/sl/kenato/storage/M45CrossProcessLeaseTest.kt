@@ -40,7 +40,7 @@ class M45CrossProcessLeaseTest {
                         FileLock lock = channel.tryLock();
                         if (lock == null) System.exit(42);
                         try {
-                            if (args.length == 3 && args[2].equals("hold")) {
+                            if (args.length == 2 && args[1].equals("hold")) {
                                 System.out.println("LOCKED");
                                 System.out.flush();
                                 System.in.read();
