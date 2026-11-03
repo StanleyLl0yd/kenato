@@ -90,7 +90,9 @@ def fetch_exact(url: str, *, runner=subprocess.run) -> bytes:
     if reply.returncode != 0 or not split or status != b"200" or (
         not payload or len(payload) > maximum
     ):
-        raise SourceEvidenceError("Pinned producer/source response rejected")
+        raise SourceEvidenceError("Pinned snapshot rejected at " +
+                                  parsed.path.rsplit("/", 1)[-1][:96] +
+                                  " status=" + status.decode("ascii", "replace")[:8])
     return payload
 
 def validate_fec_fixes(fec: str, header: str, internal: str) -> None:
