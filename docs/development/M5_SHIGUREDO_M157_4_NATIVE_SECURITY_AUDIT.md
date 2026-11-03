@@ -34,6 +34,24 @@ separately. Source and archive provenance is **strong but not equivalent to
 independently reproducible native compilation, CVE exploitability review,
 third-party license clearance or real ARM64 JNI execution**.
 
+## Exact upstream vs publisher root license evidence (new research checkpoint)
+
+The pinned source-only #88 workflow now fetches and SHA-256 inventories two
+**separate root license texts** at immutable revisions: upstream WebRTC
+`95554e4a0c5c343fdc989387d9d0ce18e2a2294b/LICENSE` via Gitiles
+and the Shiguredo build-project `c8c2c3ff87d6443192f9f42c3c12f005ee4f6d4c/LICENSE`
+via GitHub. It checks characteristic BSD three-clause vs Apache 2.0 text
+clauses respectively, recording source bytes/digests and only **candidate**
+SPDX expressions. **Never infer a third-party component's license from the
+root WebRTC or publisher build-repository LICENSE.** The resulting report
+explicitly sets source root license evidence apart from actual native linked
+components, the 34-section generated NOTICE and independent legal signoff.
+
+The new fetch/test job requires its own exact-head CI result; until it
+passes, no live root-license fingerprint result is claimed. Even when green,
+this is at most two independently retrieved root LICENSE files, not a
+complete SPDX/third-party redistribution review. No production asset changes.
+
 ## Generated binary NOTICE audit
 
 The full **34-section** actual AAR `META-INF/NOTICE` records attribution

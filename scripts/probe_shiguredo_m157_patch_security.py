@@ -31,6 +31,8 @@ PRODUCER_RUN = 40991854569
 PRODUCER_ARTIFACT_ID = 12951911807
 NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
 NOTICE_BYTES = 214353
+WEBRTC_ROOT_LICENSE_PATH = "LICENSE"
+PRODUCER_ROOT_LICENSE_PATH = "LICENSE"
 PATCHES = (
     "add_deps.patch", "4k.patch", "revive_proxy.patch",
     "ssl_verify_callback_with_native_handle.patch",
@@ -62,7 +64,9 @@ class SourceEvidenceError(ValueError):
 
 def allowed_url(url: str) -> tuple[str, int]:
     sources = {SOURCE_ROOT + path + "?format=TEXT" for path in SOURCE_PATHS}
-    producers = {PRODUCER_ROOT + path for path in ("VERSION", "run.py", "NOTICE")}
+    sources.add(SOURCE_ROOT + WEBRTC_ROOT_LICENSE_PATH + "?format=TEXT")
+    producers = {PRODUCER_ROOT + path for path in
+                 ("VERSION", "run.py", "NOTICE", PRODUCER_ROOT_LICENSE_PATH)}
     producers.update(PRODUCER_ROOT + "patches/" + patch for patch in PATCHES)
     if url in sources:
         return "webrtc.googlesource.com", MAX_SIZE
@@ -119,6 +123,41 @@ def validate_fec_fixes(fec: str, header: str, internal: str) -> None:
     if not ("std::span<const uint8_t>" in header and
             "std::span<const uint8_t>" in internal):
         raise SourceEvidenceError("CVE-2026-118328 FEC table span hardening absent")
+
+def check_root_license(payload: bytes, *, origin: str) -> dict:
+    """Pin source-root license evidence; never classify transitive or linked code."""
+    if origin not in ("webrtc_source", "publisher_build_project") or not (
+        150 <= len(payload) <= 65536
+    ):
+        raise SourceEvidenceError("Missing or unbounded pinned root license")
+    try:
+        normalized = " ".join(payload.decode("utf-8").casefold().split())
+    except UnicodeError as error:
+        raise SourceEvidenceError("Invalid pinned root license encoding") from error
+    checks = (
+        ("redistribution and use in source and binary forms",
+         "redistributions of source code must retain",
+         "redistributions in binary form must reproduce",
+         "neither the name of")
+        if origin == "webrtc_source" else
+        ("apache license", "version 2.0, january 2004",
+         "terms and conditions for use, reproduction, and distribution",
+         "grant of patent license", "redistribution.")
+    )
+    if any(phrase not in normalized for phrase in checks):
+        raise SourceEvidenceError("Pinned source-root license clauses differ")
+    return {
+        "origin": origin,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "textual_license_pattern_candidate": (
+            "BSD-3-Clause" if origin == "webrtc_source" else "Apache-2.0"
+        ),
+        "root_license_clause_fingerprint_present": True,
+        "actual_linked_component_license_verified": False,
+        "complete_license_spdx_audit": False,
+        "independent_legal_clearance": False,
+    }
 
 def validate_producer(version: str, run: str, patch_texts: dict[str, str]) -> dict:
     fields = {}
@@ -213,6 +252,19 @@ def collect(*, fetcher=fetch_exact) -> dict:
     except (UnicodeError, binascii.Error) as error:
         raise SourceEvidenceError("Invalid pinned Gitiles source encoding") from error
     statuses = check_snapshots(sources)
+    try:
+        upstream_license = base64.b64decode(
+            fetcher(SOURCE_ROOT + WEBRTC_ROOT_LICENSE_PATH + "?format=TEXT"),
+            validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise SourceEvidenceError("Invalid pinned upstream LICENSE encoding") from error
+    root_licenses = {
+        "upstream_webrtc": check_root_license(
+            upstream_license, origin="webrtc_source"),
+        "publisher_build_project": check_root_license(
+            fetcher(PRODUCER_ROOT + PRODUCER_ROOT_LICENSE_PATH),
+            origin="publisher_build_project"),
+    }
     publisher_notice = fetcher(PRODUCER_ROOT + "NOTICE")
     if b"## WebRTC" not in publisher_notice or b"## WebKit" not in publisher_notice:
         raise SourceEvidenceError("Publisher source NOTICE lacks basic attributions")
@@ -227,6 +279,7 @@ def collect(*, fetcher=fetch_exact) -> dict:
         "publisher_repository_notice_sha256": hashlib.sha256(publisher_notice).hexdigest(),
         "producer_archive_and_aar_notice_sha256": NOTICE_SHA256,
         "producer_archive_notice_bytes": NOTICE_BYTES,
+        "root_license_text_evidence_not_transitive_clearance": root_licenses,
         "source_snapshots_sha256": {
             path: hashlib.sha256(content.encode("utf-8")).hexdigest()
             for path, content in sources.items()
