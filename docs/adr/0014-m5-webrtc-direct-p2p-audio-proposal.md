@@ -246,3 +246,16 @@ Call identifiers for explicit local dial proposals come from an internal
 cryptographically secure 128-bit generator, never from the UI, relay or
 wall-clock. Invalid or all-zero generator output fails closed. This is
 not a substitute for durable anti-replay and one-time M3 outbound staging.
+
+### Additional 2026-11-03 upstream CVE fingerprint research (no media approval)
+
+The isolated pinned-source probe checks the three-file WebRTC change associated
+with CVE-2026-106357 (Chromium 567160162), upstream commit
+`7a25e1c85a0af15cae8a2d55bf02e5610bf1af53`: transport lookup by the
+channel's original MID, unassociated-only SDP m-line lookup, and the list's
+no-prior-MID guard. Source is fetched only from the exact declared Shiguredo
+WebRTC SHA, with bounded HTTPS allowlisted paths and offline tamper tests.
+A positive result is a **source fingerprint only**, not independent binary
+reproducibility, reachability, complete patch-set coverage or permission to
+load ARM64 JNI. CVE-2026-103631 and CVE-2026-110137 also require separate
+mapping (see #88). The existing AAR and Android runtime remain untouched.

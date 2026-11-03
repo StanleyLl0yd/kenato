@@ -25,12 +25,16 @@ GITILES_ROOT = "https://webrtc.googlesource.com/src/+/" + WEBRTC_SHA + "/"
 UPSTREAM_RTP_PATH = "modules/rtp_rtcp/source/rtp_format.cc"
 UPSTREAM_SCTP_PATH = "pc/sctp_data_channel.cc"
 UPSTREAM_TRANSCEIVER_PATH = "pc/sdp_offer_answer.cc"
+UPSTREAM_PEER_CONNECTION_PATH = "pc/peer_connection.cc"
+UPSTREAM_TRANSCEIVER_LIST_PATH = "pc/transceiver_list.cc"
 MAX_VERSION = 4096
 MAX_NOTICE = 128 * 1024
 MAX_LICENSE = 128 * 1024
 MAX_RTP_BASE64 = 2 * 1024 * 1024
 MAX_SCTP_BASE64 = 2 * 1024 * 1024
 MAX_TRANSCEIVER_BASE64 = 4 * 1024 * 1024
+MAX_PEER_CONNECTION_BASE64 = 4 * 1024 * 1024
+MAX_TRANSCEIVER_LIST_BASE64 = 2 * 1024 * 1024
 
 
 class SourceProbeError(ValueError):
@@ -50,7 +54,9 @@ def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
     elif host == "webrtc.googlesource.com":
         allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",
                    GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT",
-                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT")
+                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_PEER_CONNECTION_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_LIST_PATH + "?format=TEXT")
     else:
         raise SourceProbeError("Source host outside exact allowlist")
     if parsed.hostname != host or url not in allowed:
@@ -181,6 +187,27 @@ def validate_transceiver_source(source: str) -> None:
         raise SourceProbeError("CVE-2026-106268: ordered removal/teardown guard absent")
 
 
+
+def validate_mid_binding_source(peer_connection: str, sdp: str, transceiver_list: str) -> None:
+    """CVE-2026-106357 / Chromium 567160162: source-only MID binding fingerprint.
+
+    Upstream WebRTC commit 7a25e1c85a0af15cae8a2d55bf02e5610bf1af53.
+    This is NOT Android binary, reachability, or full CVE remediation proof.
+    """
+    if not re.search(
+        r"if\s*\(\s*internal->channel_mid\(\)\s*==\s*mid\s*\)", peer_connection
+    ):
+        raise SourceProbeError("CVE-2026-106357: peer channel MID binding absent")
+    if not re.search(
+        r"transceivers\(\)->FindUnassociatedByMLineIndex\s*\(\s*mline_index\s*\)", sdp
+    ):
+        raise SourceProbeError("CVE-2026-106357: SDP unassociated MID lookup absent")
+    if not re.search(
+        r"if\s*\(\s*!internal->mid\(\)\s*&&\s*"
+        r"internal->mline_index\(\)\s*==\s*mline_index\s*\)", transceiver_list
+    ):
+        raise SourceProbeError("CVE-2026-106357: list unassociated MID guard absent")
+
 def inspect_snapshots(version: str, license_text: str, notice: str, source: str, sctp_source: str, transceiver_source: str) -> dict:
     validate_version(version)
     validate_licenses(license_text, notice)
@@ -229,11 +256,23 @@ def collect() -> dict:
         maximum=MAX_TRANSCEIVER_BASE64,
         host="webrtc.googlesource.com",
     )
+    peer_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_PEER_CONNECTION_PATH + "?format=TEXT",
+        maximum=MAX_PEER_CONNECTION_BASE64,
+        host="webrtc.googlesource.com",
+    )
+    list_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_TRANSCEIVER_LIST_PATH + "?format=TEXT",
+        maximum=MAX_TRANSCEIVER_LIST_BASE64,
+        host="webrtc.googlesource.com",
+    )
     try:
         source = base64.b64decode(encoded, validate=True).decode("utf-8")
         sctp_source = base64.b64decode(sctp_encoded, validate=True).decode("utf-8")
         transceiver_source = base64.b64decode(transceiver_encoded, validate=True).decode("utf-8")
-        return inspect_snapshots(
+        peer_source = base64.b64decode(peer_encoded, validate=True).decode("utf-8")
+        list_source = base64.b64decode(list_encoded, validate=True).decode("utf-8")
+        report = inspect_snapshots(
             version.decode("utf-8"),
             license_data.decode("utf-8"),
             notice.decode("utf-8"),
@@ -241,6 +280,11 @@ def collect() -> dict:
             sctp_source,
             transceiver_source,
         )
+        validate_mid_binding_source(peer_source, transceiver_source, list_source)
+        report["cve_2026_106357_upstream_source_fix_signature"] = True
+        report["cve_2026_106357_binary_remediation_verified"] = False
+        report["cve_2026_106357_android_reachability_verified"] = False
+        return report
     except (UnicodeError, binascii.Error) as error:
         raise SourceProbeError("Invalid upstream encoded source") from error
 

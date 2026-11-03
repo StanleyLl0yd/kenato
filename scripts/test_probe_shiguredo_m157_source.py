@@ -55,6 +55,21 @@ void SdpOfferAnswerHandler::RemoveStoppedTransceivers() {
 void SdpOfferAnswerHandler::RemoveUnusedChannels() {}
 """
 
+GOOD_MID_PEER = """
+if (internal->channel_mid() == mid) {
+  ret = internal->SetRtpTransport(rtp_transport);
+}
+"""
+GOOD_MID_SDP = """
+transceiver = transceivers()->FindUnassociatedByMLineIndex(mline_index);
+"""
+GOOD_MID_LIST = """
+if (!internal->mid() && internal->mline_index() == mline_index) {
+  return transceiver;
+}
+"""
+
+
 class ProbeTests(unittest.TestCase):
     def test_valid_snapshot_is_research_only(self):
         report = probe.inspect_snapshots(GOOD_VERSION, GOOD_LICENSE, GOOD_NOTICE, GOOD_SOURCE, GOOD_SCTP_SOURCE, GOOD_TRANSCEIVER_SOURCE)
@@ -185,6 +200,46 @@ class ProbeTests(unittest.TestCase):
                 maximum=128, host="webrtc.googlesource.com",
             )
             self.assertEqual(result, b"ZGF0YQ==")
+
+    def test_mid_binding_three_file_source_fingerprint_passes(self):
+        probe.validate_mid_binding_source(GOOD_MID_PEER, GOOD_MID_SDP, GOOD_MID_LIST)
+
+    def test_mid_binding_old_peer_mid_lookup_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "peer channel MID"):
+            probe.validate_mid_binding_source(
+                GOOD_MID_PEER.replace("internal->channel_mid()", "internal->mid()"),
+                GOOD_MID_SDP, GOOD_MID_LIST,
+            )
+
+    def test_mid_binding_old_sdp_reassociation_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "SDP unassociated"):
+            probe.validate_mid_binding_source(
+                GOOD_MID_PEER,
+                GOOD_MID_SDP.replace("FindUnassociatedByMLineIndex", "FindByMLineIndex"),
+                GOOD_MID_LIST,
+            )
+
+    def test_mid_binding_missing_list_guard_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "list unassociated"):
+            probe.validate_mid_binding_source(
+                GOOD_MID_PEER, GOOD_MID_SDP,
+                GOOD_MID_LIST.replace("!internal->mid() && ", ""),
+            )
+
+    def test_mid_binding_pinned_gitiles_paths_allowlisted(self):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0, stdout=b"ZGF0YQ==\n@@KENATO_STATUS:200",
+            stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            for path in (probe.UPSTREAM_PEER_CONNECTION_PATH, probe.UPSTREAM_TRANSCEIVER_LIST_PATH):
+                self.assertEqual(
+                    probe.fetch_exact(
+                        probe.GITILES_ROOT + path + "?format=TEXT",
+                        maximum=128, host="webrtc.googlesource.com",
+                    ),
+                    b"ZGF0YQ==",
+                )
 
     def test_http_redirect_is_rejected(self):
         outcome = probe.subprocess.CompletedProcess(
