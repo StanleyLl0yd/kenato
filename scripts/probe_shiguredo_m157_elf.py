@@ -51,9 +51,10 @@ def require_16k_elf_loads(payload: bytes) -> list[int]:
     return alignments
 
 
-def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
+def inventory(path: Path, *, scanner=native.scan_elf, tag: str = m157.TAG) -> dict:
     # Check exact downloaded AAR digest, ZIP+ELF structural rules and CRC first.
-    baseline = m157.inspect_pinned_aar(path)
+    _url, expected_size, expected_sha, _producer, source = m157.candidate(tag)
+    baseline = m157.inspect_pinned_aar(path, tag=tag)
     if baseline["status"] != "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL":
         raise M157NativeError("Vendor AAR structure not approved for research")
     with zipfile.ZipFile(path) as archive:
@@ -72,8 +73,10 @@ def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
     # Explicitly do not turn ELF flags into an arbitrary automatic approval.
     return {
         "status": "PINNED_ARM64_ELF_STATIC_INVENTORY_ONLY",
-        "sha256_pinned_aar": m157.EXPECTED_SHA256,
-        "aar_bytes": m157.EXPECTED_SIZE,
+        "sha256_pinned_aar": expected_sha,
+        "aar_bytes": expected_size,
+        "publisher_tag": tag,
+        "declared_webrtc_source_UNVERIFIED_IN_BINARY": source,
         "native_arm64": record,
         "pt_load_alignments_bytes": load_alignments,
         "all_load_segments_at_least_16k": True,
@@ -84,27 +87,31 @@ def inventory(path: Path, *, scanner=native.scan_elf) -> dict:
     }
 
 
-def collect(*, downloader=evidence.download_snapshot, scanner=native.scan_elf) -> dict:
+def collect(*, downloader=evidence.download_snapshot, scanner=native.scan_elf,
+            tag: str = m157.TAG) -> dict:
+    url, _expected_size, _expected_sha, _producer, _source = m157.candidate(tag)
     with tempfile.TemporaryDirectory(prefix="kenato-m157-arm64-elf-") as directory:
         file = Path(directory) / "m157.aar"
-        digest, size = downloader(m157.RELEASE_URL, file, max_bytes=m157.MAX_BYTES)
-        m157.verify_observation(digest, size)
+        digest, size = downloader(url, file, max_bytes=m157.MAX_BYTES)
+        m157.verify_observation(digest, size, tag=tag)
         if not file.is_file() or file.stat().st_size != size:
             raise M157NativeError("Pinned AAR missing or size changed")
-        return inventory(file, scanner=scanner)
+        return inventory(file, scanner=scanner, tag=tag)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tag", choices=(m157.TAG, m157.PATCH_TAG), default=m157.TAG)
     args = parser.parse_args()
     try:
-        result = collect()
+        result = collect(tag=args.tag)
         code = 0
     except (OSError, ValueError, zipfile.BadZipFile, native.NativeProbeError,
             evidence.EvidenceError, evidence.audit.AarAuditError) as error:
         result = {
             "status": "PINNED_ARM64_ELF_INVENTORY_FAILED",
+            "publisher_tag": args.tag,
             "type": type(error).__name__,
             "detail": str(error)[:160],
             "vendor_approved_for_kenato": False,

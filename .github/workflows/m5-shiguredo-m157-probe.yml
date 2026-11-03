@@ -162,13 +162,19 @@ jobs:
         run: python3 scripts/verify_ci_supply_chain.py
       - name: Run offline static ELF probe regressions
         run: python3 scripts/test_probe_shiguredo_m157_elf.py
-      - name: Inspect only SHA-pinned real m157 ARM64 library
+      - name: Inspect only SHA-pinned original m157 ARM64 library
         run: python3 scripts/probe_shiguredo_m157_elf.py --output /tmp/m157-arm64-elf-hardening.json
+      - name: Inspect SHA-pinned newer m157 patch ARM64 library separately
+        run: >-
+          python3 scripts/probe_shiguredo_m157_elf.py --tag m157.8103.4.0
+          --output /tmp/m157-patch-arm64-elf-hardening.json
       - name: Upload JSON only (no AAR or ELF)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m157-arm64-hardening
-          path: /tmp/m157-arm64-elf-hardening.json
+          path: |
+            /tmp/m157-arm64-elf-hardening.json
+            /tmp/m157-patch-arm64-elf-hardening.json
           if-no-files-found: ignore
           retention-days: 7
