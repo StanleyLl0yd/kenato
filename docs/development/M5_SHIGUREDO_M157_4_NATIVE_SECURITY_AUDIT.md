@@ -49,6 +49,51 @@ This is an **attribution inventory, not an SPDX legal signoff**. Still map
 all actually linked/transitive third-party dependencies to the relevant
 redistribution notices, restrictions and eventual Kenato app packaging.
 
+## Security-sensitive vendor patch review and scope restrictions
+
+The 21 applied publisher patches were inspected at exact tag SHA. Notable
+security-bearing behavior that is **not activated by Kenato M5**:
+
+- `ssl_verify_callback_with_native_handle.patch` exposes a **borrowed raw
+  `SSL*` pointer** through `BoringSSLCertificate`. Its lifetime is tied to
+  the transport handshake; a certificate object retained after its `SSL`
+  owner is destroyed could make that pointer stale. This is a *review
+  hypothesis*, **not** a proven UAF or evidence of reachability in Kenato.
+  Do not expose or dereference this handle from application callbacks.
+- `android_ssl_certificate_verifier_chain.patch` adds
+  `SSLCertificateVerifier.verifyChain`, whose default implementation delegates
+  to existing **leaf-only** `verify(chain[0])`. It must **not** be mistaken for
+  strict chain-of-trust verification when a custom application verifier is
+  installed; such integrations need explicit trust-anchor/path validation.
+- `android_turn_tls_client_certificate.patch` adds optional Java
+  `String` fields carrying TURN-TLS client private key/certificate PEM. Those
+  strings and JNI copies are not an acceptable Kenato secret-storage design.
+  **No TURN integration/credentials** are authorized in M5.
+- `unsafe_buffers_optout_list.patch` opts certain HTTP/proxy and H.265
+  parser files out of stricter unsafe-buffer diagnostics; this is a
+  **static-analysis coverage limitation**, not proof of a memory bug.
+- `android_simulcast.patch` **does add** standard Android
+  `SimulcastVideoEncoder` and Java/JNI factory paths to the publisher build.
+  Presence of these paths is not proof of interoperable multi-codec
+  simulcast, actual video encoding, or device performance.
+
+These producer-specific changes warrant focused runtime/ownership checks if
+the corresponding features are later enabled. No exploitability conclusion
+is made solely from the patch diff.
+
+## New Chrome-only MediaStream issue: CVE-2026-76024
+
+The [Chromium fix `29268f92bbf3b2a2c5566bab2eb4d16b0e5bee49`](https://github.com/chromium/chromium/commit/29268f92bbf3b2a2c5566bab2eb4d16b0e5bee49)
+explicitly references Chromium issue **576215540** and changes six files
+**exclusively under `third_party/blink/renderer/`** for
+`MediaStreamAudioTrack::StopAndNotify` and
+`MediaStreamVideoTrack::StopAndNotify` during Oilpan/JS garbage collection.
+This specific Chrome MediaStream vulnerability (published 2026-10-29;
+CVE-2026-76024) is in **Blink renderer**, not Shiguredo's standalone Android
+WebRTC Java/JNI AAR component. The scoped *component non-applicability*
+finding does **not** imply all other native WebRTC vulnerabilities are absent.
+No patch or runtime changes to Kenato.
+
 ## Security gates
 
 The dedicated offline tests and pinned Gitiles source workflow validate the *actual* WebRTC producer-declared commit (above), rather than merely the version number. Expected source fingerprints:

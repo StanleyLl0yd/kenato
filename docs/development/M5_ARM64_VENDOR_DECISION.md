@@ -52,10 +52,12 @@ audio-only runtime boundary as a permanent audio-only product strategy.
   signaling, one-time call effect gating, consent and no-plaintext fallback.
   Video frames/media must remain on DTLS-SRTP; camera permission and Android
   foreground-service policy require their own review when video is scoped.
-- Shiguredo upstream documents a **separate** multi-codec-simulcast branch:
-  do not infer that its standard m157 AAR includes that capability. If later
-  product scope requires it, separately re-evaluate vendors; it is not
-  evidence that basic 1:1 video is unavailable.
+- The actual Shiguredo m157.8103.4.0 Android producer includes
+  `android_simulcast.patch` and `SimulcastVideoEncoder` Java/JNI sources.
+  This does not establish **multi-codec** simulcast support or working codec
+  performance. The separate multi-codec-simulcast upstream branch must not be
+  conflated with the present standard Java encoder API; validate real device
+  behavior when video enters the approved scope.
 
 **Current result:** Shiguredo m157 remains the provisional prebuilt **research**
 selection, **not an approved lifetime vendor**. Existing AAR structural/ELF,
