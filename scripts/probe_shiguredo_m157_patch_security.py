@@ -254,7 +254,7 @@ def inspect_license_generator_snapshot(payload: bytes) -> dict:
 def has_exact_notice_generator_invocation(producer_run: str) -> bool:
     # Publisher builds this path using three os.path.join arguments.
     return bool(re.search(
-        r"""['"]tools_webrtc['"]\\s*,\\s*['"]libs['"]\\s*,\\s*['"]generate_licenses\\.py['"]""",
+        r"""['"]tools_webrtc['"]\s*,\s*['"]libs['"]\s*,\s*['"]generate_licenses\.py['"]""",
         producer_run,
     ))
 
