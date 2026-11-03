@@ -432,11 +432,14 @@ class M45AcceptanceRuntimeTest {
             }
             assertTrue(entered.await(10, TimeUnit.SECONDS))
             val dispatched = CountDownLatch(1)
+            val startThread = AtomicReference<Thread>()
             val queued = pool.submit {
+                startThread.set(Thread.currentThread())
                 dispatched.countDown()
                 other.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            awaitStartBlockedOnRuntime(startThread.get())
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
             assertEquals(beforeEpoch + 2L, gate.mutationEpoch)
@@ -505,11 +508,14 @@ class M45AcceptanceRuntimeTest {
             val mutation = pool.submit { owner.createInvite() }
             assertTrue(entered.await(10, TimeUnit.SECONDS))
             val dispatched = CountDownLatch(1)
+            val startThread = AtomicReference<Thread>()
             val pendingStart = pool.submit {
+                startThread.set(Thread.currentThread())
                 dispatched.countDown()
                 other.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            awaitStartBlockedOnRuntime(startThread.get())
             assertFalse(started.await(250, TimeUnit.MILLISECONDS))
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
