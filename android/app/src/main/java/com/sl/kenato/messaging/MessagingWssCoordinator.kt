@@ -537,9 +537,10 @@ internal class MessagingWssCoordinator(
         }
         plan.inboundAcks.forEach { recovered ->
             val key = MessageKey(recovered.peerIdentityId, recovered.messageId)
-            if (recoveredAcksSentThisConnection.add(key)) {
-                sendFrame(
-                    socket,
+            if (!recoveredAcksSentThisConnection.contains(key)) {
+                // Pre-serialize first; a long recovery or serialization must not
+                // enqueue an expired M5 voice ACK after its verified TTL.
+                val encoded = MessagingWire.encodeClientFrame(
                     MessagingClientFrame(
                         ack = MessagingDeliveryAck(
                             senderIdentityId = recovered.peerIdentityId.copyOf(),
@@ -547,6 +548,21 @@ internal class MessagingWssCoordinator(
                         ),
                     ),
                 )
+                val expiry = recovered.expiresAtEpochSeconds
+                val verifiedAt = recovered.validatedAtEpochSeconds
+                if (expiry != null || verifiedAt != null) {
+                    if (expiry == null || verifiedAt == null || expiry <= verifiedAt) {
+                        throw MessagingWssException("Recovered M5 ACK has an invalid expiry proof")
+                    }
+                    val dispatchTime = nowEpochSeconds()
+                    if (dispatchTime < verifiedAt) {
+                        throw MessagingWssException("M5 recovered ACK clock regressed before socket dispatch")
+                    }
+                    if (dispatchTime >= expiry) return@forEach
+                }
+                if (recoveredAcksSentThisConnection.add(key) && !socket.sendBinary(encoded)) {
+                    throw MessagingWssRetryException("Unable to enqueue M4 WebSocket frame")
+                }
             }
         }
         if (activeStagedSends == 0) {

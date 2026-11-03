@@ -20,6 +20,9 @@ internal data class MessagingRecoveredSend(
 internal data class MessagingRecoveredAck(
     val peerIdentityId: ByteArray,
     val messageId: ByteArray,
+    /** Only M5 verified voice ACKs carry a strict bounded dispatch interval. */
+    val expiresAtEpochSeconds: Long? = null,
+    val validatedAtEpochSeconds: Long? = null,
 )
 
 internal data class MessagingRecoveryPlan(
@@ -166,7 +169,12 @@ internal class MessagingRecoveryCoordinator(
                     }
                 }
                 recoveredAcks += verified.map {
-                    MessagingRecoveredAck(it.peerIdentityId.copyOf(), it.messageId.copyOf())
+                    MessagingRecoveredAck(
+                        it.peerIdentityId.copyOf(),
+                        it.messageId.copyOf(),
+                        expiresAtEpochSeconds = it.expiresAtEpochSeconds,
+                        validatedAtEpochSeconds = now,
+                    )
                 }
             }
         }
