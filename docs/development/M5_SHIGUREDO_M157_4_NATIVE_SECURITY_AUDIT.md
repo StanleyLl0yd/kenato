@@ -47,8 +47,11 @@ root WebRTC or publisher build-repository LICENSE.** The resulting report
 explicitly sets source root license evidence apart from actual native linked
 components, the 34-section generated NOTICE and independent legal signoff.
 
-The new fetch/test job requires its own exact-head CI result; until it
-passes, no live root-license fingerprint result is claimed. Even when green,
+The first new exact-head attempt and a retry failed **before the license
+fetch** because Gitiles returned HTTP 503 while serving different existing
+CVE source paths; both had passed offline tests. A bounded, exact-URL-only
+503/502/504/429 retry with negative no-fallback tests is now being evaluated.
+No live root-license result is claimed until this updated exact-head job passes. Even when green,
 this is at most two independently retrieved root LICENSE files, not a
 complete SPDX/third-party redistribution review. No production asset changes.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 import unittest
 import hashlib
+from unittest import mock
 
 import probe_shiguredo_m157_patch_security as target
 
@@ -24,6 +25,49 @@ class PatchSecurityTests(unittest.TestCase):
                     target.PRODUCER_ROOT + "patches/unreviewed.patch"):
             with self.assertRaises(target.SourceEvidenceError):
                 target.allowed_url(url)
+
+    def test_gitiles_transient_retry_preserves_exact_url(self):
+        url = target.SOURCE_ROOT + target.SOURCE_PATHS[0] + "?format=TEXT"
+        calls = []
+        sleeps = []
+
+        def runner(argv, **kwargs):
+            calls.append(tuple(argv))
+            status = b"503" if len(calls) < 3 else b"200"
+            return mock.Mock(returncode=0, stdout=(
+                b"valid-source-content" if status == b"200" else b"temporary"
+            ) + b"\\n@@KENATO_STATUS:" + status)
+
+        self.assertEqual(target.fetch_exact(url, runner=runner,
+                                            sleeper=sleeps.append),
+                         b"valid-source-content")
+        self.assertEqual(sleeps, [1, 2])
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(call == calls[0] for call in calls))
+        self.assertTrue(all(call[-1] == url for call in calls))
+        self.assertNotIn("--location", calls[0])
+
+        def always_503(argv, **kwargs):
+            return mock.Mock(returncode=0,
+                             stdout=b"temporary\\n@@KENATO_STATUS:503")
+
+        with self.assertRaises(target.SourceEvidenceError):
+            target.fetch_exact(url, runner=always_503,
+                               sleeper=sleeps.append)
+        self.assertEqual(sleeps[-3:], [1, 2, 4])
+
+        attempted = []
+        def never_retry_404(argv, **kwargs):
+            attempted.append(1)
+            return mock.Mock(returncode=0,
+                             stdout=b"not found\\n@@KENATO_STATUS:404")
+        with self.assertRaises(target.SourceEvidenceError):
+            target.fetch_exact(url, runner=never_retry_404,
+                               sleeper=lambda _: self.fail("404 must not retry"))
+        self.assertEqual(len(attempted), 1)
+        with self.assertRaises(target.SourceEvidenceError):
+            target.fetch_exact(target.SOURCE_ROOT + "../unreviewed?format=TEXT",
+                               runner=lambda *a, **kw: self.fail("Unsafe URL contacted"))
 
     def test_pinned_root_license_patterns_never_grant_spdx_clearance(self):
         upstream = (b"Copyright (c) 2011. Redistribution and use in source and "

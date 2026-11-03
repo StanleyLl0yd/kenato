@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -74,30 +75,38 @@ def allowed_url(url: str) -> tuple[str, int]:
         return "raw.githubusercontent.com", 512 * 1024
     raise SourceEvidenceError("Not an exact SHA-pinned source URL")
 
-def fetch_exact(url: str, *, runner=subprocess.run) -> bytes:
+def fetch_exact(url: str, *, runner=subprocess.run, sleeper=time.sleep) -> bytes:
     host, maximum = allowed_url(url)
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != host or (
         parsed.username or parsed.password or parsed.fragment or parsed.port is not None
     ):
         raise SourceEvidenceError("Unsafe or unsupported source host")
-    try:
-        reply = runner([
-            "curl", "--silent", "--show-error", "--proto", "=https",
-            "--max-time", "35", "--connect-timeout", "15",
-            "--max-filesize", str(maximum), "--write-out",
-            "\n@@KENATO_STATUS:%{http_code}", "--url", url,
-        ], capture_output=True, timeout=42, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise SourceEvidenceError("Pinned producer/source fetch failed") from error
-    payload, split, status = reply.stdout.rpartition(b"\n@@KENATO_STATUS:")
-    if reply.returncode != 0 or not split or status != b"200" or (
-        not payload or len(payload) > maximum
-    ):
-        raise SourceEvidenceError("Pinned snapshot rejected at " +
-                                  parsed.path.rsplit("/", 1)[-1][:96] +
-                                  " status=" + status.decode("ascii", "replace")[:8])
-    return payload
+    status = b""
+    # Gitiles can temporarily return 503 during an otherwise valid exact-SHA
+    # audit. Never redirect, change commit/URL/host or substitute unpinned data.
+    for attempt in range(4):
+        try:
+            reply = runner([
+                "curl", "--silent", "--show-error", "--proto", "=https",
+                "--max-time", "35", "--connect-timeout", "15",
+                "--max-filesize", str(maximum), "--write-out",
+                "\\n@@KENATO_STATUS:%{http_code}", "--url", url,
+            ], capture_output=True, timeout=42, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SourceEvidenceError("Pinned producer/source fetch failed") from error
+        payload, split, status = reply.stdout.rpartition(b"\\n@@KENATO_STATUS:")
+        if reply.returncode == 0 and split and status == b"200" and (
+            payload and len(payload) <= maximum
+        ):
+            return payload
+        temporary = status in {b"429", b"502", b"503", b"504"} and split
+        if not temporary or attempt == 3:
+            break
+        sleeper(min(2 ** attempt, 4))
+    raise SourceEvidenceError("Pinned snapshot rejected at " +
+                              parsed.path.rsplit("/", 1)[-1][:96] +
+                              " status=" + status.decode("ascii", "replace")[:8])
 
 def validate_fec_fixes(fec: str, header: str, internal: str) -> None:
     """CVE-2026-118328 source-level two-commit FEC hardening fingerprints."""
