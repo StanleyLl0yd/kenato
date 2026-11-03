@@ -25,6 +25,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class M45AcceptanceRuntimeTest {
+    private fun awaitStartBlockedOnRuntime(thread: Thread) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (System.nanoTime() < deadline) {
+            if (
+                thread.state == Thread.State.BLOCKED &&
+                thread.stackTrace.any {
+                    it.className == M45AcceptanceRuntime::class.java.name &&
+                        it.methodName == "startMessaging"
+                }
+            ) {
+                return
+            }
+            Thread.yield()
+        }
+        throw AssertionError("Queued WSS start never reached the runtime monitor")
+    }
+
     @Test
     fun serviceOriginRequiresExactHttpsOrigin() {
         assertEquals("https://example.com/", M45ServiceOrigin.parse(" https://EXAMPLE.com ").toString())
@@ -156,11 +173,14 @@ class M45AcceptanceRuntimeTest {
             val mutation = workers.submit { runtime.createInvite() }
             assertTrue(entered.await(10, TimeUnit.SECONDS))
             val dispatched = CountDownLatch(1)
+            val startThread = AtomicReference<Thread>()
             val explicitStart = workers.submit {
+                startThread.set(Thread.currentThread())
                 dispatched.countDown()
                 runtime.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            awaitStartBlockedOnRuntime(startThread.get())
             assertFalse(started.await(250, TimeUnit.MILLISECONDS))
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
@@ -200,11 +220,14 @@ class M45AcceptanceRuntimeTest {
             val mutation = workers.submit { runtime.createInvite() }
             assertTrue(entered.await(10, TimeUnit.SECONDS))
             val dispatched = CountDownLatch(1)
+            val startThread = AtomicReference<Thread>()
             val queuedStart = workers.submit {
+                startThread.set(Thread.currentThread())
                 dispatched.countDown()
                 runtime.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            awaitStartBlockedOnRuntime(startThread.get())
             release.countDown()
             assertThrows(java.util.concurrent.ExecutionException::class.java) {
                 mutation.get(10, TimeUnit.SECONDS)
