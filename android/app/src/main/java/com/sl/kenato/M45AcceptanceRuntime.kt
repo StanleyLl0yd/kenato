@@ -34,6 +34,7 @@ import com.sl.kenato.messaging.WssMessagingOutboundAdmission
 import com.sl.kenato.session.EstablishedSession
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionCoordinator
+import com.sl.kenato.storage.M45CrossProcessLease
 import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 import java.net.URI
 import java.util.Base64
@@ -118,13 +119,18 @@ internal interface M45MessagingBoundary : AutoCloseable {
 }
 
 /** Process-only WSS ownership; not a durable M2/M3/effect transaction. */
-internal class M45ProcessTransportGate {
+internal class M45ProcessTransportGate(
+    private val crossProcessLease: M45CrossProcessLease? = null,
+) {
     @Volatile var mutationEpoch: Long = 0L
         private set
     private var activeOwner: Any? = null
     private var poisoned = false
 
     fun requireAvailable(requester: Any) {
+        if (crossProcessLease?.permitsOperations() == false) {
+            throw IllegalStateException("M4.5 cross-process owner lease is unavailable")
+        }
         if (poisoned) throw IllegalStateException("Process WSS safety state is uncertain")
         if (activeOwner != null && activeOwner !== requester) {
             throw IllegalStateException("Another acceptance runtime owns the process WSS transport")
@@ -159,14 +165,19 @@ internal class M45ProcessTransportGate {
 
     /** Checked under the same gate lock immediately before any async WSS callback. */
     @Synchronized
-    fun permitsTransportCallbacks(): Boolean = !poisoned
+    fun permitsTransportCallbacks(): Boolean =
+        !poisoned && crossProcessLease?.permitsOperations() != false
 }
 
 private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
 
 private fun sharedM45ProcessGate(context: Context): M45ProcessTransportGate =
     processTransportGates.getOrCreate(context.applicationContext.noBackupFilesDir.canonicalPath) {
-        M45ProcessTransportGate()
+        // Hold the advisory inode lock for the lifetime of this process, including Activity
+        // recreation. Closing one runtime must not admit a competing Android process.
+        M45ProcessTransportGate(
+            M45CrossProcessLease.acquire(context.applicationContext.noBackupFilesDir.canonicalFile),
+        )
     }
 
 /**
