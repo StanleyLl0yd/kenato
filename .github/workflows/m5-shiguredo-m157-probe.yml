@@ -109,6 +109,12 @@ jobs:
           "build-tools;37.0.0"
       - name: Offline disposable smoke tests
         run: python3 scripts/test_probe_shiguredo_m157_d8.py
+      - name: Download and verify exact official bundletool 1.18.3 before running Java
+        run: |
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --max-time 100 --max-filesize 40000000 \
+            --output /tmp/kenato-bundletool-1.18.3.jar \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  /tmp/kenato-bundletool-1.18.3.jar" | sha256sum -c -
       - name: Build disposable JDK25 ARM64 test app using original prebuilt AAR
         run: >
           python3 scripts/probe_shiguredo_m157_d8.py
@@ -117,7 +123,7 @@ jobs:
       - name: Build separate disposable JDK25 ARM64 test app using m157 patch prebuilt AAR
         run: >
           python3 scripts/probe_shiguredo_m157_d8.py --tag m157.8103.4.0
-          --gradlew ./gradlew
+          --gradlew ./gradlew --bundletool /tmp/kenato-bundletool-1.18.3.jar
           --output /tmp/kenato-m157-patch-jdk25-d8.json
       - name: Upload research JSON only (no AAR/APK)
         if: always()

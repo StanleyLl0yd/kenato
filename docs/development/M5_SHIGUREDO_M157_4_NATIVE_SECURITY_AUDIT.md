@@ -106,9 +106,15 @@ research extension also builds the same disposable app as an **AAB** and
 checks `base/assets/legal/NOTICE` against that precise SHA-256 and length,
 with only ARM64 JNI and matching DEX counts. This AAB extension is **pending
 its own exact-head CI** and must not be called PASS before evidence exists.
-No APK/AAB or publisher binary is uploaded; only bounded JSON reports.
-Neither this packaging check nor a successful AAB proves bundletool-produced
-split APK delivery, user-visible legal-notice UI or complete licensing.
+An additional SHA-256-and-byte-pinned official bundletool 1.18.3 research
+step produces **device-targeted split APK sets** for representative ARM64
+Android API 29 and 34 profiles, verifies the exact notice survives into
+`assets/legal/NOTICE`, checks ARM64-only packaged JNI and DEX presence, and
+deletes every generated binary at the end of the job. This extension is
+**pending exact-head CI**; it is not an on-device test and must not be
+described as PASS until the job completes. No APK, AAB, .apks or publisher
+binary is uploaded: sanitized JSON only. Even a positive split check cannot
+establish end-user UI accessibility, full license obligations or runtime safety.
 The eventual production APK/AAB will require separate acceptance checks after
 vendor approval.
 

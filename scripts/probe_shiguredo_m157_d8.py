@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import subprocess
 import tempfile
@@ -48,6 +49,11 @@ NOTICE_BYTES = 214353
 NOTICE_ASSET = "app/src/main/assets/legal/NOTICE"
 AAB_NOTICE_ENTRY = "base/assets/legal/NOTICE"
 AAB_JNI_ENTRY = "base/lib/arm64-v8a/libjingle_peerconnection_so.so"
+BUNDLETOOL_SHA256 = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
+BUNDLETOOL_BYTES = 32520401
+MAX_APK_SET_BYTES = 160 * 1024 * 1024
+MAX_SPLIT_APK_BYTES = 60 * 1024 * 1024
+DEVICE_SDKS = (29, 34)
 
 
 def include_reviewed_notice_asset(root: Path, aar: Path) -> None:
@@ -174,8 +180,119 @@ def inspect_arm64_bundle(path: Path) -> dict:
     }
 
 
+
+def verify_pinned_bundletool(jar: Path) -> None:
+    if not jar.is_file() or jar.stat().st_size != BUNDLETOOL_BYTES:
+        raise D8ResearchError("Missing or unpinned bundletool toolchain")
+    with jar.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != BUNDLETOOL_SHA256:
+        raise D8ResearchError("bundletool SHA-256 mismatch")
+
+
+def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
+    """Validate actual device-targeted bundletool split APK payloads, without installation."""
+    if sdk not in DEVICE_SDKS:
+        raise D8ResearchError("Unreviewed Android API profile")
+    if not path.is_file() or path.stat().st_size > MAX_APK_SET_BYTES:
+        raise D8ResearchError("Missing or oversized bundletool APK set")
+    notices = []
+    natives = []
+    dex_count = 0
+    apk_names = []
+    try:
+        with zipfile.ZipFile(path) as outer:
+            infos = outer.infolist()
+            names = [info.filename for info in infos]
+            if len(names) > evidence.audit.MAX_ENTRIES or len(names) != len(set(names)):
+                raise D8ResearchError("Unsafe bundletool APK set inventory")
+            for info in infos:
+                if not info.filename.endswith(".apk"):
+                    continue
+                if not info.filename.startswith(("splits/", "standalones/")):
+                    raise D8ResearchError("Unexpected bundletool APK member path")
+                if info.file_size > MAX_SPLIT_APK_BYTES:
+                    raise D8ResearchError("Oversized bundletool APK member")
+                apk_names.append(info.filename)
+                with outer.open(info) as stream:
+                    payload = stream.read(MAX_SPLIT_APK_BYTES + 1)
+                if len(payload) != info.file_size:
+                    raise D8ResearchError("Truncated bundletool split APK")
+                with zipfile.ZipFile(io.BytesIO(payload)) as apk:
+                    entries = apk.infolist()
+                    members = [item.filename for item in entries]
+                    if len(members) > evidence.audit.MAX_ENTRIES or len(members) != len(set(members)):
+                        raise D8ResearchError("Unsafe delivered APK entry inventory")
+                    for member in entries:
+                        name = member.filename
+                        if name.startswith("lib/") and name.endswith(".so"):
+                            natives.append(name)
+                        if name.startswith("classes") and name.endswith(".dex"):
+                            dex_count += 1
+                        if name.lower() == "notice" or name.lower().endswith("/notice"):
+                            if member.file_size > 2 * 1024 * 1024:
+                                raise D8ResearchError("Oversized split APK notice")
+                            with apk.open(member) as notice_stream:
+                                data = notice_stream.read(2 * 1024 * 1024 + 1)
+                            notices.append((name, len(data), hashlib.sha256(data).hexdigest()))
+    except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+        raise D8ResearchError("Invalid bundletool APK set archive") from error
+    expected = "lib/arm64-v8a/libjingle_peerconnection_so.so"
+    if not apk_names or expected not in natives or (
+        any(not name.startswith("lib/arm64-v8a/") for name in natives)
+    ):
+        raise D8ResearchError("Device-targeted APK set JNI/ABI mismatch")
+    if dex_count < 1:
+        raise D8ResearchError("Device-targeted APK set has no DEX")
+    if notices != [("assets/legal/NOTICE", NOTICE_BYTES, NOTICE_SHA256)]:
+        raise D8ResearchError("Exact publisher NOTICE not delivered in split APKs")
+    return {
+        "status": "DEVICE_TARGETED_SPLIT_CONTENT_PASS_NOT_RUNTIME_APPROVAL",
+        "device_sdk": sdk,
+        "device_abi": RESEARCH_ABI,
+        "split_apk_count": len(apk_names),
+        "verified_notice_apk_path": "assets/legal/NOTICE",
+        "verified_notice_sha256": NOTICE_SHA256,
+        "native_lib_paths": sorted(natives),
+        "dex_count": dex_count,
+        "jni_executed": False,
+        "device_installed": False,
+        "vendor_approved": False,
+    }
+
+
+def inspect_device_delivery(bundle: Path, *, tool: Path, root: Path,
+                            runner=subprocess.run) -> list[dict]:
+    verify_pinned_bundletool(tool)
+    reports = []
+    for sdk in DEVICE_SDKS:
+        spec = root / f"android-{sdk}-arm64.json"
+        spec.write_text(json.dumps({
+            "supportedAbis": [RESEARCH_ABI],
+            "supportedLocales": ["en"],
+            "screenDensity": 420,
+            "sdkVersion": sdk,
+        }), encoding="utf-8")
+        output = root / f"android-{sdk}-arm64.apks"
+        try:
+            completed = runner([
+                "java", "-jar", str(tool.resolve()), "build-apks",
+                "--bundle=" + str(bundle.resolve()),
+                "--output=" + str(output.resolve()),
+                "--device-spec=" + str(spec.resolve()),
+                "--mode=default",
+            ], cwd=root, check=False, timeout=180)
+        except subprocess.TimeoutExpired as error:
+            raise D8ResearchError("Pinned bundletool timed out") from error
+        if completed.returncode != 0:
+            raise D8ResearchError("Pinned bundletool failed for SDK " + str(sdk))
+        reports.append(inspect_device_apk_set(output, sdk=sdk))
+    return reports
+
+
 def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
-            runner=subprocess.run, tag: str = m157.TAG) -> dict:
+            runner=subprocess.run, tag: str = m157.TAG,
+            bundletool: Path | None = None) -> dict:
     if not wrapper.is_file():
         raise D8ResearchError("Gradle wrapper missing")
     with tempfile.TemporaryDirectory(prefix="kenato-m157-jdk25-d8-") as tmp:
@@ -198,6 +315,9 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
         apk = root / "app/build/outputs/apk/debug/app-debug.apk"
         report = inspect_arm64_apk(apk)
         if tag == m157.PATCH_TAG:
+            if bundletool is None:
+                raise D8ResearchError("Pinned bundletool required for patched AAB delivery research")
+            verify_pinned_bundletool(bundletool)
             if report["exact_m157_4_notice_auto_packaged"]:
                 raise D8ResearchError("Expected negative automatic NOTICE packaging baseline changed")
             # Prove that an explicitly included exact generated NOTICE survives
@@ -229,7 +349,12 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             report["publisher_notice_explicit_asset_aab_path"] = bundle["verified_notice_aab_path"]
             report["publisher_notice_explicit_asset_aab_sha256"] = bundle["verified_notice_aab_sha256"]
             report["publisher_notice_explicit_asset_aab_bytes"] = bundle["aab_bytes"]
-            report["bundletool_or_device_test_executed"] = False
+            report["device_targeted_apk_sets"] = inspect_device_delivery(
+                root / "app/build/outputs/bundle/debug/app-debug.aab",
+                tool=bundletool, root=root, runner=runner
+            )
+            report["bundletool_executed"] = True
+            report["device_test_executed"] = False
             report["publisher_notice_explicit_asset_included"] = True
             report["publisher_notice_explicit_asset_path"] = "assets/legal/NOTICE"
             report["publisher_notice_explicit_asset_apk_bytes"] = packaged["apk_bytes"]
@@ -246,9 +371,11 @@ def main() -> int:
     parser.add_argument("--gradlew", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tag", choices=(m157.TAG, m157.PATCH_TAG), default=m157.TAG)
+    parser.add_argument("--bundletool", type=Path,
+                        help="Locally verified exact bundletool 1.18.3 JAR for patched AAB only")
     options = parser.parse_args()
     try:
-        result = collect(options.gradlew, tag=options.tag)
+        result = collect(options.gradlew, tag=options.tag, bundletool=options.bundletool)
     except (D8ResearchError, m157.CandidateProbeError, evidence.EvidenceError,
             evidence.audit.AarAuditError, OSError, zipfile.BadZipFile) as error:
         result = {

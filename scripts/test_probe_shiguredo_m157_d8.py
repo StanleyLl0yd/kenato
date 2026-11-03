@@ -158,5 +158,61 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
                 d8.inspect_arm64_bundle(bundle)
 
 
+    def test_bundletool_digest_validation_blocks_unreviewed_jar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            tool = Path(temp) / "bundletool.jar"
+            tool.write_bytes(b"synthetic bundletool payload")
+            with self.assertRaisesRegex(d8.D8ResearchError, "toolchain"):
+                d8.verify_pinned_bundletool(tool)
+            with mock.patch.object(d8, "BUNDLETOOL_BYTES", tool.stat().st_size):
+                with self.assertRaisesRegex(d8.D8ResearchError, "SHA-256"):
+                    d8.verify_pinned_bundletool(tool)
+
+    def test_device_split_apk_notice_and_abi_checks(self):
+        import hashlib
+        import io
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "device.apks"
+            notice = b"publisher synthetic NOTICE"
+            with mock.patch.object(d8, "NOTICE_BYTES", len(notice)), mock.patch.object(
+                    d8, "NOTICE_SHA256", hashlib.sha256(notice).hexdigest()):
+                def make_archive(*, valid=True, abi=d8.RESEARCH_ABI, second_notice=False):
+                    with zipfile.ZipFile(target, "w") as outer:
+                        for index, members in enumerate([
+                            [("classes.dex", b"dex"), ("assets/legal/NOTICE", notice)],
+                            [(f"lib/{abi}/libjingle_peerconnection_so.so", b"elf")],
+                        ]):
+                            if index == 1 and second_notice:
+                                members.append(("assets/legal/NOTICE", notice))
+                            encoded = io.BytesIO()
+                            with zipfile.ZipFile(encoded, "w") as apk:
+                                for name, content in members:
+                                    apk.writestr(name, content)
+                            outer.writestr(f"splits/base-{index}.apk", encoded.getvalue())
+                make_archive()
+                report = d8.inspect_device_apk_set(target, sdk=29)
+                self.assertEqual(report["split_apk_count"], 2)
+                self.assertFalse(report["device_installed"])
+                make_archive(abi="x86_64")
+                with self.assertRaisesRegex(d8.D8ResearchError, "JNI/ABI"):
+                    d8.inspect_device_apk_set(target, sdk=34)
+                make_archive(second_notice=True)
+                with self.assertRaisesRegex(d8.D8ResearchError, "NOTICE"):
+                    d8.inspect_device_apk_set(target, sdk=29)
+                with self.assertRaisesRegex(d8.D8ResearchError, "Unreviewed"):
+                    d8.inspect_device_apk_set(target, sdk=28)
+
+    def test_device_delivery_never_invokes_unverified_bundletool(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            candidate = root / "bundletool.jar"
+            candidate.write_bytes(b"wrong")
+            with mock.patch.object(d8, "subprocess") as process:
+                with self.assertRaises(d8.D8ResearchError):
+                    d8.inspect_device_delivery(root / "not-a-bundle.aab",
+                                              tool=candidate, root=root)
+                process.run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
