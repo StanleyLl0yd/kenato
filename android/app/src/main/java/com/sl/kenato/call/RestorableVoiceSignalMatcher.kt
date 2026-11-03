@@ -47,6 +47,36 @@ internal class RestorableVoiceSignalMatcher(
         } else null
     }
 
+    /**
+     * Isolated KDL1 research path: pair the *same* canonical semantic event
+     * and journal permit, then commit both the legacy claim and the separate
+     * rollback-resistant epoch ledger BEFORE returning a proposed event.
+     *
+     * A failed second commit loses this effect, never dispatches twice.
+     * This is not a production effect runner: permission revalidation and
+     * M2/M3/WSS ownership are still missing. No Android factory calls this.
+     */
+    @Synchronized
+    fun claimRestorableCandidateWithEpochLedger(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+        continuity: VoiceDispatchContinuityLedger,
+    ): VoiceSignalPlaintext? {
+        if (peerIdentityId.size != 32 || messageId.size != 16) {
+            throw RestorableVoiceSignalMismatchException("Invalid protected voice dispatch key")
+        }
+        val matched = verifiedCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.signal.senderIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.signal.messageId, messageId)
+        } ?: return null
+        if (!replay.claimLiveDispatchPermit(ownerIdentityId, matched.permit, nowEpochSeconds)) {
+            return null
+        }
+        return if (continuity.claim(ownerIdentityId, matched.permit)) matched.signal else null
+    }
+
     @Synchronized
     fun restorableCandidates(
         ownerIdentityId: ByteArray,

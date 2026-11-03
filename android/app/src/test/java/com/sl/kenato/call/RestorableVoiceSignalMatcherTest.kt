@@ -42,6 +42,61 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun protectedMatcherRefusesOldJournalRestorationEvenWhenSemanticEventIsAuthentic() {
+        val f = Fixture()
+        f.accept(handoff(110))
+        val originalUnclaimedJournal = requireNotNull(f.replayStore.read()).copyOf()
+        val originalPermit = f.journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        val ledger = f.ledger()
+
+        val claimed = f.matcher().claimRestorableCandidateWithEpochLedger(
+            OWNER, PEER, id(110), NOW, ledger,
+        )
+        assertArrayEquals(id(110), requireNotNull(claimed).messageId)
+        assertTrue(ledger.hasClaim(OWNER, originalPermit))
+
+        // Both journal and encrypted semantic event are still authentic.
+        // Replaying the old unclaimed journal MUST NOT return another effect.
+        f.replayStore.write(originalUnclaimedJournal)
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+        assertEquals(null, f.matcher().claimRestorableCandidateWithEpochLedger(
+            OWNER, PEER, id(110), NOW, f.ledger(),
+        ))
+        assertTrue(f.ledger().hasClaim(OWNER, originalPermit))
+    }
+
+    @Test
+    fun failureOfProtectedClaimCannotReturnAnAlreadyClaimedSemanticEffect() {
+        val f = Fixture()
+        f.accept(handoff(111))
+        f.ledgerRaw.failWrite = true
+        assertThrows(VoiceSignalReplayException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(111), NOW, f.ledger(),
+            )
+        }
+        // Fail closed even though the separate journal claim committed.
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, f.journal.pendingLiveAcknowledgements(OWNER, NOW).size)
+        f.ledgerRaw.failWrite = false
+        assertEquals(null, f.matcher().claimRestorableCandidateWithEpochLedger(
+            OWNER, PEER, id(111), NOW, f.ledger(),
+        ))
+    }
+
+    @Test
+    fun protectedClaimNeverRunsWithoutIndependentEncryptedSemanticCounterpart() {
+        val f = Fixture()
+        f.journal.importAuthenticatedInboundHandoff(OWNER, handoff(112), NOW)
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(112), NOW, f.ledger(),
+            )
+        }
+        assertEquals(null, f.ledgerRaw.bytes)
+    }
+
+    @Test
     fun callControlAdapterClaimsOfferOnceButLeavesIceForFutureMediaOwner() {
         val f = Fixture()
         f.accept(handoff(91, kind = VoiceSignalKind.ICE_CANDIDATE))
@@ -184,12 +239,57 @@ class RestorableVoiceSignalMatcherTest {
             semantic.persistAuthenticatedVoiceEvent(OWNER, event)
             journal.importAuthenticatedInboundHandoff(OWNER, event, NOW)
         }
+        val ledgerRaw = MemoryLedgerRaw()
+        val ledgerKeys = MemoryLedgerKeys()
+        fun ledger() = VoiceDispatchContinuityLedger(ledgerRaw, ledgerKeys)
         fun matcher() = RestorableVoiceSignalMatcher(
             VoiceSignalReplayJournal(replayStore),
             DurableVoiceSemanticEventRepository(
                 semanticStore, cipher, VoiceSemanticClock { NOW },
             ),
         )
+    }
+
+    private class MemoryLedgerRaw : VoiceDispatchLedgerRawStore {
+        var bytes: ByteArray? = null
+        var failWrite = false
+        override fun read(): ByteArray? = bytes?.copyOf()
+        override fun write(bytes: ByteArray): Boolean {
+            if (failWrite) return false
+            this.bytes = bytes.copyOf()
+            return true
+        }
+    }
+
+    private class MemoryLedgerKeys : VoiceDispatchLedgerEpochKeys {
+        private val keyMap = linkedMapOf<String, SecretKeySpec>()
+        private val random = SecureRandom()
+        private var next = 1
+        override fun epochIds(): Set<String> = keyMap.keys.toSet()
+        override fun createEpoch(): String {
+            val epoch = (next++).toString(16).padStart(32, '0')
+            keyMap[epoch] = SecretKeySpec(ByteArray(32).also(random::nextBytes), "AES")
+            return epoch
+        }
+        override fun encrypt(epoch: String, plaintext: ByteArray, aad: ByteArray): ByteArray {
+            val iv = ByteArray(12).also(random::nextBytes)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, requireNotNull(keyMap[epoch]), GCMParameterSpec(128, iv))
+            cipher.updateAAD(aad)
+            return iv + cipher.doFinal(plaintext)
+        }
+        override fun decrypt(epoch: String, ciphertext: ByteArray, aad: ByteArray): ByteArray {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE, requireNotNull(keyMap[epoch]),
+                GCMParameterSpec(128, ciphertext.copyOfRange(0, 12)),
+            )
+            cipher.updateAAD(aad)
+            return cipher.doFinal(ciphertext.copyOfRange(12, ciphertext.size))
+        }
+        override fun retireEpoch(epoch: String) {
+            check(keyMap.remove(epoch) != null)
+        }
     }
 
     private class MemoryReplayStore : VoiceSignalReplayStore {
