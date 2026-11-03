@@ -160,6 +160,26 @@ class MessagingWssCoordinatorTest {
     }
 
     @Test
+    fun incompleteOrContradictoryVoiceAckExpiryProofFailsClosed() {
+        val malformed = listOf(
+            MessagingRecoveredAck(PEER.copyOf(), messageId(34), expiresAtEpochSeconds = 120L),
+            MessagingRecoveredAck(PEER.copyOf(), messageId(34), validatedAtEpochSeconds = 100L),
+            MessagingRecoveredAck(
+                PEER.copyOf(), messageId(34),
+                expiresAtEpochSeconds = 100L, validatedAtEpochSeconds = 100L,
+            ),
+        )
+        malformed.forEach { ack ->
+            val fixture = Fixture()
+            fixture.recovery.plan = MessagingRecoveryPlan(emptyList(), listOf(ack))
+            val socket = fixture.authenticate()
+            assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+            assertTrue(socket.cancelled)
+            assertEquals(1, socket.sent.size)
+        }
+    }
+
+    @Test
     fun delayedRecoveryPreflightCannotQueueExpiredEnvelope() {
         val fixture = Fixture()
         val envelope = outboundEnvelope(1)
