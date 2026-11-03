@@ -301,3 +301,14 @@ only for off-production unit probes; actual Android wiring always
 supplies the shared poisoned-gate predicate. One JVM regression covers
 all four listener methods and the retry scheduler after poison.
 No native JNI, cross-process recovery, or M5 effect activation occurs.
+
+## Bound incoming WSS frame lifetime at process gate
+
+The production callback adapter now copies nonempty, bounded wire bytes before
+waiting on the shared transport owner; zero/oversized input is passed as an
+invalid empty frame to the coordinator's existing fail-closed validator without
+making a second oversized allocation. Both callback/scheduler adapters require
+an explicit permission predicate at construction, eliminating the old default
+that silently bypassed the poisoned-gate rejection. Android passes the process
+gate; synthetic tests explicitly allow callbacks. One JVM test checks retained
+buffer independence and oversized rejection. No physical or interprocess claim.

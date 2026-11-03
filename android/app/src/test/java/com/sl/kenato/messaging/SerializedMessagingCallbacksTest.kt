@@ -4,12 +4,37 @@ import com.sl.kenato.M45ProcessTransportGate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SerializedMessagingCallbacksTest {
+    @Test
+    fun binaryCallbackOwnsBoundedImmutableReceiveSnapshot() {
+        val sockets = FakeSocketFactory()
+        val observed = ArrayList<ByteArray>()
+        val listener = object : MessagingSocketListener {
+            override fun onOpen(socket: MessagingSocket) = Unit
+            override fun onBinaryMessage(socket: MessagingSocket, value: ByteArray) {
+                observed += value
+            }
+            override fun onClosed(socket: MessagingSocket) = Unit
+            override fun onFailure(socket: MessagingSocket, error: Throwable) = Unit
+        }
+        val socket = SerializedMessagingSocketFactory(sockets, Any()) { true }
+            .create("wss://example.test/v1/messaging/ws", listener)
+        val raw = byteArrayOf(1, 2, 3)
+        sockets.callback.onBinaryMessage(socket, raw)
+        raw[0] = 9
+        assertArrayEquals(byteArrayOf(1, 2, 3), observed.single())
+
+        sockets.callback.onBinaryMessage(socket, ByteArray(MESSAGING_MAX_WIRE_FRAME_BYTES + 1))
+        assertEquals(2, observed.size)
+        assertTrue(observed[1].isEmpty())
+    }
+
     @Test
     fun poisonedProcessGateDropsAllLateSocketAndSchedulerCallbacks() {
         val gate = M45ProcessTransportGate()
@@ -58,7 +83,7 @@ class SerializedMessagingCallbacksTest {
                 received.countDown()
             }
         }
-        val socket = SerializedMessagingSocketFactory(sockets, monitor)
+        val socket = SerializedMessagingSocketFactory(sockets, monitor) { true }
             .create("wss://example.test/v1/messaging/ws", listener)
         val pool = Executors.newFixedThreadPool(4)
         val dispatched = CountDownLatch(4)
@@ -91,7 +116,7 @@ class SerializedMessagingCallbacksTest {
     fun retryCallbackWaitsForOwnerMonitorAndPreservesCancellation() {
         val monitor = Any()
         val scheduler = FakeScheduler()
-        val serialized = SerializedMessagingRetryScheduler(scheduler, monitor)
+        val serialized = SerializedMessagingRetryScheduler(scheduler, monitor) { true }
         val delivered = CountDownLatch(1)
         val pool = Executors.newSingleThreadExecutor()
         val dispatched = CountDownLatch(1)
