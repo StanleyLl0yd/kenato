@@ -94,6 +94,22 @@ WebRTC Java/JNI AAR component. The scoped *component non-applicability*
 finding does **not** imply all other native WebRTC vulnerabilities are absent.
 No patch or runtime changes to Kenato.
 
+## Android license packaging gate
+
+A license text being present in `libwebrtc.aar/META-INF/NOTICE` does **not**
+prove that Gradle automatically places it in the distributed Kenato APK/AAB.
+The disposable m157 JDK25/AGP9.4 ARM64 package probe now inventories
+all bounded NOTICE candidates in the resulting APK and records whether the
+**exact generated NOTICE SHA** survives packaging automatically.
+
+If the generated NOTICE is **absent** (as Gradle may discard AAR top-level
+metadata), application release packaging must deliberately include the
+same reviewed notice bytes as a user-visible legal resource and enforce
+their SHA-256 and accessibility in release acceptance. The proprietary
+vendor binary is not yet approved, so no production notice asset or
+license redistribution is added now. This check does not settle
+legal compliance or prove completeness of the 34 component sections.
+
 ## Security gates
 
 The dedicated offline tests and pinned Gitiles source workflow validate the *actual* WebRTC producer-declared commit (above), rather than merely the version number. Expected source fingerprints:

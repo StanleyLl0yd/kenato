@@ -65,9 +65,29 @@ def inspect_arm64_apk(path: Path) -> dict:
             found = agp.dex_defines_class(data) or found
         if not found:
             raise D8ResearchError("PeerConnection is absent from compiled DEX")
+        notice_candidates = sorted(
+            name for name in names if
+            name.lower() == "notice" or name.lower().endswith("/notice")
+        )
+        notice_entries = []
+        for name in notice_candidates[:32]:
+            info = archive.getinfo(name)
+            if info.file_size > 2 * 1024 * 1024:
+                raise D8ResearchError("Oversized notice candidate in disposable APK")
+            data = archive.read(info)
+            notice_entries.append({
+                "path": name, "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            })
     return {
         "status": "JDK25_AGP_D8_ARM64_PASS_NOT_VENDOR_APPROVAL",
         "native_apk_paths": native,
+        "notice_files_in_disposable_apk": notice_entries,
+        "exact_m157_4_notice_auto_packaged": any(
+            entry["sha256"] == "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
+            for entry in notice_entries
+        ),
+        "automatic_notice_packaging_is_not_compliance_proof": True,
         "dex_count": len(dex_paths),
         "dex_defines_peer_connection": True,
         "apk_bytes": path.stat().st_size,
