@@ -71,8 +71,9 @@ location. It does not prove that file's exact bytes, its SPDX expression,
 compiler/GN linkage, exceptions, source-offer duties or completeness of
 binary SBOM. The probe never invokes GN, performs native compilation, executes
 untrusted generator Python or marks a component's legal obligation cleared.
-An exact-HEAD CI run must separately verify this new source inventory before
-its counts are reported as evidence.
+**Exact-source result verified:** [pinned-source job #41645510654](https://github.com/StanleyLl0yd/kenato/actions/runs/41645510654) at `c70f910efe15223083abecdaac0b898b8b0146fa` **PASS**. Its archived JSON proves the exact SHA-pinned WebRTC generator `tools_webrtc/libs/generate_licenses.py` is **11,892 bytes**, SHA-256 `cfc24442429f83e5e7e73380a731c8950952646783b5db533dd41010dcfc6f88`. The generator's bounded static maps have **49 direct** and **3 regular-expression** entries. All **34/34** exact generated-NOTICE headings map to at least one *candidate* source-license path, producing **35 unique original license file paths** (the Rust standard library entry lists two). **0/34 names remain without a generator path**. The later exact-head change now fails closed if any of these known mappings becomes absent and must pass its own CI independently.
+
+The *license file content* at those 35 paths is **not independently fetched and verified** here, and their GN-to-ELF binary linkage is not reproduced. 34/34 mapping is not 34/34 license approval, and cannot establish that every compiled or redistributed dependency is represented in NOTICE. Component SPDX obligations and independent legal signoff remain open.
 
 ## Generated binary NOTICE audit
 

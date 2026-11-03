@@ -251,6 +251,15 @@ def inspect_license_generator_snapshot(payload: bytes) -> dict:
         "transitive_license_spdx_clearance": False,
     }
 
+def require_complete_notice_license_path_map(report: dict) -> None:
+    # All known exact-pinned NOTICE headings must retain generator-source maps.
+    # This is still NOT native-linkage evidence or SPDX clearance.
+    if (report.get("notice_component_count") != len(notice.COMPONENTS) or
+            report.get("mapped_notice_component_count") != len(notice.COMPONENTS) or
+            report.get("unmapped_notice_component_count") != 0 or
+            report.get("notice_components_without_direct_source_license_map") != []):
+        raise SourceEvidenceError("Pinned NOTICE headings lost source license paths")
+
 def has_exact_notice_generator_invocation(producer_run: str) -> bool:
     # Publisher builds this path using three os.path.join arguments.
     return bool(re.search(
@@ -365,6 +374,7 @@ def collect(*, fetcher=fetch_exact) -> dict:
     if not has_exact_notice_generator_invocation(run):
         raise SourceEvidenceError("Publisher no longer invokes expected GN notice generator")
     license_generator_inventory = inspect_license_generator_snapshot(generator)
+    require_complete_notice_license_path_map(license_generator_inventory)
     root_licenses = {
         "upstream_webrtc": check_root_license(
             upstream_license, origin="webrtc_source"),

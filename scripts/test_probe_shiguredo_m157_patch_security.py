@@ -114,6 +114,13 @@ LIB_REGEX_TO_LICENSES_DICT = {'android_deps:.*': []}
         self.assertFalse(result["license_source_paths_prove_binary_linkage"])
         self.assertFalse(result["mapped_license_texts_independently_verified"])
         self.assertFalse(result["transitive_license_spdx_clearance"])
+        with self.assertRaises(target.SourceEvidenceError):
+            target.require_complete_notice_license_path_map(result)
+        complete = dict(result,
+                        mapped_notice_component_count=len(target.notice.COMPONENTS),
+                        unmapped_notice_component_count=0,
+                        notice_components_without_direct_source_license_map=[])
+        target.require_complete_notice_license_path_map(complete)
         for tamper in (
             fixture.replace(b"['third_party/opus/src/' + 'COPYING']",
                             b"[__import__('os').system('id')]"),
