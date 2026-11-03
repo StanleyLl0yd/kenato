@@ -101,10 +101,12 @@ class M45CrossProcessLeaseTest {
         val first = M45CrossProcessLease.shared(directory)
         try {
             assertSame(first, M45CrossProcessLease.shared(directory))
+            first.requireActive()
             val gate = M45ProcessTransportGate(first)
             gate.requireAvailable(Any())
             assertTrue(gate.permitsTransportCallbacks())
             first.close()
+            assertThrows(IllegalStateException::class.java) { first.requireActive() }
             assertFalse(gate.permitsTransportCallbacks())
             assertThrows(IllegalStateException::class.java) { gate.requireAvailable(Any()) }
             assertThrows(IllegalStateException::class.java) {

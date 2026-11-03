@@ -341,3 +341,19 @@ host JVM lease tests. Before enabling voice, #116 still requires durable,
 cross-store recovery and the independent #118/#170/#174/#175 anti-rollback
 and physical #87 gates. Production M4.5 compatibility must be checked on
 Android 10/13/14+; no JNI/media/microphone/OCI/release change was made.
+
+## Direct Android store entrypoints join the same process lease
+
+The default M1 identity/M2 contact SharedPreferences stores, M3 AtomicFile,
+M4 conversation-history store, and the M5 encrypted consent/semantic and
+replay-metadata stores now acquire `M45CrossProcessLease.shared()` before
+opening local state. Every direct read/write/clear verifies that this OS lease
+remains active. Separate app processes therefore cannot use these default
+Android-backed constructors simultaneously via an unchecked factory bypass.
+
+This advisory exclusion does **not** serialize independent stores within one
+process, create a cross-store transaction, or provide file rollback continuity.
+Injected in-memory stores and direct low-level cryptographic key constructors
+remain outside this factory path. Physical Android/Keystore/cross-process
+recovery and the #118/#170/#174/#175 security gates remain mandatory.
+No WebRTC/microphone/TURN/OCI/release activation is introduced.

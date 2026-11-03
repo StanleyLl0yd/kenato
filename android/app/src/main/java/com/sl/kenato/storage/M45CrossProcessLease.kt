@@ -20,6 +20,10 @@ internal class M45CrossProcessLease private constructor(
 
     fun permitsOperations(): Boolean = !closed && channel.isOpen && lock.isValid
 
+    fun requireActive() {
+        check(permitsOperations()) { "Cross-process storage lease is unavailable" }
+    }
+
     @Synchronized
     override fun close() {
         if (closed) return

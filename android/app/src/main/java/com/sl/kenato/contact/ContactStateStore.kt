@@ -17,11 +17,13 @@ internal interface ContactStateStore {
 }
 
 internal class SharedPreferencesContactStateStore(context: Context) : ContactStateStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val encoded = try {
             preferences.getString(STATE_KEY, null)
         } catch (error: ClassCastException) {
@@ -44,13 +46,17 @@ internal class SharedPreferencesContactStateStore(context: Context) : ContactSta
     }
 
     override fun write(value: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (value.isEmpty() || value.size > ContactStateCodec.MAX_STATE_BYTES) {
             throw ContactStateException("Contact state size is invalid")
         }
         return preferences.edit().putString(STATE_KEY, encoder.encodeToString(value)).commit()
     }
 
-    override fun clear(): Boolean = preferences.edit().remove(STATE_KEY).commit()
+    override fun clear(): Boolean {
+        ownerLease.requireActive()
+        return preferences.edit().remove(STATE_KEY).commit()
+    }
 
     private companion object {
         const val PREFERENCES_NAME = "kenato_contact_v1"
