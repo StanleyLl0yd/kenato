@@ -1,11 +1,14 @@
 package com.sl.kenato.storage
 
 import com.sl.kenato.M45ProcessTransportGate
+import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertSame
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -14,35 +17,75 @@ class M45CrossProcessLeaseTest {
     @get:Rule val temporary = TemporaryFolder()
 
     @Test
-    fun competingClaimFailsClosedAndCleanCloseAllowsNewOwner() {
-        val root = temporary.newFolder()
-        val first = M45CrossProcessLease.acquire(root)
+    fun separateJvmsCannotOwnOnePrivateDirectoryAndDeadOwnerReleasesKernelLock() {
+        val directory = temporary.newFolder()
+        val probe = temporary.newFile("LeaseProbe.java")
+        probe.writeText(
+            """
+            import java.nio.channels.FileChannel;
+            import java.nio.channels.FileLock;
+            import java.nio.file.LinkOption;
+            import java.nio.file.OpenOption;
+            import java.nio.file.Path;
+            import java.nio.file.StandardOpenOption;
+            import java.util.Set;
+            public class LeaseProbe {
+                public static void main(String[] args) throws Exception {
+                    Path file = Path.of(args[0], "kenato_m45_process_owner.lock");
+                    Set<OpenOption> options = Set.of(
+                        StandardOpenOption.CREATE, StandardOpenOption.READ,
+                        StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS
+                    );
+                    try (FileChannel channel = FileChannel.open(file, options)) {
+                        FileLock lock = channel.tryLock();
+                        if (lock == null) System.exit(42);
+                        try { } finally { lock.release(); }
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        val first = M45CrossProcessLease.shared(directory)
         try {
             assertTrue(first.permitsOperations())
-            assertThrows(IllegalStateException::class.java) {
-                M45CrossProcessLease.acquire(root)
-            }
-            assertTrue(root.resolve(M45CrossProcessLease.LOCK_FILE_NAME).isFile)
+            assertEquals("Second JVM must not acquire the first JVM's lock", 42, probeLock(probe, directory))
             assertTrue(first.permitsOperations())
         } finally {
             first.close()
         }
         assertFalse(first.permitsOperations())
-        first.close()
-        M45CrossProcessLease.acquire(root).use { second ->
-            assertTrue(second.permitsOperations())
-        }
-        // Never unlink the lock inode: another process may already be waiting on it.
-        assertTrue(root.resolve(M45CrossProcessLease.LOCK_FILE_NAME).isFile)
+        assertEquals("OS lock must be released after clean close", 0, probeLock(probe, directory))
+        // A persistent inode prevents split owners due to unlink/recreate.
+        assertTrue(directory.resolve(M45CrossProcessLease.LOCK_FILE_NAME).isFile)
     }
 
     @Test
-    fun distinctPrivateDirectoriesHaveIndependentLeases() {
-        M45CrossProcessLease.acquire(temporary.newFolder()).use { first ->
-            M45CrossProcessLease.acquire(temporary.newFolder()).use { second ->
+    fun separatePrivateDirectoriesAreIndependent() {
+        M45CrossProcessLease.shared(temporary.newFolder()).use { first ->
+            M45CrossProcessLease.shared(temporary.newFolder()).use { second ->
                 assertTrue(first.permitsOperations())
                 assertTrue(second.permitsOperations())
             }
+        }
+    }
+
+    @Test
+    fun defaultFactoriesReuseOneLeaseAndLostLeaseDeniesCallbacksAndMutations() {
+        val directory = temporary.newFolder()
+        val first = M45CrossProcessLease.shared(directory)
+        try {
+            assertSame(first, M45CrossProcessLease.shared(directory))
+            val gate = M45ProcessTransportGate(first)
+            gate.requireAvailable(Any())
+            assertTrue(gate.permitsTransportCallbacks())
+            first.close()
+            assertFalse(gate.permitsTransportCallbacks())
+            assertThrows(IllegalStateException::class.java) { gate.requireAvailable(Any()) }
+            assertThrows(IllegalStateException::class.java) {
+                M45CrossProcessLease.shared(directory)
+            }
+        } finally {
+            first.close()
         }
     }
 
@@ -59,41 +102,35 @@ class M45CrossProcessLeaseTest {
             return
         }
         assertThrows(java.io.IOException::class.java) {
-            M45CrossProcessLease.acquire(root)
+            M45CrossProcessLease.shared(root)
         }
         assertTrue(Files.isSymbolicLink(link))
     }
 
     @Test
-    fun defaultFactoriesCanReuseOneLifetimeLeaseButNewOwnersCannotBypassIt() {
-        val directory = temporary.newFolder()
-        val first = M45CrossProcessLease.shared(directory)
-        try {
-            val second = M45CrossProcessLease.shared(directory)
-            assertSame(first, second)
-            assertThrows(IllegalStateException::class.java) {
-                M45CrossProcessLease.acquire(directory)
-            }
-            val gate = M45ProcessTransportGate(first)
-            gate.requireAvailable(Any())
-            assertTrue(gate.permitsTransportCallbacks())
-            first.close()
-            assertFalse(gate.permitsTransportCallbacks())
-            assertThrows(IllegalStateException::class.java) {
-                gate.requireAvailable(Any())
-            }
-            assertThrows(IllegalStateException::class.java) {
-                M45CrossProcessLease.shared(directory)
-            }
-        } finally {
-            first.close()
+    fun invalidPrivateDirectoryCannotCreateLockFile() {
+        assertThrows(IllegalArgumentException::class.java) {
+            M45CrossProcessLease.shared(temporary.newFile())
         }
     }
 
-    @Test
-    fun invalidPrivateDirectoryCannotCreateLockFile() {
-        assertThrows(IllegalArgumentException::class.java) {
-            M45CrossProcessLease.acquire(temporary.newFile())
+    private fun probeLock(probe: File, directory: File): Int {
+        val java = File(System.getProperty("java.home"), "bin/java")
+        val child = ProcessBuilder(java.absolutePath, probe.absolutePath, directory.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        try {
+            if (!child.waitFor(25, TimeUnit.SECONDS)) {
+                child.destroyForcibly()
+                throw AssertionError("Forked JVM lease probe exceeded its deadline")
+            }
+            val output = child.inputStream.bufferedReader().use { it.readText() }
+            if (child.exitValue() !in setOf(0, 42)) {
+                throw AssertionError("Forked JVM lease probe failed: $output")
+            }
+            return child.exitValue()
+        } finally {
+            child.destroy()
         }
     }
 }

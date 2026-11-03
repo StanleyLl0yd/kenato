@@ -323,9 +323,11 @@ gate and held descriptor. Competing Android processes using these **default
 factories** fail closed before constructing a conflicting M1/M2/M3 owner or
 acceptance runtime. Direct constructors that bypass the factories are not
 protected. JVM tests
-cover contention, clean close/reacquire, separate directories, invalid directories
-and a symbolic-link lock-path rejection. A lock file is never deleted at close,
-so an inode replacement cannot silently split waiting owners. The adapter
+cover genuine separate-JVM contention/release, shared registry reuse, separate
+directories, invalid directories and a symbolic-link lock-path rejection. A lock file is never deleted at close,
+so an inode replacement cannot silently split waiting owners. The owner registry
+prevents duplicate opens in one JVM: closing a second descriptor for the same
+inode may release a different POSIX file lock on some platforms. The adapter
 rejects callbacks after a lost lease. The operating system releases the lock
 after process death; this alone does not establish safe restart.
 

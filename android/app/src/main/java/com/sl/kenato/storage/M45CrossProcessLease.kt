@@ -50,7 +50,9 @@ internal class M45CrossProcessLease private constructor(
             }
         }
 
-        fun acquire(noBackupDirectory: File): M45CrossProcessLease {
+        // Never create another descriptor for this inode in one JVM. On some POSIX systems,
+        // closing any descriptor for a locked file can release unrelated locks.
+        private fun acquire(noBackupDirectory: File): M45CrossProcessLease {
             require(noBackupDirectory.isDirectory) { "Private M4.5 storage directory is missing" }
             val options: Set<OpenOption> = setOf(
                 StandardOpenOption.CREATE,
