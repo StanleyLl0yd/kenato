@@ -23,34 +23,12 @@ internal class VoiceInboundPersistenceFacade(
         receivedAtEpochSeconds: Long,
     ): Boolean {
         val owner = envelope.recipientIdentityId
+        // Preserve exact ciphertext validation before any second ratchet decrypt.
         val receipt = recovery.exactLiveInboundReceipt(owner, envelope, receivedAtEpochSeconds)
-        val existing = semantic.pendingLiveEventSnapshots(owner, receivedAtEpochSeconds)
-            .filter {
-                MessageDigest.isEqual(it.signal.senderIdentityId, envelope.senderIdentityId) &&
-                    MessageDigest.isEqual(it.signal.messageId, envelope.messageId)
-            }
-        if (receipt == null) {
-            if (existing.isNotEmpty()) {
-                throw VoiceInboundPersistenceException(
-                    "M5 semantic event is committed without a replay receipt; recover M3 handoff first",
-                )
-            }
-            return false
-        }
-        if (existing.size != 1) {
-            throw VoiceInboundPersistenceException(
-                "M5 replay receipt lacks exactly one durable semantic payload",
-            )
-        }
-        val event = existing.single()
-        if (!MessageDigest.isEqual(event.envelopeDigest, receipt.envelopeDigest) ||
-            !MessageDigest.isEqual(event.signal.callId, receipt.callId) ||
-            event.signal.kind != receipt.kind ||
-            event.signal.expiresAtEpochSeconds != receipt.expiresAtEpochSeconds
-        ) {
-            throw VoiceInboundPersistenceException("M5 replay receipt contradicts semantic ciphertext")
-        }
-        return true
+        // A valid receipt for one message does not authorize an ACK while some other
+        // semantic/replay pair is incomplete or contradictory after process death.
+        verifiedPendingLiveReceipts(owner, receivedAtEpochSeconds)
+        return receipt != null
     }
 
     /**

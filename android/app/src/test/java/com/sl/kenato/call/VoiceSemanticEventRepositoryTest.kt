@@ -134,6 +134,9 @@ class VoiceSemanticEventRepositoryTest {
         assertThrows(VoiceInboundPersistenceException::class.java) {
             facade.verifiedPendingLiveReceipts(OWNER, NOW)
         }
+        assertThrows(VoiceInboundPersistenceException::class.java) {
+            facade.hasDurableDuplicate(MessagingWire.decodeEnvelope(offer(84).encodedEnvelope), NOW)
+        }
         facade.importCommittedHandoff(OWNER, offer(85), NOW)
         assertEquals(2, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
         assertEquals(2, semanticStore.writes)
