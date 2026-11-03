@@ -82,6 +82,39 @@ class VoiceSemanticEventRepositoryTest {
     }
 
     @Test
+    fun replayWriteFailureLeavesSemanticOnlyAndRecoveryNeverAuthorizesEarlyAck() {
+        val semanticStore = MemoryStore()
+        val replayStore = MemoryReplayStore()
+        val semantic = DurableVoiceSemanticEventRepository(
+            semanticStore, JvmTestAesGcmCipher(), VoiceSemanticClock { NOW },
+        )
+        val facade = VoiceInboundPersistenceFacade(
+            VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(replayStore)), semantic,
+        )
+        val handoff = offer(83)
+        val envelope = MessagingWire.decodeEnvelope(handoff.encodedEnvelope)
+        replayStore.failWrites = true
+        assertThrows(VoiceInboundHandoffRecoveryException::class.java) {
+            facade.importCommittedHandoff(OWNER, handoff, NOW)
+        }
+        assertEquals(1, semanticStore.writes)
+        assertEquals(0, replayStore.writes)
+        assertTrue(facade.verifiedPendingLiveReceipts(OWNER, NOW).isEmpty())
+        assertThrows(VoiceInboundPersistenceException::class.java) {
+            facade.hasDurableDuplicate(envelope, NOW)
+        }
+
+        // The exact committed M3 handoff remains available; recovering it writes
+        // the missing replay receipt without advancing the native ratchet again.
+        replayStore.failWrites = false
+        facade.importCommittedHandoff(OWNER, handoff, NOW)
+        assertEquals(1, semanticStore.writes)
+        assertEquals(1, replayStore.writes)
+        assertTrue(facade.hasDurableDuplicate(envelope, NOW))
+        assertEquals(1, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
+    }
+
+    @Test
     fun corruptFacadeImportRejectsBeforeAnyReplayOrSemanticWrite() {
         val semanticStore = MemoryStore()
         val replayStore = MemoryReplayStore()
@@ -273,10 +306,12 @@ class VoiceSemanticEventRepositoryTest {
     private class MemoryReplayStore : VoiceSignalReplayStore {
         var bytes: ByteArray? = null
         var writes = 0
+        var failWrites = false
 
         override fun read(): ByteArray? = bytes?.copyOf()
 
         override fun write(bytes: ByteArray): Boolean {
+            if (failWrites) return false
             this.bytes = bytes.copyOf()
             writes++
             return true
