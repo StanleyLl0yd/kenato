@@ -168,6 +168,19 @@ def build_disposable_video_api(wrapper: Path, aar: Path, root: Path,
         "    org.webrtc.DefaultVideoDecoderFactory.class,\n"
         "    org.webrtc.VideoTrack.class, org.webrtc.SurfaceViewRenderer.class\n"
         "  }; }\n"
+        "  public org.webrtc.VideoEncoderFactory encoder(org.webrtc.EglBase.Context egl) {\n"
+        "    return new org.webrtc.DefaultVideoEncoderFactory(egl, true, true);\n"
+        "  }\n"
+        "  public org.webrtc.VideoDecoderFactory decoder(org.webrtc.EglBase.Context egl) {\n"
+        "    return new org.webrtc.DefaultVideoDecoderFactory(egl);\n"
+        "  }\n"
+        "  public org.webrtc.CameraVideoCapturer capturer(android.content.Context context, String name) {\n"
+        "    return new org.webrtc.Camera2Enumerator(context).createCapturer(name, null);\n"
+        "  }\n"
+        "  public org.webrtc.PeerConnectionFactory.Builder videoFactory(org.webrtc.EglBase.Context egl) {\n"
+        "    return org.webrtc.PeerConnectionFactory.builder()\n"
+        "      .setVideoEncoderFactory(encoder(egl)).setVideoDecoderFactory(decoder(egl));\n"
+        "  }\n"
         "}\n",
         encoding="utf-8",
     )
@@ -185,6 +198,7 @@ def build_disposable_video_api(wrapper: Path, aar: Path, root: Path,
     apk = root / "app/build/outputs/apk/debug/app-debug.apk"
     record = d8.inspect_arm64_apk(apk)
     record["compiled_video_api_references"] = True
+    record["video_factory_camera_and_peer_connection_methods_compiled"] = True
     record["camera_opened"] = False
     record["codec_executed"] = False
     return record
