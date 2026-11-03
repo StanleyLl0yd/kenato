@@ -25,6 +25,29 @@ acceptance, #116 durable lifecycle/effect runner, #87 P01–P24 physical,
 #118 M3 Keystore, #170 consent rollback and #171 replay-claim rollback gates
 remain open. No production microphone, TURN, new infrastructure or M6.
 
+## Future product video compatibility (owner decision, 2026-11-03)
+
+The M5 implementation and this ADR remain **audio-only**. Nevertheless,
+one-to-one **video calling is a planned later Kenato feature**. This is a
+binding **vendor-selection constraint**, not permission to implement video,
+M6, new networking, camera permissions or production media now.
+
+Before committing to a long-lived prebuilt WebRTC vendor, establish that the
+same reviewed ARM64 SDK can later supply Android video capture/rendering and
+encoder/decoder factories. Independently test negotiated VP8/H.264 capability
+and real encode/decode on physical Android; record hardware/software fallback,
+performance and lifecycle. VP9/AV1, screen sharing, simulcast and group calls
+require explicit future scope and their presence must not be assumed.
+In particular, do not choose a size-optimized video-codec-stripped AAR as the
+audio prototype's foundational dependency without proof of video equivalence.
+
+The current Shiguredo m157 ARM64 AAR is **only a candidate**: factory/D8/ELF
+checks are insufficient proof of future video. Compare the newer complete
+webrtc-sdk/android v150.7871.04 before final vendor commitment.
+Retain authenticated SDP/DTLS fingerprint, E2EE signaling, user authorization
+and strict media lifecycle boundaries when video is later designed.
+See `docs/development/M5_ARM64_VENDOR_DECISION.md` for the detailed gate.
+
 ## Decision context
 
 Kenato's supported 1.0 voice scope is exactly one-to-one **audio-only**
