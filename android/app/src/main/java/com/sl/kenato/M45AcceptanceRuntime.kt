@@ -168,7 +168,12 @@ internal class M45AcceptanceRuntime(
     private var closed = false
     @Volatile private var trustMutationEpoch = 0L
 
-    fun initializeIdentity(): IdentityBundle = identity.loadOrCreate()
+    @Synchronized
+    fun initializeIdentity(): IdentityBundle = synchronized(processGate) {
+        requireOpen()
+        processGate.requireAvailable(this)
+        identity.loadOrCreate()
+    }
 
     fun currentIdentity(): IdentityBundle? = identity.current()
 
@@ -203,14 +208,20 @@ internal class M45AcceptanceRuntime(
         sessions.claimInbound(inviteUri)
     }
 
-    fun pendingInvites(): List<ShareableInvite> {
+    @Synchronized
+    fun pendingInvites(): List<ShareableInvite> = synchronized(processGate) {
+        requireOpen()
+        processGate.requireAvailable(this)
         identity.loadOrCreate()
-        return contacts.pendingInvites()
+        contacts.pendingInvites()
     }
 
-    fun contacts(): List<PinnedContact> {
+    @Synchronized
+    fun contacts(): List<PinnedContact> = synchronized(processGate) {
+        requireOpen()
+        processGate.requireAvailable(this)
         identity.loadOrCreate()
-        return contacts.contacts()
+        contacts.contacts()
     }
 
     fun startMessaging() {
@@ -248,8 +259,13 @@ internal class M45AcceptanceRuntime(
             messaging.sendText(currentIdentityId(), peerIdentityId.copyOf(), text)
         }
 
+    @Synchronized
     fun conversation(peerIdentityId: ByteArray): MessagingConversationState =
-        messaging.conversation(currentIdentityId(), peerIdentityId.copyOf())
+        synchronized(processGate) {
+            requireOpen()
+            processGate.requireAvailable(this)
+            messaging.conversation(currentIdentityId(), peerIdentityId.copyOf())
+        }
 
     @Synchronized
     override fun close() {

@@ -318,8 +318,19 @@ class M45AcceptanceRuntimeTest {
             assertThrows(IllegalStateException::class.java) {
                 other.sendText(ByteArray(32) { 2 }, "blocked")
             }
+            // Even read-looking entry points may lazily create an M1 identity.
+            assertThrows(IllegalStateException::class.java) { other.initializeIdentity() }
+            assertThrows(IllegalStateException::class.java) { other.pendingInvites() }
+            assertThrows(IllegalStateException::class.java) { other.contacts() }
+            assertThrows(IllegalStateException::class.java) {
+                other.conversation(ByteArray(32) { 2 })
+            }
             assertTrue(second.events.isEmpty())
             owner.stopMessaging()
+            other.initializeIdentity()
+            assertTrue(other.pendingInvites().isEmpty())
+            assertEquals(1, other.contacts().size)
+            assertTrue(other.conversation(ByteArray(32) { 2 }).messages.isEmpty())
             other.createInvite()
             assertTrue(second.events.contains("contacts.create"))
         } finally {
@@ -396,6 +407,12 @@ class M45AcceptanceRuntimeTest {
         assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
         assertThrows(IllegalStateException::class.java) {
             runtime.sendText(ByteArray(32) { 2 }, "test")
+        }
+        assertThrows(IllegalStateException::class.java) { runtime.initializeIdentity() }
+        assertThrows(IllegalStateException::class.java) { runtime.pendingInvites() }
+        assertThrows(IllegalStateException::class.java) { runtime.contacts() }
+        assertThrows(IllegalStateException::class.java) {
+            runtime.conversation(ByteArray(32) { 2 })
         }
         runtime.stopMessaging()
         runtime.close()

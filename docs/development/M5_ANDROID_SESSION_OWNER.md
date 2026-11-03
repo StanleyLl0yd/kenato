@@ -189,3 +189,19 @@ cancel, late callback rejection and absence of requeued work. A failed cancel
 remains an **uncertain physical shutdown**, so the higher-level process gate
 must poison the runtime and never start another transport owner. These tests
 are synthetic, not real OkHttp or device teardown proof.
+
+## Lazy identity initialization through read-looking entry points
+
+The acceptance facade previously bypassed its process WSS transport lease in
+`initializeIdentity()`, `pendingInvites()`, `contacts()` and
+`conversation()`. The latter three may call M1 `loadOrCreate()` before
+reading state; this can create identity state while a different runtime owns
+WSS or after a terminal close. Those facade methods now acquire the same
+runtime/process monitors, require an open runtime and refuse cross-owner
+access **before any lazy initialization**. JVM regressions verify denied
+side effects while another runtime owns WSS, and safe access after release.
+
+This only closes facade entry-point bypasses. Direct factory/store callers,
+asynchronous callbacks and other Android processes are not fenced by this
+process-local gate. It does not provide a durable shared M2/M3/WSS/effect
+transaction or authorize live voice.
