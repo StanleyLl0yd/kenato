@@ -35,6 +35,72 @@ class VoiceSemanticEventRepositoryTest {
         assertEquals(1, store.writes)
     }
 
+
+    @Test
+    fun facadeUsesSingleClockForSemanticAndReplayEvenIfRepositoryClockDisagrees() {
+        val semanticStore = MemoryStore()
+        val semantic = DurableVoiceSemanticEventRepository(
+            semanticStore,
+            JvmTestAesGcmCipher(),
+            VoiceSemanticClock { throw AssertionError("Independent clock must not be sampled") },
+        )
+        val replayStore = MemoryReplayStore()
+        val facade = VoiceInboundPersistenceFacade(
+            VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(replayStore)),
+            semantic,
+        )
+        val handoff = offer(80)
+        facade.importCommittedHandoff(OWNER, handoff, NOW)
+        assertEquals(1, semanticStore.writes)
+        assertEquals(1, replayStore.writes)
+        assertEquals(1, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
+
+        // A retry after a simulated crash between the two files is idempotent.
+        facade.importCommittedHandoff(OWNER, handoff, NOW)
+        assertEquals(1, semanticStore.writes)
+        assertEquals(1, replayStore.writes)
+    }
+
+    @Test
+    fun expiredFacadeImportNeverCreatesSemanticOrReplayState() {
+        val semanticStore = MemoryStore()
+        val semantic = DurableVoiceSemanticEventRepository(
+            semanticStore, JvmTestAesGcmCipher(), VoiceSemanticClock { NOW },
+        )
+        val replayStore = MemoryReplayStore()
+        val facade = VoiceInboundPersistenceFacade(
+            VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(replayStore)),
+            semantic,
+        )
+        assertThrows(VoiceSemanticEventException::class.java) {
+            facade.importCommittedHandoff(OWNER, offer(81), NOW + 60)
+        }
+        assertEquals(0, semanticStore.writes)
+        assertEquals(null, semanticStore.bytes)
+        assertEquals(0, replayStore.writes)
+        assertTrue(facade.verifiedPendingLiveReceipts(OWNER, NOW + 60).isEmpty())
+    }
+
+    @Test
+    fun corruptFacadeImportRejectsBeforeAnyReplayOrSemanticWrite() {
+        val semanticStore = MemoryStore()
+        val replayStore = MemoryReplayStore()
+        val facade = VoiceInboundPersistenceFacade(
+            VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(replayStore)),
+            DurableVoiceSemanticEventRepository(
+                semanticStore, JvmTestAesGcmCipher(), VoiceSemanticClock { NOW },
+            ),
+        )
+        val invalid = offer(82).let {
+            it.copy(encodedPlaintext = it.encodedPlaintext + byteArrayOf(1))
+        }
+        assertThrows(VoiceSemanticEventException::class.java) {
+            facade.importCommittedHandoff(OWNER, invalid, NOW)
+        }
+        assertEquals(0, semanticStore.writes)
+        assertEquals(0, replayStore.writes)
+    }
+
     @Test
     fun exactEnvelopeConflictFailsClosedWithoutReplacingLiveEvent() {
         val store = MemoryStore()
@@ -201,6 +267,25 @@ class VoiceSemanticEventRepositoryTest {
             encodedPlaintext = VoiceSignalingWire.encode(inner),
             encodedEnvelope = MessagingWire.encodeEnvelope(env),
         )
+    }
+
+
+    private class MemoryReplayStore : VoiceSignalReplayStore {
+        var bytes: ByteArray? = null
+        var writes = 0
+
+        override fun read(): ByteArray? = bytes?.copyOf()
+
+        override fun write(bytes: ByteArray): Boolean {
+            this.bytes = bytes.copyOf()
+            writes++
+            return true
+        }
+
+        override fun clear(): Boolean {
+            bytes = null
+            return true
+        }
     }
 
     private class MutableClock(var value: Long)

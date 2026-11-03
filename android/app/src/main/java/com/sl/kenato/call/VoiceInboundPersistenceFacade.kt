@@ -100,7 +100,9 @@ internal class VoiceInboundPersistenceFacade(
     ) {
         // AES-GCM semantic payload first, metadata/replay acknowledgement second.
         // Every exception leaves the atomic M3 handoff for restart reconciliation.
-        semantic.persistAuthenticatedVoiceEvent(ownerIdentityId, handoff)
+        semantic.persistAuthenticatedVoiceEventAt(
+            ownerIdentityId, handoff, receivedAtEpochSeconds,
+        )
         if (recovery.reconcileCommittedHandoff(
                 ownerIdentityId, handoff, receivedAtEpochSeconds,
             ) != VoiceInboundHandoffRecoveryOutcome.DURABLY_IMPORTED
