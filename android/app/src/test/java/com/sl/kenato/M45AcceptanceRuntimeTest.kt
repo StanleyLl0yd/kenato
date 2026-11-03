@@ -305,6 +305,93 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun localConsentMutationPausesActiveWssAndResumesOnlyAfterCommit() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        fixture.events.clear()
+
+        val result = runtime.withLocalTrustMutation {
+            assertFalse(fixture.messaging.started)
+            fixture.events += "consent.persist"
+            "consent committed"
+        }
+
+        assertEquals("consent committed", result)
+        assertEquals(
+            listOf("messaging.stop", "consent.persist", "messaging.start"),
+            fixture.events,
+        )
+        assertTrue(fixture.messaging.started)
+        runtime.close()
+    }
+
+    @Test
+    fun failedWssStopPreventsLocalConsentMutation() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        fixture.messaging.failStopAfterAttempt = true
+        var persisted = false
+
+        assertThrows(IllegalStateException::class.java) {
+            runtime.withLocalTrustMutation { persisted = true }
+        }
+
+        assertFalse(persisted)
+        assertThrows(IllegalStateException::class.java) {
+            runtime.withLocalTrustMutation { persisted = true }
+        }
+        runtime.close()
+    }
+
+    @Test
+    fun standaloneTrustWriteRejectsActiveTransportAndInvalidatesQueuedStart() {
+        val gate = M45ProcessTransportGate()
+        val owner = Fixture().runtime(gate)
+        val other = Fixture().runtime(gate)
+        owner.startMessaging()
+        var executed = false
+        assertThrows(IllegalStateException::class.java) {
+            gate.withStandaloneTrustMutation { executed = true }
+        }
+        assertFalse(executed)
+        owner.stopMessaging()
+
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val beforeEpoch = gate.mutationEpoch
+            val mutation = pool.submit {
+                gate.withStandaloneTrustMutation {
+                    entered.countDown()
+                    assertTrue(release.await(10, TimeUnit.SECONDS))
+                }
+            }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val dispatched = CountDownLatch(1)
+            val queued = pool.submit {
+                dispatched.countDown()
+                other.startMessaging()
+            }
+            assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            release.countDown()
+            mutation.get(10, TimeUnit.SECONDS)
+            assertEquals(beforeEpoch + 2L, gate.mutationEpoch)
+            assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                queued.get(10, TimeUnit.SECONDS)
+            }
+            other.startMessaging()
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+            owner.close()
+            other.close()
+        }
+    }
+
+    @Test
     fun secondRuntimeCannotStartWssOrMutateTrustWhileAnotherOwnsTransport() {
         val gate = M45ProcessTransportGate()
         val first = Fixture()

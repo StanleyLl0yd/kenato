@@ -163,7 +163,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     fun initializeIdentity() = launchOperation("Local identity is ready") {
-        identityRepository.loadOrCreate()
+        withLocalTrustMutation { identityRepository.loadOrCreate() }
     }
 
     fun prepareForAcceptance() = launchOperation("Identity and M3 bootstrap are published") {
@@ -220,27 +220,33 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
      * proof flow. None of them starts a call or probes an M4 text-only client.
      */
     fun issueVoiceCapabilityChallenge() = launchOperation("Voice capability challenge ready to share") {
-        val peer = selectedPeerBytes()
-        val challenge = voiceCapability.issueChallengeQr(peer)
-        ephemeralVoiceChallenge = challenge
-        ephemeralVoiceProof = null
-        ephemeralVoicePeerId = encodePeerId(peer)
+        withLocalTrustMutation {
+            val peer = selectedPeerBytes()
+            val challenge = voiceCapability.issueChallengeQr(peer)
+            ephemeralVoiceChallenge = challenge
+            ephemeralVoiceProof = null
+            ephemeralVoicePeerId = encodePeerId(peer)
+        }
     }
 
     fun approveAndSignVoiceCapabilityChallenge(qr: String) =
         launchOperation("Signed voice capability proof ready to share") {
-            val peer = selectedPeerBytes()
-            val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
-            ephemeralVoiceChallenge = null
-            ephemeralVoiceProof = proof
-            ephemeralVoicePeerId = encodePeerId(peer)
+            withLocalTrustMutation {
+                val peer = selectedPeerBytes()
+                val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
+                ephemeralVoiceChallenge = null
+                ephemeralVoiceProof = proof
+                ephemeralVoicePeerId = encodePeerId(peer)
+            }
         }
 
     fun approveAndImportVoiceCapabilityProof(qr: String) =
         launchOperation("Pinned voice capability proof accepted") {
-            val peer = selectedPeerBytes()
-            voiceCapability.approveAndImportProofQr(peer, qr.trim())
-            clearEphemeralVoiceQr()
+            withLocalTrustMutation {
+                val peer = selectedPeerBytes()
+                voiceCapability.approveAndImportProofQr(peer, qr.trim())
+                clearEphemeralVoiceQr()
+            }
         }
 
     fun refresh() = launchOperation("State refreshed") { }
@@ -321,6 +327,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             }
         }
     }
+
+    private fun <T> withLocalTrustMutation(block: () -> T): T =
+        runtime?.withLocalTrustMutation(block)
+            ?: withM45StandaloneTrustMutation(appContext, block)
 
     private fun requireRuntime(): M45AcceptanceRuntime {
         val origin = M45ServiceOrigin.parse(

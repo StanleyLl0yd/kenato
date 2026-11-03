@@ -245,3 +245,24 @@ monitor is held and that cancellation delegates correctly.
 commit.** Callback-to-commit failure windows between independent storage
 files, direct factory bypasses, shared identity recovery, other processes and
 M5 effects remain open under #116/#87. No production voice/mic/JNI enabled.
+
+## Android controller M1 and voice-consent mutation entrypoints
+
+The acceptance controller previously called `LocalIdentityRepository.loadOrCreate()`
+and the manual M5 voice capability challenge/sign/import bridge directly,
+outside the runtime's shared process transport gate. Thus a second activity
+instance or its QR operations could write M1/M2 capability state while
+WSS callbacks or a separate runtime were active. The controller now routes
+all four operations through the exact same process gate:
+- If its existing acceptance runtime owns WSS, pause/stop WSS, mutate,
+  and restart only after the action returns successfully.
+- Before a runtime or service origin exists, acquire a standalone shared
+  process writer slot; deny an active competing WSS owner and advance
+  the trust mutation epoch to fence already queued transport starts.
+
+Explicit QR peer validation happens *inside* this critical section, rather
+than pre-validating a contact then waiting for the gate. Three JVM
+regressions exercise pause/restart, uncertain stop fail-closed, and
+standalone queued-start fencing. This is process-only protection and
+does not replace the required durable cross-process consent/M3/WSS/KDL1
+effect admission or physical tests under #116 and #87.

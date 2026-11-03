@@ -159,6 +159,31 @@ internal class M45ProcessTransportGate {
 
 private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
 
+private fun sharedM45ProcessGate(context: Context): M45ProcessTransportGate =
+    processTransportGates.getOrCreate(context.applicationContext.noBackupFilesDir.canonicalPath) {
+        M45ProcessTransportGate()
+    }
+
+/**
+ * Standalone M1/voice-consent writes must serialize with Android WSS and invalidate any
+ * start request that was queued before the write. Never allow a second writer while
+ * another acceptance runtime owns a transport for this private directory.
+ */
+private object M45StandaloneTrustWriter
+
+internal fun <T> M45ProcessTransportGate.withStandaloneTrustMutation(block: () -> T): T =
+    synchronized(this) {
+        beginMutation(M45StandaloneTrustWriter)
+        try {
+            block()
+        } finally {
+            endMutation()
+        }
+    }
+
+internal fun <T> withM45StandaloneTrustMutation(context: Context, block: () -> T): T =
+    sharedM45ProcessGate(context).withStandaloneTrustMutation(block)
+
 internal class M45AcceptanceRuntime(
     private val identity: M45IdentityBoundary,
     private val contacts: M45ContactBoundary,
@@ -169,6 +194,13 @@ internal class M45AcceptanceRuntime(
     private var messagingStarted = false
     private var closed = false
     @Volatile private var trustMutationEpoch = 0L
+
+    /**
+     * Protect manual M1/voice-consent mutations from asynchronous M3/WSS callbacks.
+     * Do not confuse process-only suspension with a durable cross-store commit.
+     */
+    @Synchronized
+    fun <T> withLocalTrustMutation(block: () -> T): T = withMessagingPaused { block() }
 
     @Synchronized
     fun initializeIdentity(): IdentityBundle = synchronized(processGate) {
@@ -362,9 +394,7 @@ internal class M45AcceptanceRuntime(
     companion object {
         fun create(context: Context, serviceOrigin: URI): M45AcceptanceRuntime {
             val appContext = context.applicationContext
-            val processGate = processTransportGates.getOrCreate(
-                appContext.noBackupFilesDir.canonicalPath,
-            ) { M45ProcessTransportGate() }
+            val processGate = sharedM45ProcessGate(appContext)
             val identityRepository = LocalIdentityRepository.create(appContext)
             val contactRepository = ContactRepository.create(appContext, serviceOrigin)
             // M3 bootstrap and M4 messaging must not race through distinct repository locks.
