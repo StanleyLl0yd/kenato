@@ -12,6 +12,7 @@ import binascii
 import json
 import re
 import subprocess
+import time
 import sys
 import urllib.parse
 from pathlib import Path
@@ -70,28 +71,32 @@ def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
         raise SourceProbeError("Source host outside exact allowlist")
     if parsed.hostname != host or url not in allowed:
         raise SourceProbeError("Source URL outside exact allowlist")
-    # curl is provided by the pinned ubuntu-24.04 GitHub Actions runner.
-    # No shell, redirects, HTTP, proxies via user arguments, or arbitrary URL.
-    try:
-        result = subprocess.run(
-            ["curl", "--silent", "--show-error", "--proto", "=https",
-             "--max-time", "30", "--connect-timeout", "15",
-             "--max-filesize", str(maximum),
-             "--write-out", "\n@@KENATO_STATUS:%{http_code}",
-             "--url", url],
-            capture_output=True, timeout=40, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise SourceProbeError("Pinned source retrieval failed") from error
-    if result.returncode != 0:
-        raise SourceProbeError("Pinned source transport rejected response")
-    body, sep, status = result.stdout.rpartition(b"\n@@KENATO_STATUS:")
-    if not sep or status != b"200":
-        raise SourceProbeError("Pinned source did not return HTTP 200")
-    if not body or len(body) > maximum:
-        raise SourceProbeError("Missing or oversized source snapshot")
-    return body
-
+    # Curl is pinned by the Ubuntu runner; only retry transient HTTP errors.
+    # Preserve the exact source SHA/URL and reject redirects/other responses.
+    for attempt in range(4):
+        try:
+            result = subprocess.run(
+                ["curl", "--silent", "--show-error", "--proto", "=https",
+                 "--max-time", "30", "--connect-timeout", "15",
+                 "--max-filesize", str(maximum),
+                 "--write-out", "\n@@KENATO_STATUS:%{http_code}",
+                 "--url", url],
+                capture_output=True, timeout=40, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SourceProbeError("Pinned source retrieval failed") from error
+        if result.returncode != 0:
+            raise SourceProbeError("Pinned source transport rejected response")
+        body, sep, status = result.stdout.rpartition(b"\n@@KENATO_STATUS:")
+        if sep and status == b"200":
+            if not body or len(body) > maximum:
+                raise SourceProbeError("Missing or oversized source snapshot")
+            return body
+        if not (sep and status in {b"429", b"502", b"503", b"504"} and
+                attempt < 3):
+            raise SourceProbeError("Pinned source did not return HTTP 200")
+        time.sleep(min(2 ** attempt, 4))
+    raise SourceProbeError("Pinned source did not return HTTP 200")
 
 def validate_version(text: str) -> None:
     expected = {

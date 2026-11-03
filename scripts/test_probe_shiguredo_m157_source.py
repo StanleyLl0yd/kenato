@@ -327,6 +327,40 @@ class ProbeTests(unittest.TestCase):
                     b"ZGF0YQ==",
                 )
 
+    def test_gitiles_retry_only_temporary_same_sha_url(self):
+        url = probe.GITILES_ROOT + probe.UPSTREAM_RTP_PATH + "?format=TEXT"
+        replies = [
+            probe.subprocess.CompletedProcess(
+                ["curl"], 0, b"busy\n@@KENATO_STATUS:503", b""),
+            probe.subprocess.CompletedProcess(
+                ["curl"], 0, b"busy\n@@KENATO_STATUS:429", b""),
+            probe.subprocess.CompletedProcess(
+                ["curl"], 0, b"ZGF0YQ==\n@@KENATO_STATUS:200", b""),
+        ]
+        with patch.object(probe.subprocess, "run", side_effect=replies) as run, \
+                patch.object(probe.time, "sleep") as sleep:
+            self.assertEqual(
+                probe.fetch_exact(url, maximum=128,
+                                  host="webrtc.googlesource.com"), b"ZGF0YQ==")
+            self.assertEqual(run.call_count, 3)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertTrue(all(cmd == commands[0] for cmd in commands))
+            self.assertTrue(all(cmd[-1] == url for cmd in commands))
+            self.assertNotIn("--location", commands[0])
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [1, 2])
+
+    def test_gitiles_transient_exhaustion_fails_closed(self):
+        url = probe.GITILES_ROOT + probe.UPSTREAM_RTP_PATH + "?format=TEXT"
+        response = probe.subprocess.CompletedProcess(
+            ["curl"], 0, b"busy\n@@KENATO_STATUS:504", b"")
+        with patch.object(probe.subprocess, "run", return_value=response) as run, \
+                patch.object(probe.time, "sleep") as sleep:
+            with self.assertRaisesRegex(probe.SourceProbeError, "HTTP 200"):
+                probe.fetch_exact(url, maximum=128,
+                                  host="webrtc.googlesource.com")
+            self.assertEqual(run.call_count, 4)
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [1, 2, 4])
+
     def test_http_redirect_is_rejected(self):
         outcome = probe.subprocess.CompletedProcess(
             args=["curl"], returncode=0,
