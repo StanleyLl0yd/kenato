@@ -66,6 +66,13 @@ internal class VoiceInboundPersistenceFacade(
     ): List<VoiceSignalReplayReceipt> {
         val receipts = recovery.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
         val events = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+        // A semantic-only partial commit is not a valid ACK plan, even if other receipts
+        // match. The committed M3 handoff must reconcile the missing replay entry first.
+        if (events.size != receipts.size) {
+            throw VoiceInboundPersistenceException(
+                "M5 encrypted semantic and replay receipt counts differ",
+            )
+        }
         return receipts.map { receipt ->
             val matches = events.filter {
                 MessageDigest.isEqual(it.signal.senderIdentityId, receipt.peerIdentityId) &&

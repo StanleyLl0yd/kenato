@@ -99,7 +99,9 @@ class VoiceSemanticEventRepositoryTest {
         }
         assertEquals(1, semanticStore.writes)
         assertEquals(0, replayStore.writes)
-        assertTrue(facade.verifiedPendingLiveReceipts(OWNER, NOW).isEmpty())
+        assertThrows(VoiceInboundPersistenceException::class.java) {
+            facade.verifiedPendingLiveReceipts(OWNER, NOW)
+        }
         assertThrows(VoiceInboundPersistenceException::class.java) {
             facade.hasDurableDuplicate(envelope, NOW)
         }
@@ -112,6 +114,30 @@ class VoiceSemanticEventRepositoryTest {
         assertEquals(1, replayStore.writes)
         assertTrue(facade.hasDurableDuplicate(envelope, NOW))
         assertEquals(1, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
+    }
+
+    @Test
+    fun orphanSemanticEventBlocksAllPreviouslyValidAckCandidates() {
+        val semanticStore = MemoryStore()
+        val replayStore = MemoryReplayStore()
+        val semantic = DurableVoiceSemanticEventRepository(
+            semanticStore, JvmTestAesGcmCipher(), VoiceSemanticClock { NOW },
+        )
+        val facade = VoiceInboundPersistenceFacade(
+            VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(replayStore)), semantic,
+        )
+        facade.importCommittedHandoff(OWNER, offer(84), NOW)
+        assertEquals(1, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
+
+        // Simulates death after the second AES-GCM semantic write, before replay import.
+        semantic.persistAuthenticatedVoiceEventAt(OWNER, offer(85), NOW)
+        assertThrows(VoiceInboundPersistenceException::class.java) {
+            facade.verifiedPendingLiveReceipts(OWNER, NOW)
+        }
+        facade.importCommittedHandoff(OWNER, offer(85), NOW)
+        assertEquals(2, facade.verifiedPendingLiveReceipts(OWNER, NOW).size)
+        assertEquals(2, semanticStore.writes)
+        assertEquals(2, replayStore.writes)
     }
 
     @Test
