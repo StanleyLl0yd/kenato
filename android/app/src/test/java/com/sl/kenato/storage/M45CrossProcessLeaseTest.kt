@@ -39,7 +39,13 @@ class M45CrossProcessLeaseTest {
                     try (FileChannel channel = FileChannel.open(file, options)) {
                         FileLock lock = channel.tryLock();
                         if (lock == null) System.exit(42);
-                        try { } finally { lock.release(); }
+                        try {
+                            if (args.length == 3 && args[2].equals("hold")) {
+                                System.out.println("LOCKED");
+                                System.out.flush();
+                                System.in.read();
+                            }
+                        } finally { lock.release(); }
                     }
                 }
             }
@@ -55,6 +61,26 @@ class M45CrossProcessLeaseTest {
         }
         assertFalse(first.permitsOperations())
         assertEquals("OS lock must be released after clean close", 0, probeLock(probe, directory))
+
+        // A killed Android-like owner loses the OS lease, not its unfinished transactions.
+        val output = temporary.newFile("holder-output.txt")
+        val java = File(System.getProperty("java.home"), "bin/java")
+        val holder = ProcessBuilder(
+            java.absolutePath, probe.absolutePath, directory.absolutePath, "hold",
+        ).redirectErrorStream(true).redirectOutput(output).start()
+        try {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25)
+            while (!output.readText().contains("LOCKED") && System.nanoTime() < deadline) {
+                if (!holder.isAlive) throw AssertionError("Forked lease owner exited before acquiring lock")
+                Thread.sleep(20)
+            }
+            assertTrue("Forked owner must report an acquired lock", output.readText().contains("LOCKED"))
+            assertEquals("Competing JVM must reject live owner", 42, probeLock(probe, directory))
+        } finally {
+            holder.destroyForcibly()
+            assertTrue("Killed owner must exit", holder.waitFor(10, TimeUnit.SECONDS))
+        }
+        assertEquals("OS must release lease after force-kill", 0, probeLock(probe, directory))
         // A persistent inode prevents split owners due to unlink/recreate.
         assertTrue(directory.resolve(M45CrossProcessLease.LOCK_FILE_NAME).isFile)
     }
