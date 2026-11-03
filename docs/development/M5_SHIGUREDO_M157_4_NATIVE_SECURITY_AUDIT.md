@@ -55,6 +55,25 @@ No live root-license result is claimed until this updated exact-head job passes.
 this is at most two independently retrieved root LICENSE files, not a
 complete SPDX/third-party redistribution review. No production asset changes.
 
+### GN-derived generated NOTICE: precise source-license path inventory
+
+The Shiguredo publisher `run.py` packages `android_sdk` by calling WebRTC's
+`tools_webrtc/libs/generate_licenses.py` over GN-described build targets,
+renaming `LICENSE.md` to `NOTICE`, and embedding it in the AAR. The new
+source-only evidence probe fetches that generator at **the exact declared
+WebRTC revision** `95554e4a0c5c343fdc989387d9d0ce18e2a2294b`, SHA-256
+inventories its bytes, parses only the two bounded static AST license maps
+(without executing the generator), and pairs direct candidate license source
+paths with the 34 publisher NOTICE headings. Unmapped names remain explicit.
+
+**Boundary:** a mapped path is only a suggested original source license
+location. It does not prove that file's exact bytes, its SPDX expression,
+compiler/GN linkage, exceptions, source-offer duties or completeness of
+binary SBOM. The probe never invokes GN, performs native compilation, executes
+untrusted generator Python or marks a component's legal obligation cleared.
+An exact-HEAD CI run must separately verify this new source inventory before
+its counts are reported as evidence.
+
 ## Generated binary NOTICE audit
 
 The full **34-section** actual AAR `META-INF/NOTICE` records attribution

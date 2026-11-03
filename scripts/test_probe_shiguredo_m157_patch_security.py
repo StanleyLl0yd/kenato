@@ -18,6 +18,9 @@ class PatchSecurityTests(unittest.TestCase):
             target.SOURCE_ROOT + "LICENSE?format=TEXT")[0],
             "webrtc.googlesource.com")
         self.assertEqual(target.allowed_url(
+            target.SOURCE_ROOT + target.SOURCE_LICENSE_GENERATOR_PATH + "?format=TEXT")[0],
+            "webrtc.googlesource.com")
+        self.assertEqual(target.allowed_url(
             target.PRODUCER_ROOT + "LICENSE")[0],
             "raw.githubusercontent.com")
         for url in ("http://webrtc.googlesource.com/",
@@ -80,6 +83,39 @@ class PatchSecurityTests(unittest.TestCase):
         with self.assertRaises(target.SourceEvidenceError):
             target.fetch_exact(target.SOURCE_ROOT + "../unreviewed?format=TEXT",
                                runner=lambda *a, **kw: self.fail("Unsafe URL contacted"))
+
+    def test_static_gn_license_map_only_records_candidate_paths(self):
+        fixture = b"""# GN desc dependencies, not an independent native SBOM.
+LIB_TO_LICENSES_DICT = {
+  'webrtc': ['LICENSE'],
+  'boringssl': ['third_party/boringssl/src/LICENSE'],
+  'libsrtp': ['third_party/libsrtp/LICENSE'],
+  'libvpx': ['third_party/libvpx/source/libvpx/LICENSE'],
+  'opus': ['third_party/opus/src/' + 'COPYING'],
+}
+LIB_REGEX_TO_LICENSES_DICT = {'android_deps:.*': []}
+# generate_license_text GN desc
+""" + b"# copyright text\n" * 6
+        result = target.inspect_license_generator_snapshot(fixture)
+        self.assertEqual(result["notice_component_count"], 34)
+        self.assertEqual(result["mapped_notice_component_count"], 5)
+        self.assertEqual(result["unmapped_notice_component_count"], 29)
+        self.assertEqual(result["notice_components_with_source_license_path_candidates"]["opus"],
+                         ["third_party/opus/src/COPYING"])
+        self.assertFalse(result["gn_desc_build_graph_independently_reproduced"])
+        self.assertFalse(result["license_source_paths_prove_binary_linkage"])
+        self.assertFalse(result["mapped_license_texts_independently_verified"])
+        self.assertFalse(result["transitive_license_spdx_clearance"])
+        for tamper in (
+            fixture.replace(b"['third_party/opus/src/' + 'COPYING']",
+                            b"[__import__('os').system('id')]"),
+            fixture.replace(b"'third_party/libsrtp/LICENSE'",
+                            b"'../LICENSE'"),
+            fixture.replace(b"'webrtc': ['LICENSE']", b"'webrtc': []"),
+            fixture.replace(b"LIB_TO_LICENSES_DICT", b"BROKEN", 1),
+        ):
+            with self.assertRaises(target.SourceEvidenceError):
+                target.inspect_license_generator_snapshot(tamper)
 
     def test_pinned_root_license_patterns_never_grant_spdx_clearance(self):
         upstream = (b"Copyright (c) 2011. Redistribution and use in source and "

@@ -8,6 +8,7 @@ transitive-license compliance, JNI safety or vendor approval.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import binascii
 import hashlib
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import probe_shiguredo_m157 as vendor
 import probe_shiguredo_m157_source as old
+import probe_shiguredo_m157_notice as notice
 
 TAG = vendor.PATCH_TAG
 PRODUCER_SHA = vendor.PATCH_PRODUCER_TAG_SHA
@@ -33,6 +35,7 @@ PRODUCER_ARTIFACT_ID = 12951911807
 NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
 NOTICE_BYTES = 214353
 WEBRTC_ROOT_LICENSE_PATH = "LICENSE"
+SOURCE_LICENSE_GENERATOR_PATH = "tools_webrtc/libs/generate_licenses.py"
 PRODUCER_ROOT_LICENSE_PATH = "LICENSE"
 PATCHES = (
     "add_deps.patch", "4k.patch", "revive_proxy.patch",
@@ -66,6 +69,7 @@ class SourceEvidenceError(ValueError):
 def allowed_url(url: str) -> tuple[str, int]:
     sources = {SOURCE_ROOT + path + "?format=TEXT" for path in SOURCE_PATHS}
     sources.add(SOURCE_ROOT + WEBRTC_ROOT_LICENSE_PATH + "?format=TEXT")
+    sources.add(SOURCE_ROOT + SOURCE_LICENSE_GENERATOR_PATH + "?format=TEXT")
     producers = {PRODUCER_ROOT + path for path in
                  ("VERSION", "run.py", "NOTICE", PRODUCER_ROOT_LICENSE_PATH)}
     producers.update(PRODUCER_ROOT + "patches/" + patch for patch in PATCHES)
@@ -168,6 +172,85 @@ def check_root_license(payload: bytes, *, origin: str) -> dict:
         "independent_legal_clearance": False,
     }
 
+def inspect_license_generator_snapshot(payload: bytes) -> dict:
+    """Source-map hints only: no code execution, GN desc, SPDX or linked-SBOM claim."""
+    if not 200 <= len(payload) <= 128 * 1024:
+        raise SourceEvidenceError("Exact license generator missing or oversized")
+    try:
+        script = payload.decode("utf-8")
+        syntax = ast.parse(script)
+    except (UnicodeError, SyntaxError) as error:
+        raise SourceEvidenceError("Invalid exact source license generator") from error
+
+    def static_string(expr: ast.AST) -> str:
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return expr.value
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+            return static_string(expr.left) + static_string(expr.right)
+        raise SourceEvidenceError("Dynamic or executable license-path expression")
+
+    def static_mapping(name: str) -> dict[str, list[str]]:
+        assignments = [node.value for node in syntax.body
+                       if isinstance(node, ast.Assign) and
+                       len(node.targets) == 1 and
+                       isinstance(node.targets[0], ast.Name) and
+                       node.targets[0].id == name]
+        if len(assignments) != 1 or not isinstance(assignments[0], ast.Dict):
+            raise SourceEvidenceError("Missing or ambiguous license source map")
+        tree = assignments[0]
+        if not 1 <= len(tree.keys) <= 200:
+            raise SourceEvidenceError("Unbounded license generator entries")
+        mapping = {}
+        for key_ast, value_ast in zip(tree.keys, tree.values):
+            key = static_string(key_ast)
+            if not (1 <= len(key) <= 128) or key in mapping:
+                raise SourceEvidenceError("Bad or repeated generator license key")
+            if not isinstance(value_ast, (ast.List, ast.Tuple)) or len(value_ast.elts) > 12:
+                raise SourceEvidenceError("Dynamic or unbounded license path set")
+            values = [static_string(value) for value in value_ast.elts]
+            for path in values:
+                parts = path.split("/")
+                if not (1 <= len(path) <= 256 and
+                        all(part not in ("", ".", "..") for part in parts) and
+                        re.fullmatch(r"[a-zA-Z0-9_.+/-]+", path) and
+                        not path.startswith("/")):
+                    raise SourceEvidenceError("Unsafe upstream license file path")
+            if len(set(values)) != len(values):
+                raise SourceEvidenceError("Repeated source license file")
+            mapping[key] = values
+        return mapping
+
+    components = static_mapping("LIB_TO_LICENSES_DICT")
+    patterns = static_mapping("LIB_REGEX_TO_LICENSES_DICT")
+    for key in ("webrtc", "boringssl", "libsrtp", "libvpx", "opus"):
+        if not components.get(key):
+            raise SourceEvidenceError("Expected source license component absent: " + key)
+    if components["webrtc"] != ["LICENSE"] or not (
+        "gn desc" in script and "generate_license_text" in script
+    ):
+        raise SourceEvidenceError("License generator GN/root contract changed")
+    matched = {
+        component: components[component]
+        for component in sorted(notice.COMPONENTS) if components.get(component)
+    }
+    not_mapped = sorted(set(notice.COMPONENTS) - set(matched))
+    return {
+        "source_sha256": hashlib.sha256(payload).hexdigest(),
+        "source_bytes": len(payload),
+        "generator_source_path": SOURCE_LICENSE_GENERATOR_PATH,
+        "notice_component_count": len(notice.COMPONENTS),
+        "mapped_notice_component_count": len(matched),
+        "unmapped_notice_component_count": len(not_mapped),
+        "notice_components_with_source_license_path_candidates": matched,
+        "notice_components_without_direct_source_license_map": not_mapped,
+        "generator_direct_map_entry_count": len(components),
+        "generator_regex_map_entry_count": len(patterns),
+        "gn_desc_build_graph_independently_reproduced": False,
+        "mapped_license_texts_independently_verified": False,
+        "license_source_paths_prove_binary_linkage": False,
+        "transitive_license_spdx_clearance": False,
+    }
+
 def validate_producer(version: str, run: str, patch_texts: dict[str, str]) -> dict:
     fields = {}
     for line in version.splitlines():
@@ -267,6 +350,14 @@ def collect(*, fetcher=fetch_exact) -> dict:
             validate=True)
     except (binascii.Error, ValueError) as error:
         raise SourceEvidenceError("Invalid pinned upstream LICENSE encoding") from error
+    generator_encoded = fetcher(SOURCE_ROOT + SOURCE_LICENSE_GENERATOR_PATH + "?format=TEXT")
+    try:
+        generator = base64.b64decode(generator_encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise SourceEvidenceError("Invalid pinned generator Gitiles encoding") from error
+    if SOURCE_LICENSE_GENERATOR_PATH not in run:
+        raise SourceEvidenceError("Publisher no longer invokes expected GN notice generator")
+    license_generator_inventory = inspect_license_generator_snapshot(generator)
     root_licenses = {
         "upstream_webrtc": check_root_license(
             upstream_license, origin="webrtc_source"),
@@ -289,6 +380,7 @@ def collect(*, fetcher=fetch_exact) -> dict:
         "producer_archive_and_aar_notice_sha256": NOTICE_SHA256,
         "producer_archive_notice_bytes": NOTICE_BYTES,
         "root_license_text_evidence_not_transitive_clearance": root_licenses,
+        "upstream_exact_license_generator_not_sbom": license_generator_inventory,
         "source_snapshots_sha256": {
             path: hashlib.sha256(content.encode("utf-8")).hexdigest()
             for path, content in sources.items()
