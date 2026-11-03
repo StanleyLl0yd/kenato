@@ -202,7 +202,13 @@ for fragment in (
     'serviceOrigin.scheme != "https"',
     "val receivedAt = nowEpochSeconds()",
     "MessagingProtocol.validateEnvelope(envelope, receivedAt)",
-    "inbound.handle(envelope, receivedAt)",
+    "inbound.handleWithAckExpiry(envelope, receivedAt)",
+    "val voiceExpiry = outcome.voiceExpiresAtEpochSeconds",
+    "if (voiceExpiry != envelope.expiresAtEpochSeconds)",
+    "val encoded = MessagingWire.encodeClientFrame(MessagingClientFrame(ack = ack))",
+    "val dispatchTime = nowEpochSeconds()",
+    "if (dispatchTime < receivedAt)",
+    "if (dispatchTime >= voiceExpiry) return",
     "recovery.expireOutboundIfDue(",
     "sentThisConnection.contains(key)",
     "ensureSendAcceptanceTimeout(socket)",
@@ -232,6 +238,10 @@ for fragment in (
     "history.matchesAuthenticatedInboundEnvelope",
     "history.importInboundPendingAck",
     "sessions.completeInboundMessageHandoff",
+    "override fun handleWithAckExpiry(",
+    "voice?.hasDurableDuplicate(envelope, receivedAtEpochSeconds)",
+    "voice!!.importCommittedHandoff(ownerIdentityId, handoff, receivedAtEpochSeconds)",
+    "MessagingInboundAckOutcome(",
 ):
     require("android/app/src/main/java/com/sl/kenato/messaging/MessagingInboundDelivery.kt", inbound, fragment)
 forbid(
@@ -276,7 +286,10 @@ recovery = read(recovery_path)
 for fragment in (
     "fun recoverOutbound(",
     "includeInbound = false",
-    "if (includeInbound) recoverInbound(ownerIdentityId, handoff)",
+    "if (includeInbound) recoverInbound(ownerIdentityId, handoff, nowEpochSeconds)",
+    "if (voice != null && verifiedVoiceAcks == null)",
+    "verifiedPendingLiveReceipts(ownerIdentityId, now)",
+    "verifier.importCommittedHandoff(ownerIdentityId, handoff, now)",
     "history.importInboundPendingAck",
     "history.importOutboundPendingAcceptance",
     "val wasExpired = before.deliveryState == ConversationHistoryStateCodec.DELIVERY_STATE_EXPIRED",
@@ -351,6 +364,15 @@ required_tests = {
         "authenticatedConnectionReplaysExactDurableSendAndPendingAck",
         "expiredRecoveredSendIsTerminalizedBeforeSocketQueueing",
         "reconnectBackoffIsBoundedAndStopsAfterEightAutomaticRetries",
+        "slowLiveVoiceImportCannotEnqueueAckAfterExpiry",
+        "liveVoiceAckMaySendWhenImportFinishesBeforeDeadline",
+        "liveVoiceAckWithRegressedClockFailsClosed",
+        "liveVoiceAckRejectsWrongExpiryMetadata",
+        "lateDuplicateVoiceReceiveNeverResendsExpiredAck",
+        "slowLegacyM4TextAckKeepsExistingSemantics",
+    ),
+    "android/app/src/test/java/com/sl/kenato/messaging/MessagingTypedInboundDeliveryTest.kt": (
+        "authenticatedVoiceAckCarriesExpiryButTextAndLegacyDoNot",
     ),
     "android/app/src/test/java/com/sl/kenato/messaging/MessagingWssLiveFlushTest.kt": (
         "flushDurableWorkSendsNewlyStagedEnvelopeOnlyOncePerConnection",

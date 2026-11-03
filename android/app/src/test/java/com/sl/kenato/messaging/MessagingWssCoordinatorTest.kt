@@ -101,6 +101,85 @@ class MessagingWssCoordinatorTest {
     }
 
     @Test
+    fun delayedVoiceAckRecoveryDoesNotQueueExpiredAck() {
+        val fixture = Fixture()
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            emptyList(),
+            listOf(
+                MessagingRecoveredAck(
+                    PEER.copyOf(), messageId(31),
+                    expiresAtEpochSeconds = 101L,
+                    validatedAtEpochSeconds = 100L,
+                ),
+            ),
+        )
+        fixture.recovery.afterRecover = { fixture.now = 101L }
+        val socket = fixture.authenticate()
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size) // Authentication only, not an expired M5 ACK.
+    }
+
+    @Test
+    fun recoveredVoiceAckStillLiveAtFinalDispatchCanBeEnqueued() {
+        val fixture = Fixture()
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            emptyList(),
+            listOf(
+                MessagingRecoveredAck(
+                    PEER.copyOf(), messageId(32),
+                    expiresAtEpochSeconds = 102L,
+                    validatedAtEpochSeconds = 100L,
+                ),
+            ),
+        )
+        fixture.recovery.afterRecover = { fixture.now = 101L }
+        val socket = fixture.authenticate()
+        assertEquals(2, socket.sent.size)
+        val ack = MessagingWire.decodeClientFrame(socket.sent.last()).ack!!
+        assertArrayEquals(messageId(32), ack.messageId)
+    }
+
+    @Test
+    fun recoveredVoiceAckClockRollbackFailsClosedBeforeSocketDispatch() {
+        val fixture = Fixture()
+        fixture.recovery.plan = MessagingRecoveryPlan(
+            emptyList(),
+            listOf(
+                MessagingRecoveredAck(
+                    PEER.copyOf(), messageId(33),
+                    expiresAtEpochSeconds = 111L,
+                    validatedAtEpochSeconds = 100L,
+                ),
+            ),
+        )
+        fixture.recovery.afterRecover = { fixture.now = 99L }
+        val socket = fixture.authenticate()
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+    }
+
+    @Test
+    fun incompleteOrContradictoryVoiceAckExpiryProofFailsClosed() {
+        val malformed = listOf(
+            MessagingRecoveredAck(PEER.copyOf(), messageId(34), expiresAtEpochSeconds = 120L),
+            MessagingRecoveredAck(PEER.copyOf(), messageId(34), validatedAtEpochSeconds = 100L),
+            MessagingRecoveredAck(
+                PEER.copyOf(), messageId(34),
+                expiresAtEpochSeconds = 100L, validatedAtEpochSeconds = 100L,
+            ),
+        )
+        malformed.forEach { ack ->
+            val fixture = Fixture()
+            fixture.recovery.plan = MessagingRecoveryPlan(emptyList(), listOf(ack))
+            val socket = fixture.authenticate()
+            assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+            assertTrue(socket.cancelled)
+            assertEquals(1, socket.sent.size)
+        }
+    }
+
+    @Test
     fun delayedRecoveryPreflightCannotQueueExpiredEnvelope() {
         val fixture = Fixture()
         val envelope = outboundEnvelope(1)
@@ -243,6 +322,94 @@ class MessagingWssCoordinatorTest {
             assertArrayEquals(PEER, ack.senderIdentityId)
             assertArrayEquals(delivery.messageId, ack.messageId)
         }
+    }
+
+    @Test
+    fun slowLiveVoiceImportCannotEnqueueAckAfterExpiry() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(41)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size)
+        assertEquals(1, fixture.inbound.deliveries.size)
+    }
+
+    @Test
+    fun liveVoiceAckMaySendWhenImportFinishesBeforeDeadline() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(42)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds - 1 }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, socket.sent.size)
+        assertArrayEquals(delivery.messageId,
+            MessagingWire.decodeClientFrame(socket.sent.last()).ack!!.messageId)
+    }
+
+    @Test
+    fun liveVoiceAckWithRegressedClockFailsClosed() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(43)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = 99L }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+    }
+
+    @Test
+    fun liveVoiceAckRejectsWrongExpiryMetadata() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(44)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds + 1
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+    }
+
+    @Test
+    fun lateDuplicateVoiceReceiveNeverResendsExpiredAck() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(45)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        var calls = 0
+        fixture.inbound.afterHandle = {
+            calls++
+            fixture.now = if (calls == 1) delivery.expiresAtEpochSeconds - 1
+                else delivery.expiresAtEpochSeconds
+        }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, calls)
+        assertEquals(2, socket.sent.size) // Auth + first live ACK only.
+    }
+
+    @Test
+    fun slowLegacyM4TextAckKeepsExistingSemantics() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(46)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, socket.sent.size) // M4 text ACK unchanged.
     }
 
     @Test
@@ -503,8 +670,11 @@ class MessagingWssCoordinatorTest {
         val expiryCheckTimes = ArrayList<Long>()
         var expireAtOrAfter: Long? = null
         var afterExpiryCheck: ((Long) -> Unit)? = null
+        var afterRecover: (() -> Unit)? = null
 
-        override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = plan
+        override fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan = plan.also {
+            afterRecover?.invoke()
+        }
 
         override fun expireOutboundIfDue(
             ownerIdentityId: ByteArray,
@@ -541,6 +711,8 @@ class MessagingWssCoordinatorTest {
 
     private class FakeInbound : MessagingInboundDeliveryHandler {
         var result: MessagingDeliveryAck? = null
+        var voiceExpiry: Long? = null
+        var afterHandle: (() -> Unit)? = null
         val deliveries = ArrayList<MessagingEnvelope>()
         val receiveTimes = ArrayList<Long>()
 
@@ -551,6 +723,14 @@ class MessagingWssCoordinatorTest {
             deliveries += envelope
             receiveTimes += receivedAtEpochSeconds
             return result
+        }
+
+        override fun handleWithAckExpiry(
+            envelope: MessagingEnvelope,
+            receivedAtEpochSeconds: Long,
+        ): MessagingInboundAckOutcome? = handle(envelope, receivedAtEpochSeconds)?.let {
+            afterHandle?.invoke()
+            MessagingInboundAckOutcome(it, voiceExpiry)
         }
     }
 
