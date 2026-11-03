@@ -10,6 +10,30 @@ Research opened 2026-11-03, issue #88 and Draft PR #172. **Do not import vendor 
 - Producer archive `webrtc/NOTICE` and AAR `META-INF/NOTICE` are byte-for-byte the **same 214,353-byte notice**, SHA256 `e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9`. The generated AAR notice has **34 component headers**, including WebRTC, BoringSSL, libsrtp, libvpx, libaom, dav1d, opus, rnnoise, sframe and zlib. The publisher repository's separate source `NOTICE` is shorter than the generated archive/AAR notice; its SHA is inventoried separately. This proves the actual generated notice is bundled, **not** that its dependency and legal obligation inventory is complete or approved.
 - Producer `run.py` includes **21 ordered Android/Android SDK patches** affecting proxy, TURN/TLS certificate, JNI, audio and video APIs, packaging and GN. All 21 patch files were inspected at the pinned tag. **None alters the exact CVE-checked RTP/FEC/SDP source paths**; this does not prove unrelated patched transport code safe. Default Android GN flag `rtc_use_h264=false` remains. Separate upstream Android `android_simulcast.patch` does modify Java/JNI simulcast paths, unlike the unpatched generic m157 AAR claim; check actual runtime capabilities later and avoid blanket assertions.
 
+## Confirmed live research result — exact producer source (2026-11-03)
+
+[Exact-head pinned-source workflow 41628840395](https://github.com/StanleyLl0yd/kenato/actions/runs/41628840395) **PASS**. Report artifact **13227695090**, name `m5-shiguredo-m157-4-source-cve-and-patch-digests`; extracted `kenato-shiguredo-m157-patch-security.json` records **`PINNED_PATCH_SOURCE_FIXES_PASS_NOT_NATIVE_APPROVAL`**.
+
+The job fetched twelve exact Gitiles source files at WebRTC commit
+`95554e4a0c5c343fdc989387d9d0ce18e2a2294b`, separately SHA-256
+inventoried them, inspected the producer's exact `VERSION`, `run.py`,
+and **all 21 applied Android patch files**. Producer patch target paths:
+**74 distinct file paths**; none directly changed the twelve
+CVE-checked upstream source paths. Both Android `PATCHES` lists match,
+`rtc_use_h264=false` is present, and the CI source contract was verified.
+
+The actual source checks PASS for **CVE-2026-78891, CVE-2026-9962,
+CVE-2026-106268, CVE-2026-103631, CVE-2026-106357 and CVE-2026-118328**.
+The seventh tracked issue, CVE-2026-110137, remains a *Chromium Blink renderer
+component* exclusion, not an independent WebRTC source-fix claim.
+
+The actual embedded generated 214,353-byte NOTICE and publisher archive
+NOTICE were independently byte-identical; the shorter publisher *repository*
+NOTICE is not the generated one. The report stores their digest evidence
+separately. Source and archive provenance is **strong but not equivalent to
+independently reproducible native compilation, CVE exploitability review,
+third-party license clearance or real ARM64 JNI execution**.
+
 ## Security gates
 
 The dedicated offline tests and pinned Gitiles source workflow validate the *actual* WebRTC producer-declared commit (above), rather than merely the version number. Expected source fingerprints:
