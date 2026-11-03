@@ -41,12 +41,29 @@ def inspect_notice(notice: bytes) -> dict:
     if len(names) != len(COMPONENTS) or len(names) != len(set(names)) or set(names) != COMPONENTS:
         raise NoticeInventoryError("Generated NOTICE component attribution set changed")
     lengths = {}
+    section_digests = {}
     for i, match in enumerate(headers):
         part = text[match.end(): headers[i + 1].start() if i + 1 < len(headers)
                     else len(text)]
         if len(part) < 120 or "copyright" not in part.lower():
             raise NoticeInventoryError("Incomplete copyright terms for notice component " + names[i])
         lengths[names[i]] = len(part)
+        section_digests[names[i]] = hashlib.sha256(part.encode("utf-8")).hexdigest()
+    # This tracks NOTICE evidence, not verified upstream package identities,
+    # compiled linkage, SPDX licenses or permission to redistribute.
+    unresolved_licenses = [
+        {
+            "notice_component": name,
+            "notice_section_sha256": section_digests[name],
+            "license_declared_spdx": "NOASSERTION",
+            "license_concluded_spdx": "NOASSERTION",
+            "upstream_license_verified": False,
+            "native_linkage_verified": False,
+            "redistribution_obligations_reviewed": False,
+            "independent_license_signoff": False,
+        }
+        for name in sorted(names)
+    ]
     return {
         "status": "EXACT_EMBEDDED_NOTICE_COMPONENT_INVENTORY_PASS_NOT_LICENSE_CLEARANCE",
         "notice_sha256": NOTICE_SHA256,
@@ -54,6 +71,10 @@ def inspect_notice(notice: bytes) -> dict:
         "component_count": len(names),
         "component_attribution_lengths": lengths,
         "copyright_attributions_present_for_every_component": True,
+        "license_review_status": "BLOCKED_PARTIAL_NOTICE_INVENTORY_NOT_SPDX_CLEARANCE",
+        "license_components_reviewed_count": 0,
+        "license_components_pending_count": len(unresolved_licenses),
+        "component_license_gap_register": unresolved_licenses,
         "all_spdx_licenses_independently_classified": False,
         "native_link_closure_proven_by_notice_alone": False,
         "third_party_notice_obligations_fully_cleared": False,

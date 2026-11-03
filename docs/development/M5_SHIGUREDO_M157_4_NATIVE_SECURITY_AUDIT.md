@@ -49,6 +49,37 @@ This is an **attribution inventory, not an SPDX legal signoff**. Still map
 all actually linked/transitive third-party dependencies to the relevant
 redistribution notices, restrictions and eventual Kenato app packaging.
 
+## CI closure and component-by-component legal evidence register (2026-11-03)
+
+The exact research HEAD `fb2db1347cd489737990bc22f4ec6ba19f7c783a`
+completed [standard CI #41634239599](https://github.com/StanleyLl0yd/kenato/actions/runs/41634239599)
+successfully. Its exact-HEAD required matrix was **10/10 PASS, 0 FAIL**;
+this is **research CI**, not a native-vendor approval or M5 acceptance.
+Any subsequent research commit requires fresh exact-HEAD verification.
+
+The existing exact-digest `probe_shiguredo_m157_notice.py` now writes a
+**34-entry unresolved license gap register** to the *sanitized research JSON*
+for the SHA-pinned AAR notice. Every NOTICE section has a unique per-section
+SHA-256 evidence anchor; every attributed component explicitly remains
+`license_declared_spdx=NOASSERTION`,
+`license_concluded_spdx=NOASSERTION`, with no verified upstream license,
+linked native dependency, redistribution obligation or independent signoff.
+This is deliberately **NOT an SPDX SBOM** or legal classification. NOTICE
+sections are attribution headings, **not necessarily the exact native
+dependency closure**. The register cannot be promoted to a completed legal
+review simply because the 34 NOTICE headers are present.
+
+Independent release clearance still requires: (1) source/package identity
+and precise versions for each actual linked or otherwise redistributed
+component, including dependencies missing from NOTICE; (2) component-level
+SPDX license expressions from authoritative texts, exceptions and applicable
+copyleft/source-offer duties; (3) separate complete third-party
+redistribution conditions, approved text and user-visible legal access;
+(4) verification against the exact production AAB/split APK and signed vendor
+provenance or equivalent native-risk assessment. Zero of those 34 section
+records is independently cleared by the current evidence. No vendor,
+native JNI, legal or release acceptance is granted.
+
 ## Security-sensitive vendor patch review and scope restrictions
 
 The 21 applied publisher patches were inspected at exact tag SHA. Notable
@@ -104,8 +135,7 @@ reassemble, and verify `assets/legal/NOTICE` has the **exact same digest**
 while native ABI/DEX inventories remain unchanged. A follow-on exact-head
 research extension also builds the same disposable app as an **AAB** and
 checks `base/assets/legal/NOTICE` against that precise SHA-256 and length,
-with only ARM64 JNI and matching DEX counts. This AAB extension is **pending
-its own exact-head CI** and must not be called PASS before evidence exists.
+with only ARM64 JNI and matching DEX counts. This AAB extension was validated in the exact-head [pinned AAR/D8/AAB workflow #41634239623](https://github.com/StanleyLl0yd/kenato/actions/runs/41634239623) at `fb2db1347cd489737990bc22f4ec6ba19f7c783a`.
 An additional SHA-256-and-byte-pinned official bundletool 1.18.3 research
 step produces **device-targeted split APK sets** for representative ARM64
 Android API 29 and 34 profiles, verifies the exact notice survives into
@@ -115,8 +145,7 @@ but remains an offline, never-installed device-profile package test. No APK, AAB
 binary is uploaded: sanitized JSON only. The newest follow-up probe also
 calculates the ARM64 JNI ELF SHA-256 from the SHA-pinned original publisher AAR
 and requires **byte-identical ELF payloads** in both disposable APK builds,
-the AAB and both generated device-profile APK sets. This new proof is
-**pending its own exact-head CI** and is not yet accepted. A positive split
+the AAB and both generated device-profile APK sets. This ELF-preservation proof passed the same exact-head workflow at `fb2db1347cd489737990bc22f4ec6ba19f7c783a`; native instruction provenance and device safety remain **unapproved**. A positive split
 check cannot establish native CVE remediation, upstream C++-to-binary
 reproducibility, end-user legal-UI accessibility, full license obligations
 or runtime safety.

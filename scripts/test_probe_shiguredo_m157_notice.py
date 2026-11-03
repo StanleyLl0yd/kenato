@@ -23,6 +23,24 @@ class NoticeTests(unittest.TestCase):
             result = note.inspect_notice(data)
             self.assertEqual(result["component_count"], 34)
             self.assertFalse(result["third_party_notice_obligations_fully_cleared"])
+            self.assertEqual(
+                result["license_review_status"],
+                "BLOCKED_PARTIAL_NOTICE_INVENTORY_NOT_SPDX_CLEARANCE")
+            self.assertEqual(result["license_components_reviewed_count"], 0)
+            self.assertEqual(result["license_components_pending_count"], 34)
+            gaps = result["component_license_gap_register"]
+            self.assertEqual([item["notice_component"] for item in gaps],
+                             sorted(note.COMPONENTS))
+            self.assertEqual(len({item["notice_section_sha256"]
+                                  for item in gaps}), 34)
+            for item in gaps:
+                self.assertEqual(len(item["notice_section_sha256"]), 64)
+                self.assertEqual(item["license_declared_spdx"], "NOASSERTION")
+                self.assertEqual(item["license_concluded_spdx"], "NOASSERTION")
+                self.assertFalse(item["upstream_license_verified"])
+                self.assertFalse(item["native_linkage_verified"])
+                self.assertFalse(item["redistribution_obligations_reviewed"])
+                self.assertFalse(item["independent_license_signoff"])
             for tamper in (
                 data.replace(b"# webrtc\n", b"# other\n"),
                 data + b"# webrtc\nCopyright x\n",
