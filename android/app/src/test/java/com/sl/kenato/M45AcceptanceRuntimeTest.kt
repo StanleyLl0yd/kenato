@@ -223,6 +223,88 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun partiallyStartedWssIsStoppedBeforeAnyLaterTrustMutation() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        fixture.messaging.failStartAfterActivation = true
+
+        assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
+        assertFalse(fixture.messaging.started)
+        assertEquals(
+            listOf("identity.load", "messaging.start", "messaging.stop"),
+            fixture.events,
+        )
+        fixture.events.clear()
+        runtime.createInvite()
+        assertFalse(fixture.messaging.started)
+        assertFalse(fixture.events.contains("messaging.start"))
+        runtime.close()
+    }
+
+    @Test
+    fun partiallyStartedWssDuringTrustRestartIsStoppedAndNeedsFreshStart() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        fixture.events.clear()
+        fixture.messaging.failStartAfterActivation = true
+
+        assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
+        assertFalse(fixture.messaging.started)
+        assertEquals(
+            listOf(
+                "messaging.stop", "identity.load", "contacts.publish",
+                "sessions.maintain", "contacts.create", "messaging.start",
+                "messaging.stop",
+            ),
+            fixture.events,
+        )
+        fixture.messaging.failStartAfterActivation = false
+        runtime.startMessaging()
+        assertTrue(fixture.messaging.started)
+        runtime.close()
+    }
+
+    @Test
+    fun failedWssStopAbortsMutationAndPermanentlyClosesRuntime() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        fixture.events.clear()
+        fixture.messaging.failStopAfterAttempt = true
+
+        assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
+        assertEquals(listOf("messaging.stop", "messaging.close"), fixture.events)
+        assertFalse(fixture.messaging.started)
+        assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
+        assertThrows(IllegalStateException::class.java) {
+            runtime.sendText(ByteArray(32) { 2 }, "not staged")
+        }
+        runtime.close()
+    }
+
+    @Test
+    fun partialWssStartAndStopFailureClosesRuntimeWithBothCauses() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        fixture.messaging.failStartAfterActivation = true
+        fixture.messaging.failStopAfterAttempt = true
+
+        val failure = assertThrows(IllegalStateException::class.java) {
+            runtime.startMessaging()
+        }
+        assertEquals(1, failure.suppressed.size)
+        assertFalse(fixture.messaging.started)
+        assertEquals(
+            listOf("identity.load", "messaging.start", "messaging.stop", "messaging.close"),
+            fixture.events,
+        )
+        assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
+        runtime.close()
+    }
+
+    @Test
     fun closedRuntimeCannotRestartWssOrStageNewOutgoingWork() {
         val fixture = Fixture()
         val runtime = fixture.runtime()
@@ -384,16 +466,24 @@ class M45AcceptanceRuntimeTest {
         private val events: MutableList<String>,
     ) : M45MessagingBoundary {
         var started = false
+        var failStartAfterActivation = false
+        var failStopAfterAttempt = false
         var startEntered: CountDownLatch? = null
 
         override fun start() {
             startEntered?.countDown()
             events += "messaging.start"
             started = true
+            if (failStartAfterActivation) {
+                throw IllegalStateException("simulated partial WSS start")
+            }
         }
 
         override fun stop() {
             events += "messaging.stop"
+            if (failStopAfterAttempt) {
+                throw IllegalStateException("simulated failed WSS stop")
+            }
             started = false
         }
 
@@ -422,6 +512,7 @@ class M45AcceptanceRuntimeTest {
         )
 
         override fun close() {
+            events += "messaging.close"
             started = false
         }
     }

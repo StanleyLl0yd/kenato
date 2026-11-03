@@ -137,3 +137,20 @@ start, trust mutation and outbound staging cannot reuse a closed runtime; stop
 and close remain idempotent. A JVM regression checks denied reopen/staging.
 This does not replace Android lifecycle/device tests or the missing shared
 M2/M3/WSS/effect transaction.
+
+## Partial WSS start and failed-stop fencing
+
+A WSS `start()` call may activate transport before throwing; treating that
+exception as "not started" could leave a live socket through a later contact
+or M3 trust mutation. The acceptance runtime now attempts explicit `stop()`
+on any failed start, including the automatic post-mutation restart. When
+`stop()` itself fails, it closes the messaging boundary, marks the runtime
+terminal and rejects all subsequent starts, trust mutations and text staging.
+A failed pre-mutation stop aborts before any M2/M3 trust operation. Four JVM
+fault-injection tests cover partial start, post-mutation restart, failed
+pre-mutation stop and combined start+stop failure with suppressed causality.
+
+This still cannot prove that an underlying native/OEM socket has stopped when
+both stop and close fail, nor protect other runtime instances, different
+processes or future M5 effects. It is a local fail-closed control improvement,
+not permission to activate audio or merge the security Draft.

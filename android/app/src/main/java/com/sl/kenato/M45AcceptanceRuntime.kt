@@ -179,16 +179,14 @@ internal class M45AcceptanceRuntime(
                 throw IllegalStateException("Transport start was superseded by a trust mutation")
             }
             identity.loadOrCreate()
-            messaging.start()
-            messagingStarted = true
+            startMessagingGuarded()
         }
     }
 
     @Synchronized
     fun stopMessaging() {
         if (closed) return
-        messagingStarted = false
-        messaging.stop()
+        stopMessagingGuarded()
     }
 
     fun messagingState(): MessagingWssState = messaging.currentState()
@@ -232,16 +230,10 @@ internal class M45AcceptanceRuntime(
         trustMutationEpoch++ // Odd: mutation in progress.
         try {
             val restart = messagingStarted
-            if (restart) {
-                messagingStarted = false
-                messaging.stop()
-            }
+            if (restart) stopMessagingGuarded()
             return try {
                 block().also {
-                    if (restart) {
-                        messaging.start()
-                        messagingStarted = true
-                    }
+                    if (restart) startMessagingGuarded()
                 }
             } catch (error: Exception) {
                 // Failure leaves the WSS stopped. A later fresh user request is needed.
@@ -249,6 +241,43 @@ internal class M45AcceptanceRuntime(
             }
         } finally {
             trustMutationEpoch++ // Even: queued starts must validate generation.
+        }
+    }
+
+    /** Failed WSS starts can occur after a socket or scheduler was activated. */
+    private fun startMessagingGuarded() {
+        try {
+            messaging.start()
+            messagingStarted = true
+        } catch (error: Exception) {
+            messagingStarted = false
+            try {
+                messaging.stop()
+            } catch (stopError: Exception) {
+                error.addSuppressed(stopError)
+                terminateTransportAfterFailedStop(error)
+            }
+            throw error
+        }
+    }
+
+    /** Never execute a trust mutation if transport quiescence is uncertain. */
+    private fun stopMessagingGuarded() {
+        messagingStarted = false
+        try {
+            messaging.stop()
+        } catch (error: Exception) {
+            terminateTransportAfterFailedStop(error)
+            throw error
+        }
+    }
+
+    private fun terminateTransportAfterFailedStop(error: Exception) {
+        closed = true
+        try {
+            messaging.close()
+        } catch (closeError: Exception) {
+            error.addSuppressed(closeError)
         }
     }
 
