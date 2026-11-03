@@ -325,6 +325,94 @@ class MessagingWssCoordinatorTest {
     }
 
     @Test
+    fun slowLiveVoiceImportCannotEnqueueAckAfterExpiry() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(41)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(1, socket.sent.size)
+        assertEquals(1, fixture.inbound.deliveries.size)
+    }
+
+    @Test
+    fun liveVoiceAckMaySendWhenImportFinishesBeforeDeadline() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(42)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds - 1 }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, socket.sent.size)
+        assertArrayEquals(delivery.messageId,
+            MessagingWire.decodeClientFrame(socket.sent.last()).ack!!.messageId)
+    }
+
+    @Test
+    fun liveVoiceAckWithRegressedClockFailsClosed() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(43)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        fixture.inbound.afterHandle = { fixture.now = 99L }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+    }
+
+    @Test
+    fun liveVoiceAckRejectsWrongExpiryMetadata() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(44)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds + 1
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.sent.size)
+    }
+
+    @Test
+    fun lateDuplicateVoiceReceiveNeverResendsExpiredAck() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(45)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        var calls = 0
+        fixture.inbound.afterHandle = {
+            calls++
+            fixture.now = if (calls == 1) delivery.expiresAtEpochSeconds - 1
+                else delivery.expiresAtEpochSeconds
+        }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, calls)
+        assertEquals(2, socket.sent.size) // Auth + first live ACK only.
+    }
+
+    @Test
+    fun slowLegacyM4TextAckKeepsExistingSemantics() {
+        val fixture = Fixture()
+        val delivery = inboundEnvelope(46)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.afterHandle = { fixture.now = delivery.expiresAtEpochSeconds }
+        val socket = fixture.authenticate()
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+        assertEquals(MessagingWssState.AUTHENTICATED, fixture.coordinator.currentState())
+        assertEquals(2, socket.sent.size) // M4 text ACK unchanged.
+    }
+
+    @Test
     fun mismatchedDeliveryAckFailsClosedWithoutReconnect() {
         val fixture = Fixture()
         val delivery = inboundEnvelope(3)
@@ -623,6 +711,8 @@ class MessagingWssCoordinatorTest {
 
     private class FakeInbound : MessagingInboundDeliveryHandler {
         var result: MessagingDeliveryAck? = null
+        var voiceExpiry: Long? = null
+        var afterHandle: (() -> Unit)? = null
         val deliveries = ArrayList<MessagingEnvelope>()
         val receiveTimes = ArrayList<Long>()
 
@@ -633,6 +723,14 @@ class MessagingWssCoordinatorTest {
             deliveries += envelope
             receiveTimes += receivedAtEpochSeconds
             return result
+        }
+
+        override fun handleWithAckExpiry(
+            envelope: MessagingEnvelope,
+            receivedAtEpochSeconds: Long,
+        ): MessagingInboundAckOutcome? = handle(envelope, receivedAtEpochSeconds)?.let {
+            afterHandle?.invoke()
+            MessagingInboundAckOutcome(it, voiceExpiry)
         }
     }
 

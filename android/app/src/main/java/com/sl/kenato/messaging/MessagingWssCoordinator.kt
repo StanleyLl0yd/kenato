@@ -110,8 +110,22 @@ internal class DurableMessagingRecoveryDriver(
  * decrypted inner-context validation. They may return an ACK only after the exact delivery is
  * already represented durably in authenticated local history.
  */
+/** Internal-only metadata from authenticated M3, never a relay claim or wire field. */
+internal data class MessagingInboundAckOutcome(
+    val ack: MessagingDeliveryAck,
+    val voiceExpiresAtEpochSeconds: Long? = null,
+)
+
 internal fun interface MessagingInboundDeliveryHandler {
     fun handle(envelope: MessagingEnvelope, receivedAtEpochSeconds: Long): MessagingDeliveryAck?
+
+    /** The default M4 text path preserves its existing ACK semantics. */
+    fun handleWithAckExpiry(
+        envelope: MessagingEnvelope,
+        receivedAtEpochSeconds: Long,
+    ): MessagingInboundAckOutcome? = handle(envelope, receivedAtEpochSeconds)?.let {
+        MessagingInboundAckOutcome(it)
+    }
 }
 
 internal interface MessagingScheduledTask {
@@ -426,15 +440,34 @@ internal class MessagingWssCoordinator(
         if (!envelope.recipientIdentityId.contentEquals(owner)) {
             throw MessagingWssException("M4 delivery recipient does not match authenticated identity")
         }
-        val ack = inbound.handle(envelope, receivedAt) ?: return
+        val outcome = inbound.handleWithAckExpiry(envelope, receivedAt) ?: return
+        val ack = outcome.ack
         if (
             !ack.senderIdentityId.contentEquals(envelope.senderIdentityId) ||
             !ack.messageId.contentEquals(envelope.messageId)
         ) {
             throw MessagingWssException("M4 delivery handler returned a mismatched ACK")
         }
-        // ACK is idempotent server-side. Track the key for RETRY_LATER correlation but still re-ACK
-        // an authenticated duplicate delivery so an earlier queued ACK cannot strand server state.
+        val voiceExpiry = outcome.voiceExpiresAtEpochSeconds
+        if (voiceExpiry != null) {
+            if (voiceExpiry != envelope.expiresAtEpochSeconds) {
+                throw MessagingWssException("Authenticated M5 ACK expiry does not match ciphertext")
+            }
+            // Serialize before the last trusted-clock sample; the native/Keystore
+            // commit may have crossed the M5 deadline since receive-time validation.
+            val encoded = MessagingWire.encodeClientFrame(MessagingClientFrame(ack = ack))
+            val dispatchTime = nowEpochSeconds()
+            if (dispatchTime < receivedAt) {
+                throw MessagingWssException("M5 inbound ACK clock regressed before socket dispatch")
+            }
+            if (dispatchTime >= voiceExpiry) return
+            recoveredAcksSentThisConnection.add(MessageKey(ack.senderIdentityId, ack.messageId))
+            if (!socket.sendBinary(encoded)) {
+                throw MessagingWssRetryException("Unable to enqueue M5 WebSocket ACK")
+            }
+            return
+        }
+        // Preserve M4 text ACK and duplicate delivery behavior without a voice TTL policy.
         recoveredAcksSentThisConnection.add(MessageKey(ack.senderIdentityId, ack.messageId))
         sendFrame(socket, MessagingClientFrame(ack = ack))
     }
