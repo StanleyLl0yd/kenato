@@ -285,3 +285,19 @@ runtime selection uses an explicit branch rather than an Elvis
 expression. No transport protocol, E2EE ciphertext format, or voice
 runtime activation changes. Cross-process pin writers remain blocked
 by separate M5 release gates.
+
+## Poisoned WSS callback suppression
+
+Serializing callbacks under the process gate alone did not prevent late
+callbacks from running **after** a failed WSS stop poisoned that gate.
+An uncertain cancel could therefore have left a stale OkHttp callback
+able to attempt inbound M3 recovery or ACK even though new runtime
+operations were blocked. Android-created socket callbacks and all retry
+tasks now check `processGate.permitsTransportCallbacks()` while holding
+the gate, immediately before calling the coordinator. If poisoned, the
+callback is discarded without ratchet, ACK, reconnect, or new task.
+The standalone synthetic wrapper defaults to a permissive predicate
+only for off-production unit probes; actual Android wiring always
+supplies the shared poisoned-gate predicate. One JVM regression covers
+all four listener methods and the retry scheduler after poison.
+No native JNI, cross-process recovery, or M5 effect activation occurs.

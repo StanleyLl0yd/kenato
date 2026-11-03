@@ -8,25 +8,26 @@ package com.sl.kenato.messaging
 internal class SerializedMessagingSocketFactory(
     private val delegate: MessagingSocketFactory,
     private val ownerMonitor: Any,
+    private val permitCallback: () -> Boolean = { true },
 ) : MessagingSocketFactory {
     override fun create(url: String, listener: MessagingSocketListener): MessagingSocket =
         delegate.create(url, object : MessagingSocketListener {
             override fun onOpen(socket: MessagingSocket) = synchronized(ownerMonitor) {
-                listener.onOpen(socket)
+                if (permitCallback()) listener.onOpen(socket)
             }
 
             override fun onBinaryMessage(socket: MessagingSocket, value: ByteArray) =
                 synchronized(ownerMonitor) {
-                    listener.onBinaryMessage(socket, value)
+                    if (permitCallback()) listener.onBinaryMessage(socket, value)
                 }
 
             override fun onClosed(socket: MessagingSocket) = synchronized(ownerMonitor) {
-                listener.onClosed(socket)
+                if (permitCallback()) listener.onClosed(socket)
             }
 
             override fun onFailure(socket: MessagingSocket, error: Throwable) =
                 synchronized(ownerMonitor) {
-                    listener.onFailure(socket, error)
+                    if (permitCallback()) listener.onFailure(socket, error)
                 }
         })
 }
@@ -38,9 +39,12 @@ internal class SerializedMessagingSocketFactory(
 internal class SerializedMessagingRetryScheduler(
     private val delegate: MessagingRetryScheduler,
     private val ownerMonitor: Any,
+    private val permitCallback: () -> Boolean = { true },
 ) : MessagingRetryScheduler {
     override fun schedule(delayMillis: Long, task: () -> Unit): MessagingScheduledTask =
         delegate.schedule(delayMillis) {
-            synchronized(ownerMonitor) { task() }
+            synchronized(ownerMonitor) {
+                if (permitCallback()) task()
+            }
         }
 }

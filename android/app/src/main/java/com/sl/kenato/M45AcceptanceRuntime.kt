@@ -152,9 +152,14 @@ internal class M45ProcessTransportGate {
         if (activeOwner === requester) activeOwner = null
     }
 
+    @Synchronized
     fun poison() {
         poisoned = true
     }
+
+    /** Checked under the same gate lock immediately before any async WSS callback. */
+    @Synchronized
+    fun permitsTransportCallbacks(): Boolean = !poisoned
 }
 
 private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
@@ -467,10 +472,14 @@ private class AndroidM45MessagingBoundary(
         history = history,
     )
     private val scheduler = ExecutorMessagingRetryScheduler()
-    private val gatedScheduler = SerializedMessagingRetryScheduler(scheduler, processGate)
+    private val gatedScheduler = SerializedMessagingRetryScheduler(
+        scheduler, processGate, processGate::permitsTransportCallbacks,
+    )
     private val wss = MessagingWssCoordinator(
         serviceOrigin = serviceOrigin,
-        sockets = SerializedMessagingSocketFactory(OkHttpMessagingSocketFactory(), processGate),
+        sockets = SerializedMessagingSocketFactory(
+            OkHttpMessagingSocketFactory(), processGate, processGate::permitsTransportCallbacks,
+        ),
         identity = LocalMessagingIdentityAuthenticator(identityRepository),
         recovery = DurableMessagingRecoveryDriver(recovery),
         inbound = DurableMessagingInboundDeliveryHandler(

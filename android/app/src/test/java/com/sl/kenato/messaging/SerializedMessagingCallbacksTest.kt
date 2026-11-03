@@ -1,5 +1,6 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.M45ProcessTransportGate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -9,6 +10,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SerializedMessagingCallbacksTest {
+    @Test
+    fun poisonedProcessGateDropsAllLateSocketAndSchedulerCallbacks() {
+        val gate = M45ProcessTransportGate()
+        val sockets = FakeSocketFactory()
+        val invoked = CountDownLatch(5)
+        val listener = object : MessagingSocketListener {
+            override fun onOpen(socket: MessagingSocket) { invoked.countDown() }
+            override fun onBinaryMessage(socket: MessagingSocket, value: ByteArray) {
+                invoked.countDown()
+            }
+            override fun onClosed(socket: MessagingSocket) { invoked.countDown() }
+            override fun onFailure(socket: MessagingSocket, error: Throwable) {
+                invoked.countDown()
+            }
+        }
+        val socket = SerializedMessagingSocketFactory(
+            sockets, gate, gate::permitsTransportCallbacks,
+        ).create("wss://example.test/v1/messaging/ws", listener)
+        val scheduler = FakeScheduler()
+        SerializedMessagingRetryScheduler(
+            scheduler, gate, gate::permitsTransportCallbacks,
+        ).schedule(50L) { invoked.countDown() }
+
+        gate.poison()
+        sockets.callback.onOpen(socket)
+        sockets.callback.onBinaryMessage(socket, byteArrayOf(1))
+        sockets.callback.onClosed(socket)
+        sockets.callback.onFailure(socket, IllegalStateException("synthetic failure"))
+        scheduler.fire()
+        assertEquals(5L, invoked.count)
+        assertFalse(gate.permitsTransportCallbacks())
+    }
+
     @Test
     fun everySocketCallbackWaitsForTheOwnerMonitorBeforeEnteringCoordinator() {
         val monitor = Any()
