@@ -95,7 +95,7 @@ def fetch_exact(url: str, *, runner=subprocess.run, sleeper=time.sleep) -> bytes
             ], capture_output=True, timeout=42, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise SourceEvidenceError("Pinned producer/source fetch failed") from error
-        payload, split, status = reply.stdout.rpartition(b"\\n@@KENATO_STATUS:")
+        payload, split, status = reply.stdout.rpartition(b"\n@@KENATO_STATUS:")
         if reply.returncode == 0 and split and status == b"200" and (
             payload and len(payload) <= maximum
         ):

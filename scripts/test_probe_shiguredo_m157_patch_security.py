@@ -26,6 +26,18 @@ class PatchSecurityTests(unittest.TestCase):
             with self.assertRaises(target.SourceEvidenceError):
                 target.allowed_url(url)
 
+    def test_curl_status_marker_is_real_newline_not_literal_escape(self):
+        url = target.PRODUCER_ROOT + "VERSION"
+        def runner(argv, **kwargs):
+            return mock.Mock(
+                returncode=0,
+                stdout=b"WEBRTC_BUILD_VERSION=157.8103.4.0" +
+                       bytes([10]) + b"@@KENATO_STATUS:200")
+        self.assertEqual(target.fetch_exact(
+            url, runner=runner,
+            sleeper=lambda _: self.fail("Valid response must not retry")),
+            b"WEBRTC_BUILD_VERSION=157.8103.4.0")
+
     def test_gitiles_transient_retry_preserves_exact_url(self):
         url = target.SOURCE_ROOT + target.SOURCE_PATHS[0] + "?format=TEXT"
         calls = []
@@ -36,7 +48,7 @@ class PatchSecurityTests(unittest.TestCase):
             status = b"503" if len(calls) < 3 else b"200"
             return mock.Mock(returncode=0, stdout=(
                 b"valid-source-content" if status == b"200" else b"temporary"
-            ) + b"\\n@@KENATO_STATUS:" + status)
+            ) + b"\n@@KENATO_STATUS:" + status)
 
         self.assertEqual(target.fetch_exact(url, runner=runner,
                                             sleeper=sleeps.append),
@@ -49,7 +61,7 @@ class PatchSecurityTests(unittest.TestCase):
 
         def always_503(argv, **kwargs):
             return mock.Mock(returncode=0,
-                             stdout=b"temporary\\n@@KENATO_STATUS:503")
+                             stdout=b"temporary\n@@KENATO_STATUS:503")
 
         with self.assertRaises(target.SourceEvidenceError):
             target.fetch_exact(url, runner=always_503,
@@ -60,7 +72,7 @@ class PatchSecurityTests(unittest.TestCase):
         def never_retry_404(argv, **kwargs):
             attempted.append(1)
             return mock.Mock(returncode=0,
-                             stdout=b"not found\\n@@KENATO_STATUS:404")
+                             stdout=b"not found\n@@KENATO_STATUS:404")
         with self.assertRaises(target.SourceEvidenceError):
             target.fetch_exact(url, runner=never_retry_404,
                                sleeper=lambda _: self.fail("404 must not retry"))
