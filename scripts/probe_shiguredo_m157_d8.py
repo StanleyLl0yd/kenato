@@ -78,15 +78,16 @@ def inspect_arm64_apk(path: Path) -> dict:
 
 
 def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
-            runner=subprocess.run) -> dict:
+            runner=subprocess.run, tag: str = m157.TAG) -> dict:
     if not wrapper.is_file():
         raise D8ResearchError("Gradle wrapper missing")
     with tempfile.TemporaryDirectory(prefix="kenato-m157-jdk25-d8-") as tmp:
         base = Path(tmp)
         vendor = base / "m157.aar"
-        digest, size = downloader(m157.RELEASE_URL, vendor, max_bytes=m157.MAX_BYTES)
-        m157.verify_observation(digest, size)
-        m157.inspect_pinned_aar(vendor)
+        url, _size, _sha, _producer, _source = m157.candidate(tag)
+        digest, size = downloader(url, vendor, max_bytes=m157.MAX_BYTES)
+        m157.verify_observation(digest, size, tag=tag)
+        m157.inspect_pinned_aar(vendor, tag=tag)
         root = base / "disposable"
         write_arm64_probe(root, vendor)
         try:
@@ -97,20 +98,26 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             raise D8ResearchError("Disposable AGP D8 build timed out") from error
         if result.returncode != 0:
             raise D8ResearchError("Disposable AGP D8 build failed")
-        return inspect_arm64_apk(root / "app/build/outputs/apk/debug/app-debug.apk")
+        report = inspect_arm64_apk(root / "app/build/outputs/apk/debug/app-debug.apk")
+        report["publisher_tag"] = tag
+        report["publisher_asset_sha256"] = digest
+        report["producer_source_revision_UNVERIFIED_IN_BINARY"] = _source
+        return report
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gradlew", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tag", choices=(m157.TAG, m157.PATCH_TAG), default=m157.TAG)
     options = parser.parse_args()
     try:
-        result = collect(options.gradlew)
+        result = collect(options.gradlew, tag=options.tag)
     except (D8ResearchError, m157.CandidateProbeError, evidence.EvidenceError,
             evidence.audit.AarAuditError, OSError, zipfile.BadZipFile) as error:
         result = {
             "status": "JDK25_D8_RESEARCH_BLOCKED",
+            "publisher_tag": options.tag,
             "failure": type(error).__name__,
             "detail": str(error)[:160],
             "JNI_executed": False,

@@ -41,6 +41,30 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
             with self.assertRaisesRegex(d8.D8ResearchError, "ABI"):
                 d8.inspect_arm64_apk(path)
 
+    def test_newer_patch_uses_independent_pinned_asset_and_never_builds_on_old_digest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            wrapper = Path(temp) / "gradlew"
+            wrapper.write_text("#!/bin/sh\n")
+
+            def stale_download(url, target, *, max_bytes):
+                self.assertEqual(url, d8.m157.PATCH_RELEASE_URL)
+                target.write_bytes(b"wrong candidate")
+                return d8.m157.EXPECTED_SHA256, d8.m157.EXPECTED_SIZE
+
+            with mock.patch.object(d8, "subprocess") as process:
+                with self.assertRaises(d8.m157.CandidateProbeError):
+                    d8.collect(wrapper, downloader=stale_download, tag=d8.m157.PATCH_TAG)
+                process.run.assert_not_called()
+
+    def test_newer_patch_rejects_unreviewed_tag_before_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            wrapper = Path(temp) / "gradlew"
+            wrapper.write_text("#!/bin/sh\n")
+            with mock.patch.object(d8, "subprocess") as process:
+                with self.assertRaises(d8.m157.CandidateProbeError):
+                    d8.collect(wrapper, tag="m158.unreviewed")
+                process.run.assert_not_called()
+
     def test_wrong_release_digest_never_starts_gradle(self):
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp) / "gradlew"

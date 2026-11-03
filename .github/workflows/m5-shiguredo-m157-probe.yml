@@ -63,9 +63,9 @@ jobs:
           retention-days: 7
 
   disposable-jdk25-d8:
-    name: Test Java25 AAR with JDK25, AGP9.4 and arm64 D8 (not production)
+    name: Test old and patch Java25 AAR with JDK25, AGP9.4 and arm64 D8
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 65
     permissions:
       contents: read
     steps:
@@ -100,17 +100,24 @@ jobs:
           "build-tools;37.0.0"
       - name: Offline disposable smoke tests
         run: python3 scripts/test_probe_shiguredo_m157_d8.py
-      - name: Build disposable JDK25 ARM64 test app using published prebuilt AAR
+      - name: Build disposable JDK25 ARM64 test app using original prebuilt AAR
         run: >
           python3 scripts/probe_shiguredo_m157_d8.py
           --gradlew ./gradlew
           --output /tmp/kenato-m157-jdk25-d8.json
+      - name: Build separate disposable JDK25 ARM64 test app using m157 patch prebuilt AAR
+        run: >
+          python3 scripts/probe_shiguredo_m157_d8.py --tag m157.8103.4.0
+          --gradlew ./gradlew
+          --output /tmp/kenato-m157-patch-jdk25-d8.json
       - name: Upload research JSON only (no AAR/APK)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m157-jdk25-d8-research
-          path: /tmp/kenato-m157-jdk25-d8.json
+          path: |
+            /tmp/kenato-m157-jdk25-d8.json
+            /tmp/kenato-m157-patch-jdk25-d8.json
           if-no-files-found: ignore
           retention-days: 7
 
