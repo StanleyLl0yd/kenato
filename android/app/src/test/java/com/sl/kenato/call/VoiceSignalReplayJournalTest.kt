@@ -132,6 +132,51 @@ class VoiceSignalReplayJournalTest {
     }
 
     @Test
+    fun oldAuthenticJournalFileCanReenableAlreadyClaimedEffect_releaseBlocker() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 710), NOW)
+        val permit = journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        val unclaimedSnapshot = store.bytes!!.copyOf()
+        assertTrue(journal.claimLiveDispatchPermit(OWNER, permit, NOW))
+        assertFalse(VoiceSignalReplayJournal(store).claimLiveDispatchPermit(OWNER, permit, NOW))
+
+        // This test PROVES THE ROLLBACK FLAW, not at-most-once security.
+        // A file-only attacker replays an authentic pre-claim AtomicFile snapshot.
+        store.bytes = unclaimedSnapshot
+        assertTrue(VoiceSignalReplayJournal(store).claimLiveDispatchPermit(OWNER, permit, NOW))
+    }
+
+    @Test
+    fun recomputedUnkeyedJournalChecksumCanResetClaim_releaseBlocker() {
+        val store = MemoryStore()
+        val journal = VoiceSignalReplayJournal(store)
+        journal.importAuthenticatedInboundHandoff(OWNER, handoff(message = 711), NOW)
+        val permit = journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        assertTrue(journal.claimLiveDispatchPermit(OWNER, permit, NOW))
+        val authenticatedBeforeAttack = VoiceSignalReplayStateCodec.decode(store.bytes!!)
+        val claimed = authenticatedBeforeAttack.records.single()
+        assertTrue(claimed.dispatchClaimed)
+
+        // The v2 file's SHA-256 footer is an *unkeyed* checksum. It does not
+        // authenticate effect-claim freshness against a disk-writing attacker.
+        val forged = VoiceSignalReplayRecord(
+            claimed.peerIdentityId.copyOf(),
+            claimed.messageId.copyOf(),
+            claimed.callId.copyOf(),
+            claimed.kind,
+            claimed.expiresAtEpochSeconds,
+            claimed.envelopeDigest.copyOf(),
+            suppressedOffer = claimed.suppressedOffer,
+            dispatchClaimed = false,
+        )
+        store.bytes = VoiceSignalReplayStateCodec.encode(
+            VoiceSignalReplayState(OWNER.copyOf(), listOf(forged)),
+        )
+        assertTrue(VoiceSignalReplayJournal(store).claimLiveDispatchPermit(OWNER, permit, NOW))
+    }
+
+    @Test
     fun differentJournalInstancesCannotClaimTheSameEventConcurrently() {
         val store = MemoryStore()
         VoiceSignalReplayJournal(store).importAuthenticatedInboundHandoff(
