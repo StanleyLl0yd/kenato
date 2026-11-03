@@ -34,6 +34,21 @@ separately. Source and archive provenance is **strong but not equivalent to
 independently reproducible native compilation, CVE exploitability review,
 third-party license clearance or real ARM64 JNI execution**.
 
+## Generated binary NOTICE audit
+
+The full **34-section** actual AAR `META-INF/NOTICE` records attribution
+for WebRTC, its codec/security libraries and bundled third parties. A new
+exact-digest, no-native-code test inventories every top-level component,
+rejects duplicates/omissions and verifies a nontrivial copyright/permission
+text exists for each. It uses the independently verified 214,353-byte
+SHA256 `e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9`
+from the producer archive and published AAR. The source repository's
+different short NOTICE must not be substituted for this generated text.
+
+This is an **attribution inventory, not an SPDX legal signoff**. Still map
+all actually linked/transitive third-party dependencies to the relevant
+redistribution notices, restrictions and eventual Kenato app packaging.
+
 ## Security gates
 
 The dedicated offline tests and pinned Gitiles source workflow validate the *actual* WebRTC producer-declared commit (above), rather than merely the version number. Expected source fingerprints:
