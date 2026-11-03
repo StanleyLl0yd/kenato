@@ -33,7 +33,14 @@ def write_arm64_probe(root: Path, vendor_aar: Path) -> None:
     text = gradle.read_text(encoding="utf-8")
     if text.count(DEFAULT_ABIS) != 1:
         raise D8ResearchError("Unrecognized upstream disposable ABI fixture")
-    gradle.write_text(text.replace(DEFAULT_ABIS, RESEARCH_ABIS), encoding="utf-8")
+    updated = text.replace(DEFAULT_ABIS, RESEARCH_ABIS)
+    anchor = "    targetSdk 37\n"
+    if updated.count(anchor) != 1:
+        raise D8ResearchError("Unrecognized disposable version metadata fixture")
+    updated = updated.replace(
+        anchor, anchor + "    versionCode 1\n    versionName '0.0.0-research'\n"
+    )
+    gradle.write_text(updated, encoding="utf-8")
 
 
 NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"

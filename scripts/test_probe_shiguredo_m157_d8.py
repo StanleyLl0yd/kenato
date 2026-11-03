@@ -23,6 +23,8 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
             self.assertNotIn(d8.DEFAULT_ABIS, script)
             self.assertIn("compileSdk 37", script)
             self.assertIn("VERSION_17", script)
+            self.assertIn("versionCode 1", script)
+            self.assertIn("versionName '0.0.0-research'", script)
 
     def test_disposable_apk_fails_closed_without_dex(self):
         with tempfile.TemporaryDirectory() as temp:
