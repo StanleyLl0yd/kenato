@@ -226,7 +226,7 @@ def inspect_license_generator_snapshot(payload: bytes) -> dict:
         if not components.get(key):
             raise SourceEvidenceError("Expected source license component absent: " + key)
     if components["webrtc"] != ["LICENSE"] or not (
-        "gn desc" in script and "generate_license_text" in script
+        "gn desc" in script.casefold() and "generate_license_text" in script
     ):
         raise SourceEvidenceError("License generator GN/root contract changed")
     matched = {
@@ -250,6 +250,13 @@ def inspect_license_generator_snapshot(payload: bytes) -> dict:
         "license_source_paths_prove_binary_linkage": False,
         "transitive_license_spdx_clearance": False,
     }
+
+def has_exact_notice_generator_invocation(producer_run: str) -> bool:
+    # Publisher builds this path using three os.path.join arguments.
+    return bool(re.search(
+        r"""['"]tools_webrtc['"]\\s*,\\s*['"]libs['"]\\s*,\\s*['"]generate_licenses\\.py['"]""",
+        producer_run,
+    ))
 
 def validate_producer(version: str, run: str, patch_texts: dict[str, str]) -> dict:
     fields = {}
@@ -355,7 +362,7 @@ def collect(*, fetcher=fetch_exact) -> dict:
         generator = base64.b64decode(generator_encoded, validate=True)
     except (binascii.Error, ValueError) as error:
         raise SourceEvidenceError("Invalid pinned generator Gitiles encoding") from error
-    if SOURCE_LICENSE_GENERATOR_PATH not in run:
+    if not has_exact_notice_generator_invocation(run):
         raise SourceEvidenceError("Publisher no longer invokes expected GN notice generator")
     license_generator_inventory = inspect_license_generator_snapshot(generator)
     root_licenses = {

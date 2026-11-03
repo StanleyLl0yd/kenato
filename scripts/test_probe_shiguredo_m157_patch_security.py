@@ -84,6 +84,14 @@ class PatchSecurityTests(unittest.TestCase):
             target.fetch_exact(target.SOURCE_ROOT + "../unreviewed?format=TEXT",
                                runner=lambda *a, **kw: self.fail("Unsafe URL contacted"))
 
+    def test_publisher_notice_generator_invocation_is_joined_path(self):
+        run = 'os.path.join(webrtc_src_dir, "tools_webrtc", "libs", "generate_licenses.py")'
+        self.assertTrue(target.has_exact_notice_generator_invocation(run))
+        self.assertFalse(target.has_exact_notice_generator_invocation(
+            run.replace('"generate_licenses.py"', '"unknown.py"')))
+        self.assertFalse(target.has_exact_notice_generator_invocation(
+            'os.path.join("tools_webrtc", "libs", "unreviewed.py")'))
+
     def test_static_gn_license_map_only_records_candidate_paths(self):
         fixture = b"""# GN desc dependencies, not an independent native SBOM.
 LIB_TO_LICENSES_DICT = {
