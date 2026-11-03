@@ -305,6 +305,87 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun secondRuntimeCannotStartWssOrMutateTrustWhileAnotherOwnsTransport() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        try {
+            owner.startMessaging()
+            assertThrows(IllegalStateException::class.java) { other.startMessaging() }
+            assertThrows(IllegalStateException::class.java) { other.createInvite() }
+            assertThrows(IllegalStateException::class.java) {
+                other.sendText(ByteArray(32) { 2 }, "blocked")
+            }
+            assertTrue(second.events.isEmpty())
+            owner.stopMessaging()
+            other.createInvite()
+            assertTrue(second.events.contains("contacts.create"))
+        } finally {
+            owner.close()
+            other.close()
+        }
+    }
+
+    @Test
+    fun queuedStartFromSecondRuntimeIsFencedByFirstRuntimeMutationEpoch() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        first.sessions.maintainEntered = entered
+        first.sessions.maintainRelease = release
+        val started = CountDownLatch(1)
+        second.messaging.startEntered = started
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val mutation = pool.submit { owner.createInvite() }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val dispatched = CountDownLatch(1)
+            val pendingStart = pool.submit {
+                dispatched.countDown()
+                other.startMessaging()
+            }
+            assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            assertFalse(started.await(250, TimeUnit.MILLISECONDS))
+            release.countDown()
+            mutation.get(10, TimeUnit.SECONDS)
+            assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                pendingStart.get(10, TimeUnit.SECONDS)
+            }
+            assertFalse(second.messaging.started)
+            other.startMessaging()
+            assertTrue(second.messaging.started)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+            owner.close()
+            other.close()
+        }
+    }
+
+    @Test
+    fun uncertainStopPoisonsSharedGateAndDeniesAnotherRuntime() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        owner.startMessaging()
+        first.messaging.failStopAfterAttempt = true
+        assertThrows(IllegalStateException::class.java) { owner.createInvite() }
+        assertThrows(IllegalStateException::class.java) { other.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { other.createInvite() }
+        assertTrue(second.events.isEmpty())
+        owner.close()
+        other.close()
+    }
+
+    @Test
     fun closedRuntimeCannotRestartWssOrStageNewOutgoingWork() {
         val fixture = Fixture()
         val runtime = fixture.runtime()
@@ -358,7 +439,8 @@ class M45AcceptanceRuntimeTest {
         val sessions = FakeSessions(events, pin)
         val messaging = FakeMessaging(events)
 
-        fun runtime() = M45AcceptanceRuntime(identity, contacts, sessions, messaging)
+        fun runtime(gate: M45ProcessTransportGate = M45ProcessTransportGate()) =
+            M45AcceptanceRuntime(identity, contacts, sessions, messaging, gate)
     }
 
     private class FakeIdentity(

@@ -32,6 +32,7 @@ import com.sl.kenato.messaging.WssMessagingOutboundAdmission
 import com.sl.kenato.session.EstablishedSession
 import com.sl.kenato.session.LocalSessionRepository
 import com.sl.kenato.session.SessionCoordinator
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 import java.net.URI
 import java.util.Base64
 
@@ -114,11 +115,54 @@ internal interface M45MessagingBoundary : AutoCloseable {
     fun conversation(ownerIdentityId: ByteArray, peerIdentityId: ByteArray): MessagingConversationState
 }
 
+/** Process-only WSS ownership; not a durable M2/M3/effect transaction. */
+internal class M45ProcessTransportGate {
+    @Volatile var mutationEpoch: Long = 0L
+        private set
+    private var activeOwner: Any? = null
+    private var poisoned = false
+
+    fun requireAvailable(requester: Any) {
+        if (poisoned) throw IllegalStateException("Process WSS safety state is uncertain")
+        if (activeOwner != null && activeOwner !== requester) {
+            throw IllegalStateException("Another acceptance runtime owns the process WSS transport")
+        }
+    }
+
+    fun beginMutation(requester: Any) {
+        requireAvailable(requester)
+        if (mutationEpoch >= Long.MAX_VALUE - 2L) {
+            throw IllegalStateException("Process trust mutation generation exhausted")
+        }
+        mutationEpoch++
+    }
+
+    fun endMutation() {
+        mutationEpoch++
+    }
+
+    fun started(requester: Any) {
+        requireAvailable(requester)
+        activeOwner = requester
+    }
+
+    fun stopped(requester: Any) {
+        if (activeOwner === requester) activeOwner = null
+    }
+
+    fun poison() {
+        poisoned = true
+    }
+}
+
+private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
+
 internal class M45AcceptanceRuntime(
     private val identity: M45IdentityBoundary,
     private val contacts: M45ContactBoundary,
     private val sessions: M45SessionBoundary,
     private val messaging: M45MessagingBoundary,
+    private val processGate: M45ProcessTransportGate = M45ProcessTransportGate(),
 ) : AutoCloseable {
     private var messagingStarted = false
     private var closed = false
@@ -170,46 +214,62 @@ internal class M45AcceptanceRuntime(
     }
 
     fun startMessaging() {
-        // Reject an action queued before/during a trust mutation. A fresh user action
-        // after failure is required to reconnect; a stale queued start is not enough.
+        // Capture both generations before waiting for either runtime monitor.
         val requestedEpoch = trustMutationEpoch
+        val requestedProcessEpoch = processGate.mutationEpoch
         synchronized(this) {
-            requireOpen()
-            if (requestedEpoch != trustMutationEpoch || requestedEpoch % 2L != 0L) {
-                throw IllegalStateException("Transport start was superseded by a trust mutation")
+            synchronized(processGate) {
+                requireOpen()
+                if (requestedEpoch != trustMutationEpoch || requestedEpoch % 2L != 0L ||
+                    requestedProcessEpoch != processGate.mutationEpoch ||
+                    requestedProcessEpoch % 2L != 0L
+                ) {
+                    throw IllegalStateException("Transport start was superseded by a trust mutation")
+                }
+                processGate.requireAvailable(this)
+                identity.loadOrCreate()
+                startMessagingGuarded()
             }
-            identity.loadOrCreate()
-            startMessagingGuarded()
         }
     }
 
     @Synchronized
-    fun stopMessaging() {
-        if (closed) return
-        stopMessagingGuarded()
+    fun stopMessaging() = synchronized(processGate) {
+        if (!closed) stopMessagingGuarded()
     }
 
     fun messagingState(): MessagingWssState = messaging.currentState()
 
     @Synchronized
-    fun sendText(peerIdentityId: ByteArray, text: String): MessagingConversationMessage {
-        requireOpen()
-        val owner = currentIdentityId()
-        return messaging.sendText(owner, peerIdentityId.copyOf(), text)
-    }
+    fun sendText(peerIdentityId: ByteArray, text: String): MessagingConversationMessage =
+        synchronized(processGate) {
+            requireOpen()
+            processGate.requireAvailable(this)
+            messaging.sendText(currentIdentityId(), peerIdentityId.copyOf(), text)
+        }
 
     fun conversation(peerIdentityId: ByteArray): MessagingConversationState =
         messaging.conversation(currentIdentityId(), peerIdentityId.copyOf())
 
     @Synchronized
     override fun close() {
-        if (closed) return
+        synchronized(processGate) {
+            if (closed) return@synchronized
         closed = true
         messagingStarted = false
+        var failure: Exception? = null
         try {
             messaging.stop()
-        } finally {
+        } catch (error: Exception) {
+            failure = error
+        }
+        try {
             messaging.close()
+        } catch (error: Exception) {
+            if (failure == null) failure = error else failure.addSuppressed(error)
+        }
+        if (failure == null) processGate.stopped(this) else processGate.poison()
+            failure?.let { throw it }
         }
     }
 
@@ -222,25 +282,22 @@ internal class M45AcceptanceRuntime(
         if (closed) throw IllegalStateException("Acceptance runtime is closed")
     }
 
-    private inline fun <T> withMessagingPaused(block: () -> T): T {
+    private inline fun <T> withMessagingPaused(block: () -> T): T = synchronized(processGate) {
         requireOpen()
-        if (trustMutationEpoch >= Long.MAX_VALUE - 2) {
+        if (trustMutationEpoch >= Long.MAX_VALUE - 2L) {
             throw IllegalStateException("Trust mutation generation exhausted")
         }
+        processGate.beginMutation(this)
         trustMutationEpoch++ // Odd: mutation in progress.
         try {
             val restart = messagingStarted
             if (restart) stopMessagingGuarded()
-            return try {
-                block().also {
-                    if (restart) startMessagingGuarded()
-                }
-            } catch (error: Exception) {
-                // Failure leaves the WSS stopped. A later fresh user request is needed.
-                throw error
+            block().also {
+                if (restart) startMessagingGuarded()
             }
         } finally {
             trustMutationEpoch++ // Even: queued starts must validate generation.
+            processGate.endMutation()
         }
     }
 
@@ -248,6 +305,7 @@ internal class M45AcceptanceRuntime(
     private fun startMessagingGuarded() {
         try {
             messaging.start()
+            processGate.started(this)
             messagingStarted = true
         } catch (error: Exception) {
             messagingStarted = false
@@ -266,6 +324,7 @@ internal class M45AcceptanceRuntime(
         messagingStarted = false
         try {
             messaging.stop()
+            processGate.stopped(this)
         } catch (error: Exception) {
             terminateTransportAfterFailedStop(error)
             throw error
@@ -274,6 +333,7 @@ internal class M45AcceptanceRuntime(
 
     private fun terminateTransportAfterFailedStop(error: Exception) {
         closed = true
+        processGate.poison()
         try {
             messaging.close()
         } catch (closeError: Exception) {
@@ -284,6 +344,9 @@ internal class M45AcceptanceRuntime(
     companion object {
         fun create(context: Context, serviceOrigin: URI): M45AcceptanceRuntime {
             val appContext = context.applicationContext
+            val processGate = processTransportGates.getOrCreate(
+                appContext.noBackupFilesDir.canonicalPath,
+            ) { M45ProcessTransportGate() }
             val identityRepository = LocalIdentityRepository.create(appContext)
             val contactRepository = ContactRepository.create(appContext, serviceOrigin)
             // M3 bootstrap and M4 messaging must not race through distinct repository locks.
@@ -323,6 +386,7 @@ internal class M45AcceptanceRuntime(
                         sessionCoordinator.claimInbound(inviteUri)
                 },
                 messaging = messagingBoundary,
+                processGate = processGate,
             )
         }
     }

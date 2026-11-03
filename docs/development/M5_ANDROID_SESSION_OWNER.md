@@ -154,3 +154,23 @@ This still cannot prove that an underlying native/OEM socket has stopped when
 both stop and close fail, nor protect other runtime instances, different
 processes or future M5 effects. It is a local fail-closed control improvement,
 not permission to activate audio or merge the security Draft.
+
+## Process-local transport lease across acceptance runtimes
+
+The Android runtime factory now uses one process-local WSS gate per canonical
+app-private directory. It admits at most one active M4.5 WSS owner in this
+process; another runtime cannot start WSS, stage outbound text or mutate
+M2/M3 trust while a different runtime owns the transport. Scoped trust
+mutations hold the same gate through WSS stop, M2/M3 operations and restart.
+A process-wide volatile generation rejects starts queued across another
+runtime's trust mutation. Failed stop/close poisons the gate for the lifetime
+of the process instead of allowing a second socket to start on uncertain
+transport state. Closing a healthy owner releases only its own lease.
+Three JVM regressions cover competing runtime admission, queued cross-runtime
+start fencing and a poisoned stop; they do not simulate Android process death.
+
+This is **process-only** and cannot claim durable transaction semantics:
+WSS asynchronous callbacks, independently stored M2 consent, M3 ratchet and
+M5 effect execution do not share an atomic commit, other app processes are
+not fenced, and the persisted replay/rollback gaps remain. No media, call
+runner, microphone, server or release change is introduced.
