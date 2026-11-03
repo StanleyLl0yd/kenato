@@ -160,15 +160,15 @@ def build_disposable_video_api(wrapper: Path, aar: Path, root: Path,
     gradle.write_text(value.replace(d8.DEFAULT_ABIS, d8.RESEARCH_ABIS), encoding="utf-8")
     java = root / "app/src/main/java/org/kenato/research/Probe.java"
     java.write_text(
-        "package org.kenato.research;\\n"
-        "public final class Probe {\\n"
-        "  public Class<?>[] videoApi() { return new Class<?>[]{\\n"
-        "    org.webrtc.PeerConnection.class, org.webrtc.Camera2Enumerator.class,\\n"
-        "    org.webrtc.DefaultVideoEncoderFactory.class,\\n"
-        "    org.webrtc.DefaultVideoDecoderFactory.class,\\n"
-        "    org.webrtc.VideoTrack.class, org.webrtc.SurfaceViewRenderer.class\\n"
-        "  }; }\\n"
-        "}\\n",
+        "package org.kenato.research;\n"
+        "public final class Probe {\n"
+        "  public Class<?>[] videoApi() { return new Class<?>[]{\n"
+        "    org.webrtc.PeerConnection.class, org.webrtc.Camera2Enumerator.class,\n"
+        "    org.webrtc.DefaultVideoEncoderFactory.class,\n"
+        "    org.webrtc.DefaultVideoDecoderFactory.class,\n"
+        "    org.webrtc.VideoTrack.class, org.webrtc.SurfaceViewRenderer.class\n"
+        "  }; }\n"
+        "}\n",
         encoding="utf-8",
     )
     try:
@@ -180,7 +180,7 @@ def build_disposable_video_api(wrapper: Path, aar: Path, root: Path,
         raise CompareError("Disposable Android video API compilation timed out") from error
     if result.returncode:
         print("Disposable Android video API build exit:", result.returncode)
-        print("\\n".join((result.stdout or "").splitlines()[-30:])[:4000])
+        print("\n".join((result.stdout or "").splitlines()[-30:])[:4000])
         raise CompareError("Disposable Android video API compilation failed")
     apk = root / "app/build/outputs/apk/debug/app-debug.apk"
     record = d8.inspect_arm64_apk(apk)
@@ -232,7 +232,7 @@ def main() -> int:
         }
         code = 1
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n",
+    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                            encoding="utf-8")
     print("Two-vendor ARM64 video research:", report["status"])
     for name, details in report.get("candidates", {}).items():
