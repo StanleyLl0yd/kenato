@@ -102,5 +102,59 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
                 process.run.assert_not_called()
 
 
+    def test_disposable_aab_notice_bound_to_exact_hash_and_arm64(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            bundle = Path(temp) / "app-debug.aab"
+            notice = b"publisher NOTICE exact binary fixture"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr("base/dex/classes.dex", b"dex-fixture")
+                archive.writestr(d8.AAB_NOTICE_ENTRY, notice)
+            with mock.patch.object(d8, "NOTICE_BYTES", len(notice)), mock.patch.object(
+                    d8, "NOTICE_SHA256", hashlib.sha256(notice).hexdigest()):
+                result = d8.inspect_arm64_bundle(bundle)
+                self.assertEqual(result["verified_notice_aab_path"], d8.AAB_NOTICE_ENTRY)
+                self.assertEqual(result["native_aab_paths"], [d8.AAB_JNI_ENTRY])
+                self.assertFalse(result["JNI_executed"])
+            with mock.patch.object(d8, "NOTICE_BYTES", len(notice)):
+                with self.assertRaisesRegex(d8.D8ResearchError, "SHA-256"):
+                    d8.inspect_arm64_bundle(bundle)
+
+    def test_disposable_aab_rejects_missing_notice_and_wrong_abi(self):
+        with tempfile.TemporaryDirectory() as temp:
+            bundle = Path(temp) / "app-debug.aab"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr("base/dex/classes.dex", b"dex-fixture")
+            with self.assertRaisesRegex(d8.D8ResearchError, "NOTICE"):
+                d8.inspect_arm64_bundle(bundle)
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr("base/lib/x86_64/libjingle_peerconnection_so.so", b"elf-fixture")
+                archive.writestr("base/dex/classes.dex", b"dex-fixture")
+                archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
+            with self.assertRaisesRegex(d8.D8ResearchError, "ABI"):
+                d8.inspect_arm64_bundle(bundle)
+
+    def test_disposable_aab_rejects_duplicate_entries_and_missing_dex(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as temp:
+            bundle = Path(temp) / "app-debug.aab"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
+            with self.assertRaisesRegex(d8.D8ResearchError, "DEX"):
+                d8.inspect_arm64_bundle(bundle)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(bundle, "w") as archive:
+                    archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                    archive.writestr("base/dex/classes.dex", b"dex-fixture")
+                    archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
+                    archive.writestr(d8.AAB_NOTICE_ENTRY, b"duplicate")
+            with self.assertRaisesRegex(d8.D8ResearchError, "inventory"):
+                d8.inspect_arm64_bundle(bundle)
+
+
 if __name__ == "__main__":
     unittest.main()

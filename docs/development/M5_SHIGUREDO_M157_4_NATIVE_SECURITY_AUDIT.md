@@ -101,11 +101,16 @@ The disposable JDK25/AGP9.4/ARM64 test now performs two stages for pinned
 publisher-generated NOTICE; (2) copy the same SHA256-verified notice from
 the pinned AAR to the disposable `app/src/main/assets/legal/NOTICE`,
 reassemble, and verify `assets/legal/NOTICE` has the **exact same digest**
-while native ABI/DEX inventories remain unchanged. The research APK is never
-published or used by Kenato; it proves one feasible license-text packaging
-mechanism but **not a user-accessible legal-notice UI** or complete license
-compliance. The eventual production APK/AAB will require those separate
-acceptance checks once the chosen WebRTC binary is approved.
+while native ABI/DEX inventories remain unchanged. A follow-on exact-head
+research extension also builds the same disposable app as an **AAB** and
+checks `base/assets/legal/NOTICE` against that precise SHA-256 and length,
+with only ARM64 JNI and matching DEX counts. This AAB extension is **pending
+its own exact-head CI** and must not be called PASS before evidence exists.
+No APK/AAB or publisher binary is uploaded; only bounded JSON reports.
+Neither this packaging check nor a successful AAB proves bundletool-produced
+split APK delivery, user-visible legal-notice UI or complete licensing.
+The eventual production APK/AAB will require separate acceptance checks after
+vendor approval.
 
 ## Android license packaging gate
 
@@ -113,7 +118,10 @@ A license text being present in `libwebrtc.aar/META-INF/NOTICE` does **not**
 prove that Gradle automatically places it in the distributed Kenato APK/AAB.
 The disposable m157 JDK25/AGP9.4 ARM64 package probe now inventories
 all bounded NOTICE candidates in the resulting APK and records whether the
-**exact generated NOTICE SHA** survives packaging automatically.
+**exact generated NOTICE SHA** survives packaging automatically. A separate
+explicitly included NOTICE test now requires the corresponding disposable
+AAB to contain the exact publisher notice, exclusively ARM64 native JNI and
+matching APK/AAB DEX inventory. This is ZIP-level bundle evidence only.
 
 If the generated NOTICE is **absent** (as Gradle may discard AAR top-level
 metadata), application release packaging must deliberately include the

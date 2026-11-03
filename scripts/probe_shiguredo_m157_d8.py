@@ -39,6 +39,8 @@ def write_arm64_probe(root: Path, vendor_aar: Path) -> None:
 NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
 NOTICE_BYTES = 214353
 NOTICE_ASSET = "app/src/main/assets/legal/NOTICE"
+AAB_NOTICE_ENTRY = "base/assets/legal/NOTICE"
+AAB_JNI_ENTRY = "base/lib/arm64-v8a/libjingle_peerconnection_so.so"
 
 
 def include_reviewed_notice_asset(root: Path, aar: Path) -> None:
@@ -119,6 +121,52 @@ def inspect_arm64_apk(path: Path) -> dict:
     }
 
 
+
+def inspect_arm64_bundle(path: Path) -> dict:
+    """Inspect an isolated Android App Bundle; no bundletool execution or APK publication."""
+    if not path.is_file() or path.stat().st_size > agp.MAX_APK:
+        raise D8ResearchError("Missing or oversized disposable AAB")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            names = [item.filename for item in entries]
+            if len(names) > evidence.audit.MAX_ENTRIES or len(names) != len(set(names)):
+                raise D8ResearchError("Unexpected AAB entry inventory")
+            native = sorted(
+                name for name in names if name.startswith("base/lib/") and name.endswith(".so")
+            )
+            if not native or {name.split("/")[2] for name in native} != {RESEARCH_ABI}:
+                raise D8ResearchError("Disposable AAB contains incorrect native ABI selection")
+            if AAB_JNI_ENTRY not in native:
+                raise D8ResearchError("ARM64 WebRTC JNI library missing from AAB")
+            dex = sorted(
+                name for name in names if name.startswith("base/dex/classes") and name.endswith(".dex")
+            )
+            if not dex:
+                raise D8ResearchError("Disposable AAB has no DEX files")
+            if AAB_NOTICE_ENTRY not in names:
+                raise D8ResearchError("Publisher NOTICE missing from disposable AAB")
+            notice_info = archive.getinfo(AAB_NOTICE_ENTRY)
+            if notice_info.file_size != NOTICE_BYTES:
+                raise D8ResearchError("Publisher NOTICE AAB length mismatch")
+            with archive.open(notice_info) as stream:
+                notice = stream.read(NOTICE_BYTES + 1)
+            if len(notice) != NOTICE_BYTES or hashlib.sha256(notice).hexdigest() != NOTICE_SHA256:
+                raise D8ResearchError("Publisher NOTICE AAB SHA-256 mismatch")
+    except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+        raise D8ResearchError("Invalid disposable AAB archive") from error
+    return {
+        "native_aab_paths": native,
+        "dex_count": len(dex),
+        "verified_notice_aab_path": AAB_NOTICE_ENTRY,
+        "verified_notice_aab_sha256": NOTICE_SHA256,
+        "aab_bytes": path.stat().st_size,
+        "vendor_approved": False,
+        "JNI_executed": False,
+        "bundletool_or_device_test_executed": False,
+    }
+
+
 def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             runner=subprocess.run, tag: str = m157.TAG) -> dict:
     if not wrapper.is_file():
@@ -150,7 +198,7 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             include_reviewed_notice_asset(root, vendor)
             try:
                 followup = runner([str(wrapper.resolve()), "--no-daemon", "--stacktrace",
-                                  ":app:assembleDebug"],
+                                  ":app:assembleDebug", ":app:bundleDebug"],
                                  cwd=root, check=False, timeout=540)
             except subprocess.TimeoutExpired as error:
                 raise D8ResearchError("Explicit NOTICE disposable build timed out") from error
@@ -162,6 +210,19 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
                 or packaged["dex_count"] != report["dex_count"]
             ):
                 raise D8ResearchError("Explicit publisher NOTICE packaging not reproducible")
+            bundle = inspect_arm64_bundle(
+                root / "app/build/outputs/bundle/debug/app-debug.aab"
+            )
+            if (
+                [name.removeprefix("base/") for name in bundle["native_aab_paths"]]
+                != packaged["native_apk_paths"]
+                or bundle["dex_count"] != packaged["dex_count"]
+            ):
+                raise D8ResearchError("AAB and APK JNI/DEX inventories differ")
+            report["publisher_notice_explicit_asset_aab_path"] = bundle["verified_notice_aab_path"]
+            report["publisher_notice_explicit_asset_aab_sha256"] = bundle["verified_notice_aab_sha256"]
+            report["publisher_notice_explicit_asset_aab_bytes"] = bundle["aab_bytes"]
+            report["bundletool_or_device_test_executed"] = False
             report["publisher_notice_explicit_asset_included"] = True
             report["publisher_notice_explicit_asset_path"] = "assets/legal/NOTICE"
             report["publisher_notice_explicit_asset_apk_bytes"] = packaged["apk_bytes"]
