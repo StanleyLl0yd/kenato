@@ -26,6 +26,8 @@ import com.sl.kenato.messaging.MessagingConversationState
 import com.sl.kenato.messaging.MessagingRecoveryCoordinator
 import com.sl.kenato.messaging.MessagingWssCoordinator
 import com.sl.kenato.messaging.MessagingWssState
+import com.sl.kenato.messaging.SerializedMessagingRetryScheduler
+import com.sl.kenato.messaging.SerializedMessagingSocketFactory
 import com.sl.kenato.messaging.OkHttpMessagingSocketFactory
 import com.sl.kenato.messaging.WssMessagingDurableWorkFlusher
 import com.sl.kenato.messaging.WssMessagingOutboundAdmission
@@ -368,7 +370,9 @@ internal class M45AcceptanceRuntime(
             // M3 bootstrap and M4 messaging must not race through distinct repository locks.
             val sessionRepository = LocalSessionRepository.create(appContext)
             val sessionCoordinator = SessionCoordinator.create(appContext, serviceOrigin, sessionRepository)
-            val messagingBoundary = AndroidM45MessagingBoundary(appContext, serviceOrigin, sessionRepository)
+            val messagingBoundary = AndroidM45MessagingBoundary(
+                appContext, serviceOrigin, sessionRepository, processGate,
+            )
 
             return M45AcceptanceRuntime(
                 identity = object : M45IdentityBoundary {
@@ -412,6 +416,7 @@ private class AndroidM45MessagingBoundary(
     context: Context,
     serviceOrigin: URI,
     private val sessionRepository: LocalSessionRepository,
+    processGate: M45ProcessTransportGate,
 ) : M45MessagingBoundary {
     private val identityRepository = LocalIdentityRepository.create(context)
     private val diagnosticJournal = M45DiagnosticJournal(context)
@@ -421,16 +426,17 @@ private class AndroidM45MessagingBoundary(
         history = history,
     )
     private val scheduler = ExecutorMessagingRetryScheduler()
+    private val gatedScheduler = SerializedMessagingRetryScheduler(scheduler, processGate)
     private val wss = MessagingWssCoordinator(
         serviceOrigin = serviceOrigin,
-        sockets = OkHttpMessagingSocketFactory(),
+        sockets = SerializedMessagingSocketFactory(OkHttpMessagingSocketFactory(), processGate),
         identity = LocalMessagingIdentityAuthenticator(identityRepository),
         recovery = DurableMessagingRecoveryDriver(recovery),
         inbound = DurableMessagingInboundDeliveryHandler(
             sessions = LocalMessagingInboundSessionDriver(sessionRepository),
             history = history,
         ),
-        scheduler = scheduler,
+        scheduler = gatedScheduler,
         diagnostics = diagnosticJournal::record,
     )
     private val outbound = DurableMessagingOutboundSender(

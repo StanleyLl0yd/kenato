@@ -223,3 +223,25 @@ than silently releasing an incompletely stopped transport. Four synthetic
 JVM regressions cover recursive close and throwing socket cancellation on
 retry and fail-close paths. No OkHttp/native/device timing is proven, and
 no durable multi-store M5 ownership is claimed.
+
+## Shared process gate for WSS receive and scheduled callbacks
+
+The Android messaging boundary previously held the M4.5 process gate during
+explicit start/stop/send/trust mutations but left OkHttp listener callbacks
+and retry/timeout tasks outside it. That allowed an inbound authenticated
+M3 ratchet/ACK or timer recovery to interleave with another runtime's M2/M3
+trust mutation, despite the shared process-local transport lease.
+
+The boundary now wraps **only the Android-owned** WSS socket listener and
+retry scheduler. Each async callback enters the shared per-directory process
+monitor before the coordinator monitor (same order as explicit runtime calls).
+This covers onOpen/onBinary/onClosed/onFailure and scheduled reconnect,
+authentication timeout, ACK/durable retry. Socket and scheduler external
+cancellation behavior remains unchanged. Two synthetic JVM concurrent
+regressions verify socket and timer callbacks cannot enter while the owner
+monitor is held and that cancellation delegates correctly.
+
+**This is still not an interprocess lock or durable M2/M3/WSS/consent/effect
+commit.** Callback-to-commit failure windows between independent storage
+files, direct factory bypasses, shared identity recovery, other processes and
+M5 effects remain open under #116/#87. No production voice/mic/JNI enabled.
