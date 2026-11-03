@@ -94,6 +94,19 @@ WebRTC Java/JNI AAR component. The scoped *component non-applicability*
 finding does **not** imply all other native WebRTC vulnerabilities are absent.
 No patch or runtime changes to Kenato.
 
+## Reproducible remediation in isolated research APK
+
+The disposable JDK25/AGP9.4/ARM64 test now performs two stages for pinned
+`m157.8103.4.0`: (1) verify the original APK **does not** contain the
+publisher-generated NOTICE; (2) copy the same SHA256-verified notice from
+the pinned AAR to the disposable `app/src/main/assets/legal/NOTICE`,
+reassemble, and verify `assets/legal/NOTICE` has the **exact same digest**
+while native ABI/DEX inventories remain unchanged. The research APK is never
+published or used by Kenato; it proves one feasible license-text packaging
+mechanism but **not a user-accessible legal-notice UI** or complete license
+compliance. The eventual production APK/AAB will require those separate
+acceptance checks once the chosen WebRTC binary is approved.
+
 ## Android license packaging gate
 
 A license text being present in `libwebrtc.aar/META-INF/NOTICE` does **not**

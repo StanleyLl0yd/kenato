@@ -36,6 +36,28 @@ def write_arm64_probe(root: Path, vendor_aar: Path) -> None:
     gradle.write_text(text.replace(DEFAULT_ABIS, RESEARCH_ABIS), encoding="utf-8")
 
 
+NOTICE_SHA256 = "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
+NOTICE_BYTES = 214353
+NOTICE_ASSET = "app/src/main/assets/legal/NOTICE"
+
+
+def include_reviewed_notice_asset(root: Path, aar: Path) -> None:
+    """Place exact publisher NOTICE in a disposable app, never production."""
+    try:
+        with zipfile.ZipFile(aar) as archive:
+            entry = archive.getinfo("META-INF/NOTICE")
+            if entry.file_size != NOTICE_BYTES:
+                raise D8ResearchError("Unexpected third-party NOTICE size")
+            notice = archive.read(entry)
+    except (zipfile.BadZipFile, KeyError) as error:
+        raise D8ResearchError("Missing or invalid verified publisher NOTICE") from error
+    if len(notice) != NOTICE_BYTES or hashlib.sha256(notice).hexdigest() != NOTICE_SHA256:
+        raise D8ResearchError("Publisher NOTICE SHA-256 changed")
+    target = root / NOTICE_ASSET
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(notice)
+
+
 def inspect_arm64_apk(path: Path) -> dict:
     if not path.is_file() or path.stat().st_size > agp.MAX_APK:
         raise D8ResearchError("Missing or oversized disposable APK")
@@ -118,7 +140,33 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             raise D8ResearchError("Disposable AGP D8 build timed out") from error
         if result.returncode != 0:
             raise D8ResearchError("Disposable AGP D8 build failed")
-        report = inspect_arm64_apk(root / "app/build/outputs/apk/debug/app-debug.apk")
+        apk = root / "app/build/outputs/apk/debug/app-debug.apk"
+        report = inspect_arm64_apk(apk)
+        if tag == m157.PATCH_TAG:
+            if report["exact_m157_4_notice_auto_packaged"]:
+                raise D8ResearchError("Expected negative automatic NOTICE packaging baseline changed")
+            # Prove that an explicitly included exact generated NOTICE survives
+            # AGP packaging. This disposable build does not provide a legal UI.
+            include_reviewed_notice_asset(root, vendor)
+            try:
+                followup = runner([str(wrapper.resolve()), "--no-daemon", "--stacktrace",
+                                  ":app:assembleDebug"],
+                                 cwd=root, check=False, timeout=540)
+            except subprocess.TimeoutExpired as error:
+                raise D8ResearchError("Explicit NOTICE disposable build timed out") from error
+            if followup.returncode != 0:
+                raise D8ResearchError("Disposable NOTICE packaging build failed")
+            packaged = inspect_arm64_apk(apk)
+            if not packaged["exact_m157_4_notice_auto_packaged"] or (
+                packaged["native_apk_paths"] != report["native_apk_paths"]
+                or packaged["dex_count"] != report["dex_count"]
+            ):
+                raise D8ResearchError("Explicit publisher NOTICE packaging not reproducible")
+            report["publisher_notice_explicit_asset_included"] = True
+            report["publisher_notice_explicit_asset_path"] = "assets/legal/NOTICE"
+            report["publisher_notice_explicit_asset_apk_bytes"] = packaged["apk_bytes"]
+            report["publisher_notice_automatically_included"] = False
+            report["release_legal_ui_accessibility_verified"] = False
         report["publisher_tag"] = tag
         report["publisher_asset_sha256"] = digest
         report["producer_source_revision_UNVERIFIED_IN_BINARY"] = _source

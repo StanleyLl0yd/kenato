@@ -41,6 +41,30 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
             with self.assertRaisesRegex(d8.D8ResearchError, "ABI"):
                 d8.inspect_arm64_apk(path)
 
+    def test_explicit_notice_asset_requires_verified_original_bytes(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            candidate = root / "vendor.aar"
+            data = (b"Copyright x" * 32)
+            with zipfile.ZipFile(candidate, "w") as archive:
+                archive.writestr("META-INF/NOTICE", data)
+            with mock.patch.object(d8, "NOTICE_BYTES", len(data)), mock.patch.object(
+                    d8, "NOTICE_SHA256", hashlib.sha256(data).hexdigest()):
+                d8.include_reviewed_notice_asset(root / "app_fixture", candidate)
+                self.assertEqual((root / "app_fixture" / d8.NOTICE_ASSET).read_bytes(), data)
+            with self.assertRaisesRegex(d8.D8ResearchError, "SHA-256"):
+                with mock.patch.object(d8, "NOTICE_BYTES", len(data)):
+                    d8.include_reviewed_notice_asset(root / "wrong", candidate)
+
+    def test_explicit_notice_rejects_missing_archive_member(self):
+        with tempfile.TemporaryDirectory() as temp:
+            vendor = Path(temp) / "vendor.aar"
+            with zipfile.ZipFile(vendor, "w") as archive:
+                archive.writestr("classes.jar", b"fake")
+            with self.assertRaisesRegex(d8.D8ResearchError, "NOTICE"):
+                d8.include_reviewed_notice_asset(Path(temp) / "fixture", vendor)
+
     def test_newer_patch_uses_independent_pinned_asset_and_never_builds_on_old_digest(self):
         with tempfile.TemporaryDirectory() as temp:
             wrapper = Path(temp) / "gradlew"
