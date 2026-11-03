@@ -212,34 +212,35 @@ vendor binary is not yet approved, so no production notice asset or
 license redistribution is added now. This check does not settle
 legal compliance or prove completeness of the 34 component sections.
 
-## Newer browser WebRTC security advisories: exact component scope (2026-11-03)
+## October WebRTC-labelled browser advisories: exact component scope (2026-11-03)
 
-Review of the [Chrome 156.0.8078.47 security bulletin](https://chromereleases.googleblog.com/2026/10/stable-channel-update-for-desktop_02018666648.html)
-identified two omitted **October 20** WebRTC-labelled CVEs. The exact
-Chromium source fixes were retrieved and their complete touched-path lists
-checked, not inferred from Chrome version numbers:
+**Chrome/Chromium fixes checked against complete changed-path lists**, not
+just CNA titles or browser fixed-version ranges:
 
-- **CVE-2026-113303, Critical, Chromium bug 574041825:** [fix
-  `e193ceb7de134efa938172d45c38daec31658357`](https://github.com/chromium/chromium/commit/e193ceb7de134efa938172d45c38daec31658357)
-  changes **4/4 files exclusively in `third_party/blink/renderer/modules/`**
-  for `blink::WebRtcAudioDeviceImpl` / `WebRtcAudioRenderer` lifecycle.
-- **CVE-2026-113161, High, Chromium bug 568945639:** [fix
-  `6c38d4ec50ea5a153e2e616a39c06d6a4777b7c8`](https://github.com/chromium/chromium/commit/6c38d4ec50ea5a153e2e616a39c06d6a4777b7c8)
-  changes **12/12 files exclusively in `third_party/blink/renderer/modules/`**
-  for JS execution-context destruction and RTC encoded-stream optimizers.
+| CVE | Exact public Chromium fix | Touched code and disposition |
+|---|---|---|
+| CVE-2026-113303 (Critical, bug 574041825) | [`e193ceb7de134efa938172d45c38daec31658357`](https://github.com/chromium/chromium/commit/e193ceb7de134efa938172d45c38daec31658357) | 4/4 files `third_party/blink/renderer/modules/`, `WebRtcAudioDeviceImpl` / audio-renderer lifetime |
+| CVE-2026-113161 (High, bug 568945639) | [`6c38d4ec50ea5a153e2e616a39c06d6a4777b7c8`](https://github.com/chromium/chromium/commit/6c38d4ec50ea5a153e2e616a39c06d6a4777b7c8) | 12/12 files `third_party/blink/renderer/modules/peerconnection/`, encoded JS streams |
+| CVE-2026-79187 (bug 523296105) | [`5643da4a3d7eca3d0b9b523647c7e14e37f294c4`](https://github.com/chromium/chromium/commit/5643da4a3d7eca3d0b9b523647c7e14e37f294c4) | 6/6 files `third_party/blink/renderer/modules/peerconnection/`, `WebRtcMediaStreamTrackAdapter` disposal |
+| CVE-2026-84347 (bug 501679156) | [`66102569a58caa6185eb257005863a791b626a73`](https://github.com/chromium/chromium/commit/66102569a58caa6185eb257005863a791b626a73) and [`e73986ea332564ba2496946c873d31359efe04ba`](https://github.com/chromium/chromium/commit/e73986ea332564ba2496946c873d31359efe04ba) | 6+10 files, exclusively `third_party/blink/renderer/platform/peerconnection/`, Chrome stats encoder/decoder wrapper |
 
-For these **exact Chrome bugs and exact fixes**, the impacted code is
-Chromium's Blink browser adapter, **outside the standalone WebRTC Android
-SDK source and AAR target**. The finding is `BLINK_RENDERER_COMPONENT_EXCLUDED`,
-not proof of unrelated native audio, encoder, RTP, STUN or SDP safety. Existing
-six WebRTC-upstream CVE source-fix checks and previous Blink-only mappings
-remain unchanged.
+For these **four specific publicly traced fixes**, the affected code is
+Chromium's **Blink renderer integration**, not a component of the standalone
+WebRTC Android SDK source/AAR. The narrow disposition is
+`BLINK_RENDERER_COMPONENT_EXCLUDED`, **NOT** a claim of blanket native
+thread-safety, encoder, SDP, RTP, STUN, audio or CVE clearance. Existing
+Blink-only `CVE-2026-76024` and `CVE-2026-110137` exclusions are separate.
 
-A second vendor bulletin, [Mozilla Firefox 159 MFSA 2026-118](https://www.mozilla.org/en-US/security/advisories/mfsa2026-118/)
-(published October 27), disclosed **six additional WebRTC-labelled CVEs**:
+**Mozilla Firefox advisories** need a different, conservative conclusion.
+[MFSA 2026-106 (October 13)](https://www.mozilla.org/en-US/security/advisories/mfsa2026-106/)
+and [MFSA 2026-118 (October 27)](https://www.mozilla.org/en-US/security/advisories/mfsa2026-118/)
+name **eight WebRTC-labelled issues** whose exact fix paths and standalone
+AAR component applicability have **not been independently established**:
 
-| CVE | Mozilla component | Bug | Kenato exact AAR disposition |
+| CVE | Mozilla component | Bug | Exact Shiguredo AAR disposition |
 |---|---|---|---|
+| CVE-2026-109771 | WebRTC Networking information disclosure | 2059658 | applicability unverified |
+| CVE-2026-109775 | WebRTC denial of service | 2068255 | applicability unverified |
 | CVE-2026-118005 | Signaling UAF | 2073653 | applicability unverified |
 | CVE-2026-118006 | Signaling privilege escalation/UAF | 2074202 | applicability unverified |
 | CVE-2026-117892 | Networking UAF | 2078902 | applicability unverified |
@@ -247,15 +248,14 @@ A second vendor bulletin, [Mozilla Firefox 159 MFSA 2026-118](https://www.mozill
 | CVE-2026-117957 | Networking cryptographic issue | 2061508 | applicability unverified |
 | CVE-2026-117996 | WebRTC boundary conditions | 2081535 | applicability unverified |
 
-Mozilla Bugzilla currently requires authorization for the referenced fixes,
-so this audit has **no exact changed-file lists**, no safe source-fix
-fingerprints and no proof of either affected or unaffected Shiguredo native
-components. Mozilla's Firefox/Gecko WebRTC integration can differ from the
-standalone SDK; a browser CVE title cannot settle AAR applicability.
-Before independent native approval, obtain authoritative patch scope or
-vendor component-level VEX/attestation for these issues, or a comparably
-reviewed analysis. **Do not claim all publicly labelled WebRTC CVEs are
-cleared merely because six upstream fingerprints PASS.**
+The linked Bugzilla bugs currently require authorization. Searches of the
+public Mozilla GitHub mirror by these bug IDs did not establish matching
+fix commits. Neither affected status nor non-applicability can be claimed.
+Firefox/Gecko may use browser-specific integration distinct from the AAR.
+**Before native clearance**, obtain authoritative fix file scopes, a vendor
+component-level VEX or independent equivalent analysis for these eight
+issues. Existing six upstream CVE source fingerprints PASS does not discharge
+these applicability questions or prove native ELF machine-code remediation.
 
 ## Security gates
 
