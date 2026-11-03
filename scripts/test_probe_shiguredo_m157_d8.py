@@ -180,7 +180,7 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
                     with zipfile.ZipFile(target, "w") as outer:
                         for index, members in enumerate([
                             [("classes.dex", b"dex"), ("assets/legal/NOTICE", notice)],
-                            [(f"lib/{abi}/libjingle_peerconnection_so.so", b"elf")],
+                            [(f"lib/{abi}/libjingle_peerconnection_so.so", b"E" * 128)],
                         ]):
                             if index == 1 and second_notice:
                                 members.append(("assets/legal/NOTICE", notice))
@@ -210,7 +210,8 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
             with mock.patch.object(d8, "subprocess") as process:
                 with self.assertRaises(d8.D8ResearchError):
                     d8.inspect_device_delivery(root / "not-a-bundle.aab",
-                                              tool=candidate, root=root)
+                                              tool=candidate, root=root,
+                                              expected_native_sha256="0" * 64)
                 process.run.assert_not_called()
 
     def test_aab_and_split_reject_native_sha_mismatch(self):
