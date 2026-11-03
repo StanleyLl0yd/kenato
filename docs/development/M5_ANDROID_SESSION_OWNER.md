@@ -174,3 +174,18 @@ WSS asynchronous callbacks, independently stored M2 consent, M3 ratchet and
 M5 effect execution do not share an atomic commit, other app processes are
 not fenced, and the persisted replay/rollback gaps remain. No media, call
 runner, microphone, server or release change is introduced.
+
+## Reentrant socket cancellation and cleanup failure
+
+The M4 WSS coordinator now detaches the active socket and clears authenticated
+state **before** calling the socket's external `cancel()`. A synchronous
+`onClosed` callback during cancellation can no longer re-enter the coordinator
+as if that socket were active and issue a second cancel. Stop also attempts
+socket cancellation even when timer cancellation throws; the original failure
+is preserved, with subsequent cancellation failures suppressed. The Android
+messaging boundary closes the retry scheduler even if WSS stop throws.
+Two JVM transport regressions cover synchronous close reentrancy, throwing
+cancel, late callback rejection and absence of requeued work. A failed cancel
+remains an **uncertain physical shutdown**, so the higher-level process gate
+must poison the runtime and never start another transport owner. These tests
+are synthetic, not real OkHttp or device teardown proof.

@@ -447,7 +447,18 @@ private class AndroidM45MessagingBoundary(
     ): MessagingConversationState = conversations.conversation(ownerIdentityId, peerIdentityId)
 
     override fun close() {
-        wss.stop()
-        scheduler.close()
+        var failure: Throwable? = null
+        try {
+            wss.stop()
+        } catch (error: Throwable) {
+            failure = error
+        }
+        try {
+            scheduler.close()
+        } catch (error: Throwable) {
+            val prior = failure
+            if (prior == null) failure = error else prior.addSuppressed(error)
+        }
+        failure?.let { throw it }
     }
 }

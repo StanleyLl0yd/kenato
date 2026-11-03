@@ -220,9 +220,10 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     fun stop() {
+        // Detach before invoking cancel(): a socket may invoke onClosed/onFailure
+        // synchronously from cancel(), including on this same monitor.
         running = false
-        cancelTimers()
-        activeSocket?.cancel()
+        val socket = activeSocket
         activeSocket = null
         authenticatedIdentityId = null
         reconnectAttempts = 0
@@ -232,7 +233,20 @@ internal class MessagingWssCoordinator(
         recoveredAcksSentThisConnection.clear()
         pendingAckRetryMessageIds.clear()
         state = MessagingWssState.STOPPED
-        note(M45DiagnosticEvent.TRANSPORT_STOPPED)
+        var failure: Throwable? = null
+        try {
+            cancelTimers()
+        } catch (error: Throwable) {
+            failure = error
+        }
+        try {
+            socket?.cancel()
+        } catch (error: Throwable) {
+            val prior = failure
+            if (prior == null) failure = error else prior.addSuppressed(error)
+        }
+        if (failure == null) note(M45DiagnosticEvent.TRANSPORT_STOPPED)
+        failure?.let { throw it }
     }
 
     @Synchronized
