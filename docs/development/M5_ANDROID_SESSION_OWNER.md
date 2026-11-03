@@ -205,3 +205,21 @@ This only closes facade entry-point bypasses. Direct factory/store callers,
 asynchronous callbacks and other Android processes are not fenced by this
 process-local gate. It does not provide a durable shared M2/M3/WSS/effect
 transaction or authorize live voice.
+
+## Reentrant retry/fail-close teardown and sticky cancellation failure
+
+The WSS stop fix was not sufficient: retry/timeout/fail-closed paths still
+called external `socket.cancel()` while that socket remained active, which
+could synchronously invoke `onClosed()` and recursively cancel or queue
+retries. All three socket shutdown paths now detach the socket and clear
+its authentication/recovery in-memory state before cancelling external
+socket/timer objects. Each outstanding timer is attempted even if an earlier
+cancel throws; failures are retained without abandoning socket cancellation.
+
+Any uncertain teardown now permanently denies `MessagingWssCoordinator.start()`
+for that coordinator, and a subsequent `stop()` reports the sticky failure
+so the outer M4.5 transport gate can poison its process-local lease rather
+than silently releasing an incompletely stopped transport. Four synthetic
+JVM regressions cover recursive close and throwing socket cancellation on
+retry and fail-close paths. No OkHttp/native/device timing is proven, and
+no durable multi-store M5 ownership is claimed.

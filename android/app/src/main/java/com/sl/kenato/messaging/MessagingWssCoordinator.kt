@@ -178,6 +178,8 @@ internal class MessagingWssCoordinator(
 
     private var state = MessagingWssState.STOPPED
     private var running = false
+    // A failed external cancel leaves native socket shutdown unprovable for this coordinator.
+    private var uncertainSocketShutdown = false
     private var activeSocket: MessagingSocket? = null
     private var scheduledReconnect: MessagingScheduledTask? = null
     private var authenticationTimeout: MessagingScheduledTask? = null
@@ -209,6 +211,9 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     fun start() {
+        if (uncertainSocketShutdown) {
+            throw MessagingWssException("M4 socket shutdown is uncertain")
+        }
         if (running) return
         running = true
         note(M45DiagnosticEvent.TRANSPORT_STARTED)
@@ -233,20 +238,12 @@ internal class MessagingWssCoordinator(
         recoveredAcksSentThisConnection.clear()
         pendingAckRetryMessageIds.clear()
         state = MessagingWssState.STOPPED
-        var failure: Throwable? = null
-        try {
-            cancelTimers()
-        } catch (error: Throwable) {
-            failure = error
-        }
-        try {
-            socket?.cancel()
-        } catch (error: Throwable) {
-            val prior = failure
-            if (prior == null) failure = error else prior.addSuppressed(error)
-        }
-        if (failure == null) note(M45DiagnosticEvent.TRANSPORT_STOPPED)
+        val failure = cancelTimersAndSocket(socket)
         failure?.let { throw it }
+        if (uncertainSocketShutdown) {
+            throw MessagingWssException("M4 socket shutdown remains uncertain")
+        }
+        note(M45DiagnosticEvent.TRANSPORT_STOPPED)
     }
 
     @Synchronized
@@ -691,25 +688,29 @@ internal class MessagingWssCoordinator(
     private fun retryConnection(socket: MessagingSocket) {
         if (socket !== activeSocket) return
         disconnectActiveSocket(socket)
+        if (uncertainSocketShutdown) return
         if (running) scheduleReconnect() else state = MessagingWssState.STOPPED
     }
 
     private fun retryDurableWork(socket: MessagingSocket) {
         if (socket !== activeSocket) return
         disconnectActiveSocket(socket)
+        if (uncertainSocketShutdown) return
         if (running) scheduleDurableReconnect() else state = MessagingWssState.STOPPED
     }
 
     private fun disconnectActiveSocket(socket: MessagingSocket) {
-        authenticationTimeout?.cancel()
-        authenticationTimeout = null
-        cancelSendAcceptanceTimeout()
-        cancelAckRetry()
-        socket.cancel()
+        // External cancellation can synchronously call back into this synchronized coordinator.
+        // Make stale socket events inert before asking the socket or timers to shut down.
         activeSocket = null
         authenticatedIdentityId = null
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
+        pendingAckRetryMessageIds.clear()
+        if (cancelTimersAndSocket(socket) != null) {
+            running = false
+            state = MessagingWssState.FAILED
+        }
     }
 
     private fun scheduleReconnect() {
@@ -761,22 +762,44 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket) return
         note(M45DiagnosticEvent.TRANSPORT_FAILED_CLOSED)
         running = false
-        cancelTimers()
-        socket.cancel()
+        state = MessagingWssState.FAILED
         activeSocket = null
         authenticatedIdentityId = null
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
-        state = MessagingWssState.FAILED
+        pendingAckRetryMessageIds.clear()
+        cancelTimersAndSocket(socket)
     }
 
-    private fun cancelTimers() {
-        scheduledReconnect?.cancel()
+    /**
+     * Detach timer references before external cancel callbacks; always attempt every
+     * cancellation. Any thrown teardown result is sticky and prevents future starts.
+     */
+    private fun cancelTimersAndSocket(socket: MessagingSocket?): Throwable? {
+        val tasks = listOf(
+            scheduledReconnect, authenticationTimeout, sendAcceptanceTimeout, ackRetryTask,
+        )
         scheduledReconnect = null
-        authenticationTimeout?.cancel()
         authenticationTimeout = null
-        cancelSendAcceptanceTimeout()
-        cancelAckRetry()
+        sendAcceptanceTimeout = null
+        ackRetryTask = null
+        var failure: Throwable? = null
+        for (task in tasks) {
+            try {
+                task?.cancel()
+            } catch (error: Throwable) {
+                val prior = failure
+                if (prior == null) failure = error else prior.addSuppressed(error)
+            }
+        }
+        try {
+            socket?.cancel()
+        } catch (error: Throwable) {
+            val prior = failure
+            if (prior == null) failure = error else prior.addSuppressed(error)
+        }
+        if (failure != null) uncertainSocketShutdown = true
+        return failure
     }
 
     private fun requireAuthenticatedIdentity(): ByteArray =
