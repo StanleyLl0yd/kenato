@@ -134,3 +134,12 @@ A separately authorized operator must:
 Do not expose port 8080 publicly or bypass certificate verification during
 recovery. Mark #91 completed only after the running executable and health
 have been independently verified and the patch is actually deployed.
+
+### Windows OpenSSH option-fencing (research-only operator helper)
+
+The `-SshAlias` argument is now required to start with an alphanumeric
+character. Earlier validation allowed a leading hyphen, which OpenSSH could
+interpret as a client option instead of an SSH config host alias. The same
+restricted alias is used for `ssh` and `scp`; offline policy assertions
+reject leading-option inputs. This does not authorize `-Apply` or verify
+host-side identity, maintenance approval, external HTTPS/WSS or rollback.

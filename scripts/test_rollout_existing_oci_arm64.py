@@ -90,6 +90,13 @@ assert operator.index("$scriptHash -cne $expectedRootHelperSha") < operator.inde
 ), "Unreviewed shell helper must be rejected before any SSH host mutation"
 assert hashlib.sha256(path.read_bytes() + b"\n# unreviewed change").hexdigest() != reviewed_digest
 
+# The SSH host alias is a user-controlled CLI argument. It must not become
+# an OpenSSH option by beginning with '-', including flags such as '-F'.
+assert "[ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_.-]*$')]" in operator
+assert not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", "-V")
+assert not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", "-Fother")
+assert re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", "kenato-prod") is not None
+
 for token in (
     "sudo -n bash -s -- --apply",
     "$scriptText | & ssh",

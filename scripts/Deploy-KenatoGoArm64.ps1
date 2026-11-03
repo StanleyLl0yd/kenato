@@ -14,7 +14,7 @@ param(
     [ValidateScript({ Test-Path $_ -PathType Leaf })]
     [string] $ArtifactZip,
 
-    [ValidatePattern('^[a-zA-Z0-9_.-]+$')]
+    [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_.-]*$')]
     [string] $SshAlias = 'kenato',
 
     [switch] $Apply
