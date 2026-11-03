@@ -102,10 +102,18 @@ class LocalIdentityRepository internal constructor(
      */
     @Synchronized
     fun resetLocalIdentityForRecovery() {
+        // Invalidate the original cryptographic identity BEFORE deleting its
+        // local state. If clearing SharedPreferences fails afterwards, a stale
+        // previously valid state cannot be used to resurrect the old identity.
+        // A partial Keystore deletion is a hard failure; never silently
+        // regenerate or claim that destructive recovery completed.
+        keyBackend.deleteManagedKeys()
+        if (keyBackend.hasAnyManagedKey()) {
+            throw IdentityStateException("Identity Keystore deletion could not be verified")
+        }
         if (!stateStore.clear()) {
             throw IdentityPersistenceException("Unable to clear persisted local identity state")
         }
-        keyBackend.deleteManagedKeys()
     }
 
     private fun createNewIdentity(): LocalIdentityState {
