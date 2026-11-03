@@ -287,11 +287,22 @@ internal class M45AcceptanceRuntime(
 
     @Synchronized
     fun sendText(peerIdentityId: ByteArray, text: String): MessagingConversationMessage =
-        synchronized(processGate) {
-            requireOpen()
-            processGate.requireAvailable(this)
-            messaging.sendText(currentIdentityId(), peerIdentityId.copyOf(), text)
-        }
+        sendTextSelectingPeer({ peerIdentityId }, text)
+
+    /**
+     * Resolve the current pinned M2 peer while holding the same process gate as M3 staging.
+     * Pre-resolving from the controller would permit a stale contact during a trust mutation.
+     */
+    @Synchronized
+    fun sendTextSelectingPeer(
+        resolveCurrentPeer: () -> ByteArray,
+        text: String,
+    ): MessagingConversationMessage = synchronized(processGate) {
+        requireOpen()
+        processGate.requireAvailable(this)
+        val peer = resolveCurrentPeer().copyOf()
+        messaging.sendText(currentIdentityId(), peer, text)
+    }
 
     @Synchronized
     fun conversation(peerIdentityId: ByteArray): MessagingConversationState =

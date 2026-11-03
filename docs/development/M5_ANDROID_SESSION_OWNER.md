@@ -266,3 +266,22 @@ regressions exercise pause/restart, uncertain stop fail-closed, and
 standalone queued-start fencing. This is process-only protection and
 does not replace the required durable cross-process consent/M3/WSS/KDL1
 effect admission or physical tests under #116 and #87.
+
+## Selected contact TOCTOU at outbound M4 staging
+
+Previously the controller read its selected M2 peer and checked the pin
+before entering the M4.5 runtime's transport gate; a separate runtime
+could modify M2 trust during that gap, allowing an obsolete peer
+selection to reach M3 staging. The controller now passes a peer resolver
+into `sendTextSelectingPeer`, which executes pin selection/validation
+and M3 staging under the exact same process gate. The existing explicit
+`sendText(peer, text)` API also delegates through that gate. A
+concurrent synthetic test asserts the resolver cannot run until a
+trust mutation completes and that the newly selected peer is staged.
+
+A nullable result from the controller's local-trust helper also can no
+longer accidentally invoke its standalone fallback a second time:
+runtime selection uses an explicit branch rather than an Elvis
+expression. No transport protocol, E2EE ciphertext format, or voice
+runtime activation changes. Cross-process pin writers remain blocked
+by separate M5 release gates.

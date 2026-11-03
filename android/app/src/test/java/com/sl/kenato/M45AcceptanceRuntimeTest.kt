@@ -16,6 +16,7 @@ import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -302,6 +303,43 @@ class M45AcceptanceRuntimeTest {
         )
         assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
         runtime.close()
+    }
+
+    @Test
+    fun selectedPeerIsResolvedInsideTrustGateAfterConcurrentMutation() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val resolverCalled = CountDownLatch(1)
+        val selected = AtomicReference(ByteArray(32) { 0x22 })
+        fixture.sessions.maintainEntered = entered
+        fixture.sessions.maintainRelease = release
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val mutation = workers.submit { runtime.createInvite() }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val dispatched = CountDownLatch(1)
+            val send = workers.submit {
+                dispatched.countDown()
+                runtime.sendTextSelectingPeer({
+                    resolverCalled.countDown()
+                    selected.get()
+                }, "hello")
+            }
+            assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            assertFalse(resolverCalled.await(250, TimeUnit.MILLISECONDS))
+            selected.set(ByteArray(32) { 0x44 })
+            release.countDown()
+            mutation.get(10, TimeUnit.SECONDS)
+            send.get(10, TimeUnit.SECONDS)
+            assertEquals(0L, resolverCalled.count)
+            assertArrayEquals(selected.get(), fixture.messaging.lastSentPeer)
+        } finally {
+            release.countDown()
+            workers.shutdownNow()
+            runtime.close()
+        }
     }
 
     @Test
@@ -655,6 +693,7 @@ class M45AcceptanceRuntimeTest {
         var failStartAfterActivation = false
         var failStopAfterAttempt = false
         var startEntered: CountDownLatch? = null
+        var lastSentPeer: ByteArray? = null
 
         override fun start() {
             startEntered?.countDown()
@@ -680,14 +719,17 @@ class M45AcceptanceRuntimeTest {
             ownerIdentityId: ByteArray,
             peerIdentityId: ByteArray,
             text: String,
-        ): MessagingConversationMessage = MessagingConversationMessage(
-            messageId = "message",
-            direction = MessagingConversationDirection.OUTBOUND,
-            deliveryState = MessagingConversationDeliveryState.PENDING_SEND,
-            sentAtEpochSeconds = 1,
-            expiresAtEpochSeconds = 2,
-            text = text,
-        )
+        ): MessagingConversationMessage {
+            lastSentPeer = peerIdentityId.copyOf()
+            return MessagingConversationMessage(
+                messageId = "message",
+                direction = MessagingConversationDirection.OUTBOUND,
+                deliveryState = MessagingConversationDeliveryState.PENDING_SEND,
+                sentAtEpochSeconds = 1,
+                expiresAtEpochSeconds = 2,
+                text = text,
+            )
+        }
 
         override fun conversation(
             ownerIdentityId: ByteArray,

@@ -211,8 +211,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     fun sendText(text: String) = launchOperation("Message staged for durable delivery") {
-        val peer = selectedPeerBytes()
-        requireRuntime().sendText(peer, text)
+        requireRuntime().sendTextSelectingPeer({ selectedPeerBytes() }, text)
     }
 
     /**
@@ -328,9 +327,14 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         }
     }
 
-    private fun <T> withLocalTrustMutation(block: () -> T): T =
-        runtime?.withLocalTrustMutation(block)
-            ?: withM45StandaloneTrustMutation(appContext, block)
+    private fun <T> withLocalTrustMutation(block: () -> T): T {
+        val currentRuntime = runtime
+        return if (currentRuntime != null) {
+            currentRuntime.withLocalTrustMutation(block)
+        } else {
+            withM45StandaloneTrustMutation(appContext, block)
+        }
+    }
 
     private fun requireRuntime(): M45AcceptanceRuntime {
         val origin = M45ServiceOrigin.parse(
