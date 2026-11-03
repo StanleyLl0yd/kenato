@@ -30,7 +30,7 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "app.apk"
             with zipfile.ZipFile(path, "w") as z:
-                z.writestr("lib/arm64-v8a/libjingle_peerconnection_so.so", b"elf-fixture")
+                z.writestr("lib/arm64-v8a/libjingle_peerconnection_so.so", b"E" * 128)
             with self.assertRaisesRegex(d8.D8ResearchError, "DEX"):
                 d8.inspect_arm64_apk(path)
 
@@ -110,7 +110,7 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
             bundle = Path(temp) / "app-debug.aab"
             notice = b"publisher NOTICE exact binary fixture"
             with zipfile.ZipFile(bundle, "w") as archive:
-                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr(d8.AAB_JNI_ENTRY, b"E" * 128)
                 archive.writestr("base/dex/classes.dex", b"dex-fixture")
                 archive.writestr(d8.AAB_NOTICE_ENTRY, notice)
             with mock.patch.object(d8, "NOTICE_BYTES", len(notice)), mock.patch.object(
@@ -127,12 +127,12 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             bundle = Path(temp) / "app-debug.aab"
             with zipfile.ZipFile(bundle, "w") as archive:
-                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr(d8.AAB_JNI_ENTRY, b"E" * 128)
                 archive.writestr("base/dex/classes.dex", b"dex-fixture")
             with self.assertRaisesRegex(d8.D8ResearchError, "NOTICE"):
                 d8.inspect_arm64_bundle(bundle)
             with zipfile.ZipFile(bundle, "w") as archive:
-                archive.writestr("base/lib/x86_64/libjingle_peerconnection_so.so", b"elf-fixture")
+                archive.writestr("base/lib/x86_64/libjingle_peerconnection_so.so", b"E" * 128)
                 archive.writestr("base/dex/classes.dex", b"dex-fixture")
                 archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
             with self.assertRaisesRegex(d8.D8ResearchError, "ABI"):
@@ -143,14 +143,14 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             bundle = Path(temp) / "app-debug.aab"
             with zipfile.ZipFile(bundle, "w") as archive:
-                archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                archive.writestr(d8.AAB_JNI_ENTRY, b"E" * 128)
                 archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
             with self.assertRaisesRegex(d8.D8ResearchError, "DEX"):
                 d8.inspect_arm64_bundle(bundle)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 with zipfile.ZipFile(bundle, "w") as archive:
-                    archive.writestr(d8.AAB_JNI_ENTRY, b"elf-fixture")
+                    archive.writestr(d8.AAB_JNI_ENTRY, b"E" * 128)
                     archive.writestr("base/dex/classes.dex", b"dex-fixture")
                     archive.writestr(d8.AAB_NOTICE_ENTRY, b"fixture")
                     archive.writestr(d8.AAB_NOTICE_ENTRY, b"duplicate")
@@ -212,6 +212,42 @@ class ShiguredoD8ResearchTests(unittest.TestCase):
                     d8.inspect_device_delivery(root / "not-a-bundle.aab",
                                               tool=candidate, root=root)
                 process.run.assert_not_called()
+
+    def test_aab_and_split_reject_native_sha_mismatch(self):
+        import hashlib
+        import io
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            notice = b"synthetic publisher NOTICE"
+            elf = b"E" * 128
+            digest = hashlib.sha256(elf).hexdigest()
+            with mock.patch.object(d8, "NOTICE_BYTES", len(notice)), mock.patch.object(
+                    d8, "NOTICE_SHA256", hashlib.sha256(notice).hexdigest()):
+                bundle = root / "fixture.aab"
+                with zipfile.ZipFile(bundle, "w") as archive:
+                    archive.writestr(d8.AAB_JNI_ENTRY, elf)
+                    archive.writestr("base/dex/classes.dex", b"stub")
+                    archive.writestr(d8.AAB_NOTICE_ENTRY, notice)
+                self.assertEqual(d8.inspect_arm64_bundle(
+                    bundle, expected_native_sha256=digest)["native_jni_sha256"], digest)
+                with self.assertRaisesRegex(d8.D8ResearchError, "exact pinned AAR ELF"):
+                    d8.inspect_arm64_bundle(bundle, expected_native_sha256="0" * 64)
+                apkset = root / "fixture.apks"
+                with zipfile.ZipFile(apkset, "w") as outer:
+                    for index, members in enumerate((
+                        [("classes.dex", b"stub"), ("assets/legal/NOTICE", notice)],
+                        [("lib/arm64-v8a/libjingle_peerconnection_so.so", elf)],
+                    )):
+                        encoded = io.BytesIO()
+                        with zipfile.ZipFile(encoded, "w") as inner:
+                            for name, data in members:
+                                inner.writestr(name, data)
+                        outer.writestr(f"splits/base-{index}.apk", encoded.getvalue())
+                self.assertEqual(d8.inspect_device_apk_set(
+                    apkset, sdk=34, expected_native_sha256=digest)["native_jni_sha256"], digest)
+                with self.assertRaisesRegex(d8.D8ResearchError, "exact pinned AAR ELF"):
+                    d8.inspect_device_apk_set(
+                        apkset, sdk=34, expected_native_sha256="0" * 64)
 
 
 if __name__ == "__main__":

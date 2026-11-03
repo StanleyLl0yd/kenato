@@ -53,6 +53,7 @@ BUNDLETOOL_SHA256 = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d910
 BUNDLETOOL_BYTES = 32520401
 MAX_APK_SET_BYTES = 160 * 1024 * 1024
 MAX_SPLIT_APK_BYTES = 60 * 1024 * 1024
+MAX_NATIVE_ELF_BYTES = 24 * 1024 * 1024
 DEVICE_SDKS = (29, 34)
 
 
@@ -73,7 +74,23 @@ def include_reviewed_notice_asset(root: Path, aar: Path) -> None:
     target.write_bytes(notice)
 
 
-def inspect_arm64_apk(path: Path) -> dict:
+
+def sha256_native_member(archive: zipfile.ZipFile, name: str) -> str:
+    """Read a bounded native ZIP member only; never load JNI."""
+    try:
+        item = archive.getinfo(name)
+    except KeyError as error:
+        raise D8ResearchError("Expected native JNI ZIP member absent") from error
+    if not 64 <= item.file_size <= MAX_NATIVE_ELF_BYTES:
+        raise D8ResearchError("Invalid native JNI size")
+    with archive.open(item) as stream:
+        data = stream.read(MAX_NATIVE_ELF_BYTES + 1)
+    if len(data) != item.file_size:
+        raise D8ResearchError("Truncated native JNI member")
+    return hashlib.sha256(data).hexdigest()
+
+
+def inspect_arm64_apk(path: Path, *, expected_native_sha256: str | None = None) -> dict:
     if not path.is_file() or path.stat().st_size > agp.MAX_APK:
         raise D8ResearchError("Missing or oversized disposable APK")
     with zipfile.ZipFile(path) as archive:
@@ -87,6 +104,9 @@ def inspect_arm64_apk(path: Path) -> dict:
         expected_jni = "lib/arm64-v8a/libjingle_peerconnection_so.so"
         if expected_jni not in native:
             raise D8ResearchError("ARM64 WebRTC JNI library was not packaged")
+        native_sha = sha256_native_member(archive, expected_jni)
+        if expected_native_sha256 is not None and native_sha != expected_native_sha256:
+            raise D8ResearchError("APK JNI does not match exact pinned AAR ELF")
         dex_paths = sorted(name for name in names if name.startswith("classes") and name.endswith(".dex"))
         if not dex_paths:
             raise D8ResearchError("No compiled DEX files")
@@ -119,6 +139,7 @@ def inspect_arm64_apk(path: Path) -> dict:
     return {
         "status": "JDK25_AGP_D8_ARM64_PASS_NOT_VENDOR_APPROVAL",
         "native_apk_paths": native,
+        "native_jni_sha256": native_sha,
         "notice_files_in_disposable_apk": notice_entries,
         "exact_m157_4_notice_auto_packaged": any(
             entry["sha256"] == "e5e1a734e1f1e73a0526a4f6ab857f26c4657eb5a70c4f4bc05c20c5444e1ec9"
@@ -135,7 +156,7 @@ def inspect_arm64_apk(path: Path) -> dict:
 
 
 
-def inspect_arm64_bundle(path: Path) -> dict:
+def inspect_arm64_bundle(path: Path, *, expected_native_sha256: str | None = None) -> dict:
     """Inspect an isolated Android App Bundle; no bundletool execution or APK publication."""
     if not path.is_file() or path.stat().st_size > agp.MAX_APK:
         raise D8ResearchError("Missing or oversized disposable AAB")
@@ -152,6 +173,9 @@ def inspect_arm64_bundle(path: Path) -> dict:
                 raise D8ResearchError("Disposable AAB contains incorrect native ABI selection")
             if AAB_JNI_ENTRY not in native:
                 raise D8ResearchError("ARM64 WebRTC JNI library missing from AAB")
+            native_sha = sha256_native_member(archive, AAB_JNI_ENTRY)
+            if expected_native_sha256 is not None and native_sha != expected_native_sha256:
+                raise D8ResearchError("AAB JNI does not match exact pinned AAR ELF")
             dex = sorted(
                 name for name in names if name.startswith("base/dex/classes") and name.endswith(".dex")
             )
@@ -170,6 +194,7 @@ def inspect_arm64_bundle(path: Path) -> dict:
         raise D8ResearchError("Invalid disposable AAB archive") from error
     return {
         "native_aab_paths": native,
+        "native_jni_sha256": native_sha,
         "dex_count": len(dex),
         "verified_notice_aab_path": AAB_NOTICE_ENTRY,
         "verified_notice_aab_sha256": NOTICE_SHA256,
@@ -190,7 +215,8 @@ def verify_pinned_bundletool(jar: Path) -> None:
         raise D8ResearchError("bundletool SHA-256 mismatch")
 
 
-def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
+def inspect_device_apk_set(path: Path, *, sdk: int,
+                           expected_native_sha256: str | None = None) -> dict:
     """Validate actual device-targeted bundletool split APK payloads, without installation."""
     if sdk not in DEVICE_SDKS:
         raise D8ResearchError("Unreviewed Android API profile")
@@ -198,6 +224,7 @@ def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
         raise D8ResearchError("Missing or oversized bundletool APK set")
     notices = []
     natives = []
+    native_shas = []
     dex_count = 0
     apk_names = []
     try:
@@ -227,6 +254,7 @@ def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
                         name = member.filename
                         if name.startswith("lib/") and name.endswith(".so"):
                             natives.append(name)
+                            native_shas.append(sha256_native_member(apk, name))
                         if name.startswith("classes") and name.endswith(".dex"):
                             dex_count += 1
                         if name.lower() == "notice" or name.lower().endswith("/notice"):
@@ -242,6 +270,10 @@ def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
         any(not name.startswith("lib/arm64-v8a/") for name in natives)
     ):
         raise D8ResearchError("Device-targeted APK set JNI/ABI mismatch")
+    if natives.count(expected) != 1:
+        raise D8ResearchError("Device-targeted APK set duplicates JNI")
+    if expected_native_sha256 is not None and native_shas != [expected_native_sha256]:
+        raise D8ResearchError("Split APK JNI does not match exact pinned AAR ELF")
     if dex_count < 1:
         raise D8ResearchError("Device-targeted APK set has no DEX")
     if notices != [("assets/legal/NOTICE", NOTICE_BYTES, NOTICE_SHA256)]:
@@ -254,6 +286,7 @@ def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
         "verified_notice_apk_path": "assets/legal/NOTICE",
         "verified_notice_sha256": NOTICE_SHA256,
         "native_lib_paths": sorted(natives),
+        "native_jni_sha256": native_shas[0],
         "dex_count": dex_count,
         "jni_executed": False,
         "device_installed": False,
@@ -262,6 +295,7 @@ def inspect_device_apk_set(path: Path, *, sdk: int) -> dict:
 
 
 def inspect_device_delivery(bundle: Path, *, tool: Path, root: Path,
+                            expected_native_sha256: str,
                             runner=subprocess.run) -> list[dict]:
     verify_pinned_bundletool(tool)
     reports = []
@@ -286,7 +320,9 @@ def inspect_device_delivery(bundle: Path, *, tool: Path, root: Path,
             raise D8ResearchError("Pinned bundletool timed out") from error
         if completed.returncode != 0:
             raise D8ResearchError("Pinned bundletool failed for SDK " + str(sdk))
-        reports.append(inspect_device_apk_set(output, sdk=sdk))
+        reports.append(inspect_device_apk_set(
+            output, sdk=sdk, expected_native_sha256=expected_native_sha256
+        ))
     return reports
 
 
@@ -302,6 +338,10 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
         digest, size = downloader(url, vendor, max_bytes=m157.MAX_BYTES)
         m157.verify_observation(digest, size, tag=tag)
         m157.inspect_pinned_aar(vendor, tag=tag)
+        with zipfile.ZipFile(vendor) as archive:
+            pinned_native_sha = sha256_native_member(
+                archive, "jni/arm64-v8a/libjingle_peerconnection_so.so"
+            )
         root = base / "disposable"
         write_arm64_probe(root, vendor)
         try:
@@ -313,7 +353,7 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
         if result.returncode != 0:
             raise D8ResearchError("Disposable AGP D8 build failed")
         apk = root / "app/build/outputs/apk/debug/app-debug.apk"
-        report = inspect_arm64_apk(apk)
+        report = inspect_arm64_apk(apk, expected_native_sha256=pinned_native_sha)
         if tag == m157.PATCH_TAG:
             if bundletool is None:
                 raise D8ResearchError("Pinned bundletool required for patched AAB delivery research")
@@ -331,14 +371,17 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
                 raise D8ResearchError("Explicit NOTICE disposable build timed out") from error
             if followup.returncode != 0:
                 raise D8ResearchError("Disposable NOTICE packaging build failed")
-            packaged = inspect_arm64_apk(apk)
+            packaged = inspect_arm64_apk(
+                apk, expected_native_sha256=pinned_native_sha
+            )
             if not packaged["exact_m157_4_notice_auto_packaged"] or (
                 packaged["native_apk_paths"] != report["native_apk_paths"]
                 or packaged["dex_count"] != report["dex_count"]
             ):
                 raise D8ResearchError("Explicit publisher NOTICE packaging not reproducible")
             bundle = inspect_arm64_bundle(
-                root / "app/build/outputs/bundle/debug/app-debug.aab"
+                root / "app/build/outputs/bundle/debug/app-debug.aab",
+                expected_native_sha256=pinned_native_sha
             )
             if (
                 [name.removeprefix("base/") for name in bundle["native_aab_paths"]]
@@ -351,7 +394,8 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             report["publisher_notice_explicit_asset_aab_bytes"] = bundle["aab_bytes"]
             report["device_targeted_apk_sets"] = inspect_device_delivery(
                 root / "app/build/outputs/bundle/debug/app-debug.aab",
-                tool=bundletool, root=root, runner=runner
+                tool=bundletool, root=root, runner=runner,
+                expected_native_sha256=pinned_native_sha
             )
             report["bundletool_executed"] = True
             report["device_test_executed"] = False
@@ -360,6 +404,7 @@ def collect(wrapper: Path, *, downloader=evidence.download_snapshot,
             report["publisher_notice_explicit_asset_apk_bytes"] = packaged["apk_bytes"]
             report["publisher_notice_automatically_included"] = False
             report["release_legal_ui_accessibility_verified"] = False
+        report["pinned_original_aar_jni_sha256"] = pinned_native_sha
         report["publisher_tag"] = tag
         report["publisher_asset_sha256"] = digest
         report["producer_source_revision_UNVERIFIED_IN_BINARY"] = _source

@@ -110,11 +110,16 @@ An additional SHA-256-and-byte-pinned official bundletool 1.18.3 research
 step produces **device-targeted split APK sets** for representative ARM64
 Android API 29 and 34 profiles, verifies the exact notice survives into
 `assets/legal/NOTICE`, checks ARM64-only packaged JNI and DEX presence, and
-deletes every generated binary at the end of the job. This extension is
-**pending exact-head CI**; it is not an on-device test and must not be
-described as PASS until the job completes. No APK, AAB, .apks or publisher
-binary is uploaded: sanitized JSON only. Even a positive split check cannot
-establish end-user UI accessibility, full license obligations or runtime safety.
+deletes every generated binary at the end of the job. This stage passed the [exact-head CI #41633259411](https://github.com/StanleyLl0yd/kenato/actions/runs/41633259411)
+but remains an offline, never-installed device-profile package test. No APK, AAB, .apks or publisher
+binary is uploaded: sanitized JSON only. The newest follow-up probe also
+calculates the ARM64 JNI ELF SHA-256 from the SHA-pinned original publisher AAR
+and requires **byte-identical ELF payloads** in both disposable APK builds,
+the AAB and both generated device-profile APK sets. This new proof is
+**pending its own exact-head CI** and is not yet accepted. A positive split
+check cannot establish native CVE remediation, upstream C++-to-binary
+reproducibility, end-user legal-UI accessibility, full license obligations
+or runtime safety.
 The eventual production APK/AAB will require separate acceptance checks after
 vendor approval.
 
