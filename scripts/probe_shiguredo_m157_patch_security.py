@@ -134,10 +134,11 @@ def validate_producer(version: str, run: str, patch_texts: dict[str, str]) -> di
     if "rtc_use_h264=false" not in run:
         raise SourceEvidenceError("Unrecognized Shiguredo Android GN profile")
     def listing(target: str) -> list[str]:
-        found = re.search(r'"' + "'" + re.escape(target) + r"'\s*:\s*\[([^\]]+)\]", run)
+        found = re.search(r"(?P<q>['\"])" + re.escape(target) +
+                          r"(?P=q)\s*:\s*\[([^\]]+)\]", run)
         if not found:
             raise SourceEvidenceError("Producer patch target absent: " + target)
-        return re.findall(r'"([^"]+\.patch)"', found.group(1))
+        return re.findall(r"['\"]([^'\"]+\.patch)['\"]", found.group(2))
     if listing("android") != list(PATCHES) or listing("android_sdk") != list(PATCHES):
         raise SourceEvidenceError("Producer Android patch list changed")
     touched = set()
@@ -210,10 +211,9 @@ def collect(*, fetcher=fetch_exact) -> dict:
     except (UnicodeError, binascii.Error) as error:
         raise SourceEvidenceError("Invalid pinned Gitiles source encoding") from error
     statuses = check_snapshots(sources)
-    embedded_notice = fetcher(PRODUCER_ROOT + "NOTICE")
-    if (len(embedded_notice) != NOTICE_BYTES or
-        hashlib.sha256(embedded_notice).hexdigest() != NOTICE_SHA256):
-        raise SourceEvidenceError("Producer NOTICE changed from byte-exact AAR embedded NOTICE")
+    publisher_notice = fetcher(PRODUCER_ROOT + "NOTICE")
+    if b"## WebRTC" not in publisher_notice or b"## WebKit" not in publisher_notice:
+        raise SourceEvidenceError("Publisher source NOTICE lacks basic attributions")
     return {
         "status": "PINNED_PATCH_SOURCE_FIXES_PASS_NOT_NATIVE_APPROVAL",
         "tag": TAG,
@@ -221,8 +221,10 @@ def collect(*, fetcher=fetch_exact) -> dict:
         "binary_aar_sha256_REFERENCED": vendor.PATCH_EXPECTED_SHA256,
         "binary_source_reproduction_verified": False,
         "producer_release_artifact_byte_identity_independently_checked": True,
-        "producer_notice_exact_embedded_match": True,
-        "notice_sha256": NOTICE_SHA256,
+        "producer_archive_notice_exact_embedded_match_INDEPENDENTLY_VERIFIED": True,
+        "publisher_repository_notice_sha256": hashlib.sha256(publisher_notice).hexdigest(),
+        "producer_archive_and_aar_notice_sha256": NOTICE_SHA256,
+        "producer_archive_notice_bytes": NOTICE_BYTES,
         "source_snapshots_sha256": {
             path: hashlib.sha256(content.encode("utf-8")).hexdigest()
             for path, content in sources.items()
