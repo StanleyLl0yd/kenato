@@ -25,21 +25,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class M45AcceptanceRuntimeTest {
-    private fun awaitStartBlockedOnRuntime(thread: Thread) {
+    private fun awaitRuntimeOperationBlocked(thread: Thread, operation: String) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (System.nanoTime() < deadline) {
             if (
                 thread.state == Thread.State.BLOCKED &&
                 thread.stackTrace.any {
                     it.className == M45AcceptanceRuntime::class.java.name &&
-                        it.methodName == "startMessaging"
+                        it.methodName == operation
                 }
             ) {
                 return
             }
             Thread.yield()
         }
-        throw AssertionError("Queued WSS start never reached the runtime monitor")
+        throw AssertionError("Queued $operation never reached the runtime monitor")
     }
 
     @Test
@@ -180,7 +180,7 @@ class M45AcceptanceRuntimeTest {
                 runtime.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
-            awaitStartBlockedOnRuntime(startThread.get())
+            awaitRuntimeOperationBlocked(startThread.get(), "startMessaging")
             assertFalse(started.await(250, TimeUnit.MILLISECONDS))
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
@@ -227,7 +227,7 @@ class M45AcceptanceRuntimeTest {
                 runtime.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
-            awaitStartBlockedOnRuntime(startThread.get())
+            awaitRuntimeOperationBlocked(startThread.get(), "startMessaging")
             release.countDown()
             assertThrows(java.util.concurrent.ExecutionException::class.java) {
                 mutation.get(10, TimeUnit.SECONDS)
@@ -343,7 +343,9 @@ class M45AcceptanceRuntimeTest {
             val mutation = workers.submit { runtime.createInvite() }
             assertTrue(entered.await(10, TimeUnit.SECONDS))
             val dispatched = CountDownLatch(1)
+            val sendThread = AtomicReference<Thread>()
             val send = workers.submit {
+                sendThread.set(Thread.currentThread())
                 dispatched.countDown()
                 runtime.sendTextSelectingPeer({
                     resolverCalled.countDown()
@@ -351,6 +353,7 @@ class M45AcceptanceRuntimeTest {
                 }, "hello")
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
+            awaitRuntimeOperationBlocked(sendThread.get(), "sendTextSelectingPeer")
             assertFalse(resolverCalled.await(250, TimeUnit.MILLISECONDS))
             selected.set(ByteArray(32) { 0x44 })
             release.countDown()
@@ -439,7 +442,7 @@ class M45AcceptanceRuntimeTest {
                 other.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
-            awaitStartBlockedOnRuntime(startThread.get())
+            awaitRuntimeOperationBlocked(startThread.get(), "startMessaging")
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
             assertEquals(beforeEpoch + 2L, gate.mutationEpoch)
@@ -515,7 +518,7 @@ class M45AcceptanceRuntimeTest {
                 other.startMessaging()
             }
             assertTrue(dispatched.await(10, TimeUnit.SECONDS))
-            awaitStartBlockedOnRuntime(startThread.get())
+            awaitRuntimeOperationBlocked(startThread.get(), "startMessaging")
             assertFalse(started.await(250, TimeUnit.MILLISECONDS))
             release.countDown()
             mutation.get(10, TimeUnit.SECONDS)
