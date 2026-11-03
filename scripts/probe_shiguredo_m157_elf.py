@@ -64,8 +64,8 @@ def inventory(path: Path, *, scanner=native.scan_elf, tag: str = m157.TAG) -> di
             raise M157NativeError("Expected ARM64 ELF absent from pinned AAR") from error
         if member.file_size < 52 or member.file_size > native.LIMIT:
             raise M157NativeError("Native ARM64 library absent or oversized")
-        with archive.open(member) as source:
-            payload = source.read(native.LIMIT + 1)
+        with archive.open(member) as native_stream:
+            payload = native_stream.read(native.LIMIT + 1)
         if len(payload) != member.file_size:
             raise M157NativeError("Truncated native ELF")
     load_alignments = require_16k_elf_loads(payload)
