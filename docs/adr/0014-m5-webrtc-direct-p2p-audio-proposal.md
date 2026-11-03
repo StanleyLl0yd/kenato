@@ -259,3 +259,16 @@ A positive result is a **source fingerprint only**, not independent binary
 reproducibility, reachability, complete patch-set coverage or permission to
 load ARM64 JNI. CVE-2026-103631 and CVE-2026-110137 also require separate
 mapping (see #88). The existing AAR and Android runtime remain untouched.
+
+### Pinned-source research for CVE-2026-103631 (not Android remediation)
+
+The same isolated probe additionally tests bounded RTP packetization source
+fingerprints corresponding to upstream fix
+`fc6666263eafa63878d02102189e3dabe9c90455` (Chromium 567088927):
+`PayloadSizeLimits.Sanitize()` with nonnegative clamped reductions, use by
+the RTP/H264/H265 packetizers, H265 fragment-copy capacity guard, and bounded
+RTPSenderVideo header reductions. Only exact pinned Gitiles paths are fetched,
+with offline tamper and URI-allowlist regressions. These paths are primarily
+video-specific; no assumption about Android audio-only link reachability,
+compiled ARM64 code, complete fix inclusion, third-party licenses or native
+runtime safety follows from the source fingerprints alone.

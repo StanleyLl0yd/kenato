@@ -55,6 +55,32 @@ void SdpOfferAnswerHandler::RemoveStoppedTransceivers() {
 void SdpOfferAnswerHandler::RemoveUnusedChannels() {}
 """
 
+GOOD_PAYLOAD_RTP = "limits = limits.Sanitize();"
+GOOD_PAYLOAD_HEADER = """
+PayloadSizeLimits Sanitize() const {
+  PayloadSizeLimits result = *this;
+  result.max_payload_len = std::max(0, result.max_payload_len);
+  result.single_packet_reduction_len = std::clamp(
+      result.single_packet_reduction_len, 0, result.max_payload_len);
+  result.first_packet_reduction_len = std::clamp(
+      result.first_packet_reduction_len, 0, result.max_payload_len);
+  result.last_packet_reduction_len = std::clamp(
+      result.last_packet_reduction_len, 0, result.max_payload_len);
+}
+"""
+GOOD_PAYLOAD_H264 = "RtpPacketizerH264::RtpPacketizerH264() : limits_(limits.Sanitize()) {}"
+GOOD_PAYLOAD_H265 = """
+RtpPacketizerH265::RtpPacketizerH265() : limits_(limits.Sanitize()) {}
+RTC_CHECK_LE(index + kH265LengthFieldSizeBytes + fragment.size(),
+             payload_capacity);
+"""
+GOOD_PAYLOAD_SENDER = """
+single_packet->headers_size() > middle_packet->headers_size() ? 1 : 0;
+first_packet->headers_size() > middle_packet->headers_size() ? 1 : 0;
+last_packet->headers_size() > middle_packet->headers_size() ? 1 : 0;
+"""
+
+
 GOOD_MID_PEER = """
 if (internal->channel_mid() == mid) {
   ret = internal->SetRtpTransport(rtp_transport);
@@ -233,6 +259,66 @@ class ProbeTests(unittest.TestCase):
         )
         with patch.object(probe.subprocess, "run", return_value=outcome):
             for path in (probe.UPSTREAM_PEER_CONNECTION_PATH, probe.UPSTREAM_TRANSCEIVER_LIST_PATH):
+                self.assertEqual(
+                    probe.fetch_exact(
+                        probe.GITILES_ROOT + path + "?format=TEXT",
+                        maximum=128, host="webrtc.googlesource.com",
+                    ),
+                    b"ZGF0YQ==",
+                )
+
+    def test_rtp_payload_capacity_pinned_fingerprint_passes(self):
+        probe.validate_rtp_payload_capacity_source(
+            GOOD_PAYLOAD_RTP, GOOD_PAYLOAD_HEADER, GOOD_PAYLOAD_H264,
+            GOOD_PAYLOAD_H265, GOOD_PAYLOAD_SENDER,
+        )
+
+    def test_rtp_payload_capacity_missing_sanitation_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "RTP payload sanitation"):
+            probe.validate_rtp_payload_capacity_source(
+                "", GOOD_PAYLOAD_HEADER, GOOD_PAYLOAD_H264,
+                GOOD_PAYLOAD_H265, GOOD_PAYLOAD_SENDER,
+            )
+
+    def test_rtp_payload_capacity_missing_reduction_clamp_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "reduction clamp"):
+            probe.validate_rtp_payload_capacity_source(
+                GOOD_PAYLOAD_RTP,
+                GOOD_PAYLOAD_HEADER.replace(
+                    "result.first_packet_reduction_len = std::clamp(",
+                    "result.first_packet_reduction_len = unsafe(",
+                ),
+                GOOD_PAYLOAD_H264, GOOD_PAYLOAD_H265, GOOD_PAYLOAD_SENDER,
+            )
+
+    def test_rtp_payload_capacity_missing_h265_bound_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "H265 fragment capacity"):
+            probe.validate_rtp_payload_capacity_source(
+                GOOD_PAYLOAD_RTP, GOOD_PAYLOAD_HEADER, GOOD_PAYLOAD_H264,
+                GOOD_PAYLOAD_H265.replace("RTC_CHECK_LE(", "UNCHECKED("),
+                GOOD_PAYLOAD_SENDER,
+            )
+
+    def test_rtp_payload_capacity_unsafe_sender_reduction_rejected(self):
+        with self.assertRaisesRegex(probe.SourceProbeError, "sender header reduction"):
+            probe.validate_rtp_payload_capacity_source(
+                GOOD_PAYLOAD_RTP, GOOD_PAYLOAD_HEADER, GOOD_PAYLOAD_H264,
+                GOOD_PAYLOAD_H265,
+                GOOD_PAYLOAD_SENDER.replace(
+                    "last_packet->headers_size() >", "last_packet->headers_size() <",
+                ),
+            )
+
+    def test_rtp_payload_capacity_pinned_source_paths_allowlisted(self):
+        outcome = probe.subprocess.CompletedProcess(
+            args=["curl"], returncode=0, stdout=b"ZGF0YQ==\n@@KENATO_STATUS:200",
+            stderr=b"",
+        )
+        with patch.object(probe.subprocess, "run", return_value=outcome):
+            for path in (
+                probe.UPSTREAM_RTP_HEADER_PATH, probe.UPSTREAM_H264_PATH,
+                probe.UPSTREAM_H265_PATH, probe.UPSTREAM_VIDEO_SENDER_PATH,
+            ):
                 self.assertEqual(
                     probe.fetch_exact(
                         probe.GITILES_ROOT + path + "?format=TEXT",
