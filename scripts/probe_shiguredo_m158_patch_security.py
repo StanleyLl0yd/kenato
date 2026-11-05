@@ -111,6 +111,61 @@ def fetch_exact(url: str, *, runner=subprocess.run, sleeper=time.sleep) -> bytes
                             " status=" + status.decode("ascii", "replace")[:8])
 
 
+
+def inspect_to_i420_failure_patch(raw: str) -> dict:
+    """Static checks of m158 video failure cleanup; never JNI/media safety approval."""
+    marker = ("diff --git a/sdk/android/src/jni/android_video_track_source.cc "
+              "b/sdk/android/src/jni/android_video_track_source.cc")
+    java, sep, native = raw.partition(marker)
+    if not sep or raw.count(marker) != 1 or (
+        "diff --git a/sdk/android/api/org/webrtc/YuvConverter.java "
+        "b/sdk/android/api/org/webrtc/YuvConverter.java" not in java
+    ):
+        raise M158EvidenceError("ToI420 patch scope is missing or ambiguous")
+    java_new = [line[1:] for line in java.splitlines()
+                if line.startswith("+") and not line.startswith("+++")]
+    native_new = [line[1:] for line in native.splitlines()
+                  if line.startswith("+") and not line.startswith("+++")]
+    java_required = (
+        "    } catch (RuntimeException e) {",
+        "      i420TextureFrameBuffer.release();",
+        "    boolean bufferOwnershipTransferred = false;",
+        "    ByteBuffer i420ByteBuffer = null;",
+        "    final ByteBuffer allocatedBuffer = JniCommon.nativeAllocateByteBuffer(stride * totalHeight);",
+        "    i420ByteBuffer = allocatedBuffer;",
+        "    I420Buffer i420Buffer = JavaI420Buffer.wrap(frameWidth, frameHeight, dataY, stride, dataU,",
+        "    bufferOwnershipTransferred = true;",
+        "    } finally {",
+        "      preparedBuffer.release();",
+        "      if (!bufferOwnershipTransferred && i420ByteBuffer != null) {",
+        "        JniCommon.nativeFreeByteBuffer(i420ByteBuffer);",
+    )
+    native_required = (
+        "  if (apply_rotation() && rotation != kVideoRotation_0) {",
+        "    if (!buffer) {",
+        '      RTC_LOG(LS_ERROR) << "Failed to convert the frame to I420. Dropping it.";',
+        "      OnFrameDropped();",
+        "      return;",
+    )
+    try:
+        java_positions = [java_new.index(fragment) for fragment in java_required]
+        native_positions = [native_new.index(fragment) for fragment in native_required]
+    except ValueError as error:
+        raise M158EvidenceError("m158 ToI420 guard/cleanup patch marker absent") from error
+    if java_positions[2:] != sorted(java_positions[2:]) or (
+        java_positions[0] >= java_positions[1] or
+        native_positions != sorted(native_positions)
+    ):
+        raise M158EvidenceError("m158 ToI420 cleanup or JNI drop order changed")
+    return {
+        "java_exception_handling_and_native_buffer_transfer_markers_present": True,
+        "jni_null_to_i420_frame_dropped_before_builder_markers_present": True,
+        "patched_source_still_requires_real_device_error_injection": True,
+        "gl_context_teardown_and_double_release_reviewed": False,
+        "source_to_native_elf_proven": False,
+        "video_jni_runtime_approved": False,
+    }
+
 def verify_producer(version: str, build_script: str,
                     vendor_patches: dict[str, str]) -> dict:
     fields = {}
@@ -159,7 +214,11 @@ def verify_producer(version: str, build_script: str,
         raise M158EvidenceError("Expected new ToI420 Java patch path absent")
     if "sdk/android/src/jni/android_video_track_source.cc" not in touched:
         raise M158EvidenceError("Expected new ToI420 JNI patch path absent")
+    to_i420_structure = inspect_to_i420_failure_patch(
+        vendor_patches["android_toi420_failure_handling.patch"]
+    )
     return {
+        "to_i420_error_path_source_only": to_i420_structure,
         "producer_sha": PRODUCER_SHA,
         "declared_source_sha": SOURCE_SHA,
         "producer_build_run": PRODUCER_RUN,

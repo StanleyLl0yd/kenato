@@ -66,8 +66,29 @@ class M158PinnedEvidenceTests(unittest.TestCase):
         patches[new] = (
             "diff --git a/sdk/android/api/org/webrtc/YuvConverter.java "
             "b/sdk/android/api/org/webrtc/YuvConverter.java\n"
-            "diff --git a/sdk/android/src/jni/android_video_track_source.cc "
-            "b/sdk/android/src/jni/android_video_track_source.cc"
+            + "\n".join("+" + line for line in (
+                "    } catch (RuntimeException e) {",
+                "      i420TextureFrameBuffer.release();",
+                "    boolean bufferOwnershipTransferred = false;",
+                "    ByteBuffer i420ByteBuffer = null;",
+                "    final ByteBuffer allocatedBuffer = JniCommon.nativeAllocateByteBuffer(stride * totalHeight);",
+                "    i420ByteBuffer = allocatedBuffer;",
+                "    I420Buffer i420Buffer = JavaI420Buffer.wrap(frameWidth, frameHeight, dataY, stride, dataU,",
+                "    bufferOwnershipTransferred = true;",
+                "    } finally {",
+                "      preparedBuffer.release();",
+                "      if (!bufferOwnershipTransferred && i420ByteBuffer != null) {",
+                "        JniCommon.nativeFreeByteBuffer(i420ByteBuffer);",
+            ))
+            + "\ndiff --git a/sdk/android/src/jni/android_video_track_source.cc "
+            "b/sdk/android/src/jni/android_video_track_source.cc\n"
+            + "\n".join("+" + line for line in (
+                "  if (apply_rotation() && rotation != kVideoRotation_0) {",
+                "    if (!buffer) {",
+                '      RTC_LOG(LS_ERROR) << "Failed to convert the frame to I420. Dropping it.";',
+                "      OnFrameDropped();",
+                "      return;",
+            ))
         )
         result = target.verify_producer(sample, run, patches)
         self.assertEqual(result["patch_count"], 21)
@@ -95,6 +116,51 @@ class M158PinnedEvidenceTests(unittest.TestCase):
         tampered[new] = patches[new].replace("YuvConverter.java", "Other.java")
         with self.assertRaises(target.M158EvidenceError):
             target.verify_producer(sample, run, tampered)
+
+
+    def test_to_i420_memory_ownership_and_null_frame_drop_fail_closed(self):
+        java = [
+            "    } catch (RuntimeException e) {",
+            "      i420TextureFrameBuffer.release();",
+            "    boolean bufferOwnershipTransferred = false;",
+            "    ByteBuffer i420ByteBuffer = null;",
+            "    final ByteBuffer allocatedBuffer = JniCommon.nativeAllocateByteBuffer(stride * totalHeight);",
+            "    i420ByteBuffer = allocatedBuffer;",
+            "    I420Buffer i420Buffer = JavaI420Buffer.wrap(frameWidth, frameHeight, dataY, stride, dataU,",
+            "    bufferOwnershipTransferred = true;",
+            "    } finally {",
+            "      preparedBuffer.release();",
+            "      if (!bufferOwnershipTransferred && i420ByteBuffer != null) {",
+            "        JniCommon.nativeFreeByteBuffer(i420ByteBuffer);",
+        ]
+        native = [
+            "  if (apply_rotation() && rotation != kVideoRotation_0) {",
+            "    if (!buffer) {",
+            '      RTC_LOG(LS_ERROR) << "Failed to convert the frame to I420. Dropping it.";',
+            "      OnFrameDropped();",
+            "      return;",
+        ]
+        scope_java = ("diff --git a/sdk/android/api/org/webrtc/YuvConverter.java "
+                      "b/sdk/android/api/org/webrtc/YuvConverter.java\n")
+        scope_jni = ("diff --git a/sdk/android/src/jni/android_video_track_source.cc "
+                     "b/sdk/android/src/jni/android_video_track_source.cc\n")
+        sample = (scope_java + "\n".join("+" + x for x in java) + "\n" +
+                  scope_jni + "\n".join("+" + x for x in native))
+        result = target.inspect_to_i420_failure_patch(sample)
+        self.assertTrue(result["java_exception_handling_and_native_buffer_transfer_markers_present"])
+        self.assertFalse(result["video_jni_runtime_approved"])
+        for prefix, markers in ((scope_java, java), (scope_jni, native)):
+            for token in markers:
+                broken = sample.replace("+" + token, "+unsafe()", 1)
+                with self.subTest(fragment=token):
+                    with self.assertRaises(target.M158EvidenceError):
+                        target.inspect_to_i420_failure_patch(broken)
+        with self.assertRaises(target.M158EvidenceError):
+            target.inspect_to_i420_failure_patch(sample.replace(scope_jni, ""))
+        with self.assertRaises(target.M158EvidenceError):
+            target.inspect_to_i420_failure_patch(sample.replace(
+                "+" + java[-1], "+unsafe_cleanup()"
+            ))
 
     def test_unverified_source_snapshot_never_approves(self):
         with self.assertRaises((target.base.SourceEvidenceError,
