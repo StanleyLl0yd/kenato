@@ -173,7 +173,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         requireRuntime().claimAndEstablish(inviteUri.trim())
     }
 
-    fun selectContact(peerIdentityId: String) = launchOperation("Contact selected") {
+    fun selectContact(peerIdentityId: String, onSelected: () -> Unit = {}) =
+        launchOperation("Contact selected", onSuccess = onSelected) {
         clearEphemeralVoiceQr()
         val owner = requireOwnerIdentityId()
         val peer = decodeM45IdentityId(peerIdentityId)

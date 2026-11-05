@@ -36,11 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.sl.kenato.messaging.MessagingConversationDirection
-import com.sl.kenato.messaging.MessagingConversationDeliveryState
-import com.sl.kenato.messaging.MessagingWssState
-import java.text.DateFormat
-import java.util.Date
 import com.sl.kenato.ui.theme.KenatoTheme
 
 class MainActivity : ComponentActivity() {
@@ -106,8 +101,8 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(screenScroll)
-                .padding(20.dp),
+                .then(if (selectedScreen == "Chats") Modifier else Modifier.verticalScroll(screenScroll))
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
@@ -332,14 +327,15 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                                 text = "Local contact: ${contact.localId}",
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            if (!selected) {
-                                TextButton(
-                                    onClick = { controller.selectContact(contact.peerIdentityId) },
-                                    enabled = !state.busy,
-                                ) {
-                                    Text("Use for messaging")
-                                }
-                            }
+                            TextButton(
+                                onClick = {
+                                    if (selected) selectedScreen = "Chats"
+                                    else controller.selectContact(contact.peerIdentityId) {
+                                        selectedScreen = "Chats"
+                                    }
+                                },
+                                enabled = !state.busy,
+                            ) { Text(if (selected) "Open chat" else "Select and open chat") }
                         }
                     }
                 }
@@ -348,111 +344,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             if (selectedScreen == "Chats") {
-            AcceptanceSection(title = "Messages") {
-                Text(
-                    text = "Connection: ${when (state.messagingState) {
-                        MessagingWssState.STOPPED -> "Offline"
-                        MessagingWssState.AUTHENTICATED -> "Connected"
-                        MessagingWssState.FAILED -> "Connection error"
-                        MessagingWssState.RETRY_WAIT -> "Reconnecting"
-                        else -> "Connecting"
-                    }}",
-                    style = MaterialTheme.typography.bodyMedium,
+                ChatConversationSection(
+                    state = state,
+                    controller = controller,
+                    draft = messageInput,
+                    onDraftChange = { messageInput = it },
+                    onDraftStaged = { messageInput = "" },
+                    onChangeContact = { selectedScreen = "Contacts" },
                 )
-                Text(
-                    text = if (state.messagingEnabled) {
-                        "Auto-reconnect on next foreground/relaunch is enabled"
-                    } else {
-                        "Auto-reconnect is disabled"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(
-                        onClick = controller::startMessaging,
-                        enabled = !state.busy &&
-                            state.identityId != null &&
-                            state.serviceOrigin.isNotBlank(),
-                    ) {
-                        Text("Connect")
-                    }
-                    Button(
-                        onClick = controller::stopMessaging,
-                        enabled = !state.busy,
-                    ) {
-                        Text("Disconnect")
-                    }
-                }
-
-                state.selectedPeerIdentityId?.let { peer ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("Peer · ${peer.take(12)}…", style = MaterialTheme.typography.labelMedium)
-                        TextButton(onClick = { selectedScreen = "Contacts" }) {
-                            Text("Change")
-                        }
-                    }
-                    OutlinedTextField(
-                        value = messageInput,
-                        onValueChange = { messageInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.busy,
-                        minLines = 2,
-                        maxLines = 5,
-                        label = { Text("Message") },
-                    )
-                    Button(
-                        onClick = {
-                            // Keep the draft on failed persistence or stale foreground completion.
-                            controller.sendText(messageInput) { messageInput = "" }
-                        },
-                        enabled = !state.busy && messageInput.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Send encrypted message")
-                    }
-                } ?: Text("Select a contact in Contacts to start chatting", style = MaterialTheme.typography.bodySmall)
-
-                HorizontalDivider()
-
-                if (state.messages.isEmpty()) {
-                    Text("No durable messages for this contact", style = MaterialTheme.typography.bodySmall)
-                }
-                state.messages.forEach { message ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            val sender = if (message.direction == MessagingConversationDirection.OUTBOUND) {
-                                "You"
-                            } else {
-                                "Contact"
-                            }
-                            val time = DateFormat.getDateTimeInstance(
-                                DateFormat.SHORT, DateFormat.SHORT,
-                            ).format(Date(message.sentAtEpochSeconds * 1000L))
-                            Text("$sender · $time", style = MaterialTheme.typography.labelMedium)
-                            Text(message.text, style = MaterialTheme.typography.bodyLarge)
-                            // SENT means server acceptance, NOT recipient delivery/read.
-                            val status = when (message.deliveryState) {
-                                MessagingConversationDeliveryState.RECEIVED -> "Received"
-                                MessagingConversationDeliveryState.PENDING_SEND -> "Waiting to send"
-                                MessagingConversationDeliveryState.SENT -> "Accepted by server"
-                                MessagingConversationDeliveryState.EXPIRED_UNCONFIRMED ->
-                                    "Delivery unconfirmed · expired"
-                            }
-                            Text(status, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-
             }
 
             if (selectedScreen == "Setup") {
