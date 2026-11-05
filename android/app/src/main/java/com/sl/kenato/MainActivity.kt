@@ -343,6 +343,17 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                                 },
                                 enabled = !state.busy,
                             ) { Text(if (selected) "Open chat" else "Select and open chat") }
+                            if (selected) {
+                                Text(
+                                    "Call approval for this contact is below.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            } else {
+                                TextButton(
+                                    onClick = { controller.selectContact(contact.peerIdentityId) },
+                                    enabled = !state.busy,
+                                ) { Text("Select for call approval") }
+                            }
                         }
                     }
                 }
