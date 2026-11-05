@@ -155,7 +155,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         identityRepository.loadOrCreate()
     }
 
-    fun prepareForAcceptance() = launchOperation("Identity and M3 bootstrap are published") {
+    fun prepareForAcceptance(onPrepared: () -> Unit = {}) =
+        launchOperation("Secure messaging is ready", onSuccess = onPrepared) {
         requireRuntime().prepareForAcceptance()
     }
 
@@ -163,7 +164,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         requireRuntime().createInvite()
     }
 
-    fun redeemAndEstablish(inviteUri: String) = launchOperation("Invite redeemed and outbound M3 session established") {
+    fun redeemAndEstablish(inviteUri: String, onJoined: () -> Unit = {}) =
+        launchOperation("Secure contact paired", onSuccess = onJoined) {
         if (inviteUri.isBlank()) throw IllegalArgumentException("Invite URI is required")
         requireRuntime().redeemAndEstablish(inviteUri.trim())
     }
