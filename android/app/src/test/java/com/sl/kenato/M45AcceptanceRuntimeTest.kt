@@ -554,6 +554,40 @@ class M45AcceptanceRuntimeTest {
     }
 
     @Test
+    fun identityReadCannotBypassClosedOrCompetingTransportOwner() {
+        val shared = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(shared)
+        val other = second.runtime(shared)
+
+        owner.startMessaging()
+        assertThrows(IllegalStateException::class.java) { other.currentIdentity() }
+        assertEquals(0, second.identity.currentReadCount)
+
+        owner.stopMessaging()
+        assertEquals(0, second.identity.currentReadCount)
+        assertEquals(second.identity.loadOrCreate(), other.currentIdentity())
+        assertEquals(1, second.identity.currentReadCount)
+
+        other.close()
+        assertThrows(IllegalStateException::class.java) { other.currentIdentity() }
+        assertEquals(1, second.identity.currentReadCount)
+        owner.close()
+    }
+
+    @Test
+    fun poisonedProcessOwnerDeniesIdentityReadsBeforeTouchingStore() {
+        val gate = M45ProcessTransportGate()
+        val fixture = Fixture()
+        val runtime = fixture.runtime(gate)
+        gate.poison()
+        assertThrows(IllegalStateException::class.java) { runtime.currentIdentity() }
+        assertEquals(0, fixture.identity.currentReadCount)
+        runtime.close()
+    }
+
+    @Test
     fun closedRuntimeCannotRestartWssOrStageNewOutgoingWork() {
         val fixture = Fixture()
         val runtime = fixture.runtime()
@@ -643,7 +677,13 @@ class M45AcceptanceRuntimeTest {
             return bundle
         }
 
-        override fun current(): IdentityBundle? = bundle
+        var currentReadCount = 0
+            private set
+
+        override fun current(): IdentityBundle? {
+            currentReadCount++
+            return bundle
+        }
     }
 
     private class FakeContacts(

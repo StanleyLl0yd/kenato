@@ -225,7 +225,13 @@ internal class M45AcceptanceRuntime(
         identity.loadOrCreate()
     }
 
-    fun currentIdentity(): IdentityBundle? = identity.current()
+    /** No identity-store reads outside the same process/cross-process owner fence. */
+    @Synchronized
+    fun currentIdentity(): IdentityBundle? = synchronized(processGate) {
+        requireOpen()
+        processGate.requireAvailable(this)
+        identity.current()
+    }
 
     @Synchronized
     fun prepareForAcceptance() = withMessagingPaused {
