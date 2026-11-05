@@ -28,7 +28,10 @@ def forbid(path: str, text: str, fragment: str) -> None:
 
 
 versions = read("gradle/libs.versions.toml")
-require("gradle/libs.versions.toml", versions, 'okhttp = "5.5.0"')
+# Exact reviewed OkHttp TLS certificate blocklist baseline.
+# This pinned dependency also protects AOSP/JVM deployments without Play Services.
+require("gradle/libs.versions.toml", versions, 'okhttp = "5.5.1"')
+forbid("gradle/libs.versions.toml", versions, 'okhttp = "5.5.0"')
 require(
     "gradle/libs.versions.toml",
     versions,
