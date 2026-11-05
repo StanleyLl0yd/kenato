@@ -51,6 +51,8 @@ PATCHES = (
     "android_toi420_failure_handling.patch",
 )
 SOURCE_PATHS = base.SOURCE_PATHS
+# Source-only ownership evidence, not accepted by the old six-CVE proof.
+SCTP_OWNER_PATHS = ("pc/data_channel_controller.cc", "pc/data_channel_controller.h")
 CRITICAL_SOURCES = base.CRITICAL_SOURCES
 MAX_SOURCE_BYTES = base.MAX_SIZE
 
@@ -60,7 +62,7 @@ class M158EvidenceError(ValueError):
 
 
 def allowed_url(url: str) -> tuple[str, int]:
-    gitiles = {SOURCE_ROOT + name + "?format=TEXT" for name in SOURCE_PATHS}
+    gitiles = {SOURCE_ROOT + name + "?format=TEXT" for name in SOURCE_PATHS + SCTP_OWNER_PATHS}
     gitiles.add(SOURCE_ROOT + "LICENSE?format=TEXT")
     gitiles.add(SOURCE_ROOT + SOURCE_LICENSE_GENERATOR_PATH + "?format=TEXT")
     publisher = {PRODUCER_ROOT + name

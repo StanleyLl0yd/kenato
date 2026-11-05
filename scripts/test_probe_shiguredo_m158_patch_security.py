@@ -107,6 +107,10 @@ class M158PinnedEvidenceTests(unittest.TestCase):
         self.assertNotIn("logging_sink_min_severity.patch", target.PATCHES)
         self.assertNotEqual(target.SOURCE_SHA, target.base.SOURCE_SHA)
         self.assertNotEqual(target.PRODUCER_SHA, target.base.PRODUCER_SHA)
+        for path in target.SCTP_OWNER_PATHS:
+            self.assertEqual(target.allowed_url(
+                target.SOURCE_ROOT + path + "?format=TEXT")[0],
+                "webrtc.googlesource.com")
         self.assertFalse(target.RELEASE_AAR_SHA256 == target.base.vendor.PATCH_EXPECTED_SHA256)
 
 

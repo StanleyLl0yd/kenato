@@ -46,6 +46,28 @@ class SctpScopeTests(unittest.TestCase):
             with self.assertRaises(scope.m158.M158EvidenceError):
                 scope.inspect_postfix_lifetime_markers(bad_send, bad_state)
 
+    def test_controller_transfer_requires_owner_held_until_close(self):
+        controller = (
+            "closed_channel = OnSctpDataChannelClosed(channel);\n"
+            "signaling_thread()->PostTask(SafeTask(\n"
+            "closed_channel = std::move(closed_channel)\n"
+            "scoped_refptr<SctpDataChannel> DataChannelController::OnSctpDataChannelClosed(\n"
+            "scoped_refptr<SctpDataChannel> closed_channel = std::move(*it)"
+        )
+        header = "std::vector<scoped_refptr<SctpDataChannel>> sctp_data_channels_n_;"
+        report = scope.inspect_controller_owner_transfer(controller, header)
+        self.assertFalse(report["destructor_happens_before_independently_proven"])
+        self.assertFalse(report["CVE_2026_9962_cleared"])
+        for fragment in ("closed_channel = OnSctpDataChannelClosed(channel)",
+                         "closed_channel = std::move(closed_channel)",
+                         "scoped_refptr<SctpDataChannel> closed_channel = std::move(*it)"):
+            with self.assertRaises(scope.m158.M158EvidenceError):
+                scope.inspect_controller_owner_transfer(
+                    controller.replace(fragment, "removed"), header
+                )
+        with self.assertRaises(scope.m158.M158EvidenceError):
+            scope.inspect_controller_owner_transfer(controller, "raw pointer only")
+
     def test_no_executable_source_or_unreviewed_fallback(self):
         self.assertEqual(scope.TARGET, "pc/sctp_data_channel.cc")
         self.assertIn(scope.m158.SOURCE_SHA, scope.URL)

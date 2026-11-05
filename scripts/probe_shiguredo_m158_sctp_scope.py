@@ -68,6 +68,36 @@ def inspect_postfix_lifetime_markers(send_async: str, set_state: str) -> dict:
         "CVE_2026_9962_native_binary_approved": False,
     }
 
+
+def inspect_controller_owner_transfer(controller: str, header: str) -> dict:
+    """Bounded textual ownership clues; cross-thread proof is separate."""
+    released = controller.find("closed_channel = OnSctpDataChannelClosed(channel)")
+    moved = controller.find("closed_channel = std::move(closed_channel)")
+    checks = {
+        "network_controller_keeps_scoped_channel_reference": (
+            "std::vector<scoped_refptr<SctpDataChannel>> sctp_data_channels_n_" in header
+        ),
+        "closed_reference_moved_to_signaling_thread_task": (
+            released >= 0 and moved > released and
+            "signaling_thread()->PostTask(SafeTask(" in controller
+        ),
+        "channel_close_returns_retained_reference": (
+            "scoped_refptr<SctpDataChannel> DataChannelController::OnSctpDataChannelClosed("
+            in controller and
+            "scoped_refptr<SctpDataChannel> closed_channel = std::move(*it)" in controller
+        ),
+    }
+    if not all(checks.values()):
+        raise m158.M158EvidenceError("Pinned controller close-transfer marker mismatch")
+    return {
+        "status": "EXACT_SOURCE_OWNER_TRANSFER_MARKERS_NOT_CONCURRENCY_PROOF",
+        "checks": checks,
+        "controller_sha256": hashlib.sha256(controller.encode("utf-8")).hexdigest(),
+        "controller_header_sha256": hashlib.sha256(header.encode("utf-8")).hexdigest(),
+        "destructor_happens_before_independently_proven": False,
+        "CVE_2026_9962_cleared": False,
+    }
+
 def collect(*, fetcher=m158.fetch_exact) -> dict:
     try:
         payload = base64.b64decode(fetcher(URL), validate=True)
@@ -85,6 +115,19 @@ def collect(*, fetcher=m158.fetch_exact) -> dict:
     set_state = bounded_context(text, "void SctpDataChannel::SetState(",
                                 limit=1100, unique=True)
     lifecycle = inspect_postfix_lifetime_markers(method, set_state)
+    pinned = {}
+    for path in m158.SCTP_OWNER_PATHS:
+        try:
+            pinned[path] = base64.b64decode(
+                fetcher(m158.SOURCE_ROOT + path + "?format=TEXT"),
+                validate=True,
+            ).decode("utf-8")
+        except (binascii.Error, UnicodeError) as error:
+            raise m158.M158EvidenceError("Pinned controller source encoding invalid") from error
+    transfer = inspect_controller_owner_transfer(
+        pinned["pc/data_channel_controller.cc"],
+        pinned["pc/data_channel_controller.h"],
+    )
     # The excerpt is public pinned source only. No user data, private keys or
     # actual native/vendor SDK runtime enter these artifacts.
     return {
@@ -94,6 +137,7 @@ def collect(*, fetcher=m158.fetch_exact) -> dict:
         "source_file_sha256": hashlib.sha256(payload).hexdigest(),
         "send_async_excerpt": method,
         "post_fix_lifetime_design_not_clearance": lifecycle,
+        "controller_owner_transfer_not_clearance": transfer,
         "destructor_context": bounded_context(
             text, "SctpDataChannel::~SctpDataChannel()", limit=1300, unique=True),
         "set_state_context": bounded_context(
