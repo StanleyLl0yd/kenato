@@ -125,6 +125,81 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Compile isolated M5 dispatch Keystore instrumentation (NOT EXECUTED)
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5DispatchProbeInstrumentation=true
+          :android:app:assembleM5DispatchProbe
+          :android:app:assembleM5DispatchProbeAndroidTest
+
+      - name: Verify isolated dispatch diagnostic APK package and permissions
+        run: |
+          set -euo pipefail
+          probe=android/app/build/outputs/apk/m5DispatchProbe/app-m5DispatchProbe.apk
+          tests=android/app/build/outputs/apk/androidTest/m5DispatchProbe/app-m5DispatchProbe-androidTest.apk
+          test -s "$probe"
+          test -s "$tests"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          test -x "$aapt"
+          "$aapt" dump badging "$probe" | grep -Fq "package: name='com.sl.kenato.m5dispatchprobe'"
+          "$aapt" dump badging "$tests" | grep -Fq "package: name='com.sl.kenato.m5dispatchprobe.test'"
+          for apk in "$probe" "$tests"; do
+            permissions="$("$aapt" dump permissions "$apk")"
+            if grep -Eq 'android[.]permission[.](INTERNET|RECORD_AUDIO|CAMERA|CAPTURE_AUDIO_OUTPUT)' <<< "$permissions"; then
+              echo "Dispatch diagnostic package unexpectedly requests network or media permissions" >&2
+              exit 1
+            fi
+          done
+
+      - name: Parse isolated M5 dispatch acceptance PowerShell helper
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/Run-KenatoM5DispatchProbe.ps1',
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Test M5 dispatch operator helper against synthetic ADB (NOT A DEVICE PASS)
+        run: python3 scripts/test_run_kenato_m5_dispatch_probe.py
+
+      - name: Package only isolated M5 dispatch diagnostic APKs with SHA scope
+        run: |
+          set -euo pipefail
+          probe=android/app/build/outputs/apk/m5DispatchProbe/app-m5DispatchProbe.apk
+          tests=android/app/build/outputs/apk/androidTest/m5DispatchProbe/app-m5DispatchProbe-androidTest.apk
+          target="$RUNNER_TEMP/kenato-m5-dispatch-probe"
+          mkdir -p "$target"
+          cp "$probe" "$tests" "$target/"
+          (
+            cd "$target"
+            sha256sum app-m5DispatchProbe.apk app-m5DispatchProbe-androidTest.apk > SHA256SUMS
+            sha256sum --check SHA256SUMS
+            printf 'checked_out_sha=%s\n' "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > SCOPE.txt
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha || github.sha }}" >> SCOPE.txt
+            printf 'application_id=com.sl.kenato.m5dispatchprobe\n' >> SCOPE.txt
+            printf 'status=research_only_no_device_pass_no_voice\n' >> SCOPE.txt
+            printf 'not_a_release=true\n' >> SCOPE.txt
+          )
+
+      - name: Upload temporary isolated M5 dispatch device-test APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kenato-m5-dispatch-research-apks
+          path: |
+            ${{ runner.temp }}/kenato-m5-dispatch-probe/app-m5DispatchProbe.apk
+            ${{ runner.temp }}/kenato-m5-dispatch-probe/app-m5DispatchProbe-androidTest.apk
+            ${{ runner.temp }}/kenato-m5-dispatch-probe/SHA256SUMS
+            ${{ runner.temp }}/kenato-m5-dispatch-probe/SCOPE.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 
