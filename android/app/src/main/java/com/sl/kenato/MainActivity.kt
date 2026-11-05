@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -77,10 +78,18 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     // A draft belongs to exactly one pinned peer, never a different selected contact.
     var messageInput by remember(state.selectedPeerIdentityId) { mutableStateOf("") }
     var selectedScreen by rememberSaveable { mutableStateOf("Chats") }
+    // Navigation only: never persist a peer-specific screen or plaintext draft in SavedState.
+    var openConversationPeer by remember { mutableStateOf<String?>(null) }
     val screenScroll = rememberScrollState()
     // QR inputs are deliberately not saveable/restored across activity/process recreation.
     var voiceChallengeInput by remember { mutableStateOf("") }
     var voiceProofInput by remember { mutableStateOf("") }
+
+    // System Back returns to the inbox before leaving the app.
+    BackHandler(enabled = selectedScreen != "Chats" || openConversationPeer != null) {
+        if (selectedScreen != "Chats") selectedScreen = "Chats"
+        openConversationPeer = null
+    }
 
     LaunchedEffect(state.voiceUiEpoch, state.selectedPeerIdentityId) {
         voiceChallengeInput = ""
@@ -147,35 +156,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 listOf("Chats", "Contacts", "Setup").forEach { screen ->
                     FilterChip(
                         selected = selectedScreen == screen,
-                        onClick = { selectedScreen = screen },
+                        onClick = {
+                            selectedScreen = screen
+                            if (screen != "Chats") openConversationPeer = null
+                        },
                         label = { Text(screen) },
                     )
-                }
-            }
-
-            if (selectedScreen == "Chats" && (
-                    state.serviceOrigin.isBlank() || state.contacts.isEmpty()
-                )
-            ) {
-                AcceptanceSection(title = "Get started") {
-                    Text(
-                        if (state.serviceOrigin.isBlank()) {
-                            "Configure your HTTPS service to begin."
-                        } else {
-                            "Connect with another Kenato user before sending messages."
-                        },
-                    )
-                    Button(
-                        onClick = {
-                            selectedScreen = if (state.serviceOrigin.isBlank()) "Setup" else "Contacts"
-                        },
-                    ) {
-                        Text(if (state.serviceOrigin.isBlank()) {
-                            "Open setup"
-                        } else {
-                            "Add a contact"
-                        })
-                    }
                 }
             }
 
@@ -336,9 +322,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                             )
                             TextButton(
                                 onClick = {
-                                    if (selected) selectedScreen = "Chats"
-                                    else controller.selectContact(contact.peerIdentityId) {
+                                    if (selected) {
+                                        openConversationPeer = contact.peerIdentityId
                                         selectedScreen = "Chats"
+                                    } else {
+                                        controller.selectContact(contact.peerIdentityId) {
+                                            openConversationPeer = contact.peerIdentityId
+                                            selectedScreen = "Chats"
+                                        }
                                     }
                                 },
                                 enabled = !state.busy,
@@ -448,14 +439,32 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             if (selectedScreen == "Chats") {
-                ChatConversationSection(
-                    state = state,
-                    controller = controller,
-                    draft = messageInput,
-                    onDraftChange = { messageInput = it },
-                    onDraftStaged = { messageInput = "" },
-                    onChangeContact = { selectedScreen = "Contacts" },
-                )
+                val opened = openConversationPeer
+                if (opened != null && opened == state.selectedPeerIdentityId) {
+                    ChatConversationSection(
+                        state = state,
+                        controller = controller,
+                        draft = messageInput,
+                        onDraftChange = { messageInput = it },
+                        onDraftStaged = { messageInput = "" },
+                        onBackToChats = { openConversationPeer = null },
+                    )
+                } else {
+                    ChatInboxSection(
+                        state = state,
+                        onOpenContact = { peer ->
+                            if (peer == state.selectedPeerIdentityId) {
+                                openConversationPeer = peer
+                            } else {
+                                controller.selectContact(peer) {
+                                    openConversationPeer = peer
+                                }
+                            }
+                        },
+                        onAddContact = { selectedScreen = "Contacts" },
+                        onOpenSetup = { selectedScreen = "Setup" },
+                    )
+                }
             }
 
             if (selectedScreen == "Setup") {
