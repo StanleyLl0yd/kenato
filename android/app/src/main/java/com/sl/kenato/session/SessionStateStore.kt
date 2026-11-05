@@ -14,7 +14,16 @@ internal interface SessionStateStore {
     fun clear(): Boolean
 }
 
-internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore {
+internal class AtomicFileSessionStateStore(
+    context: Context,
+    private val maximumPersistedBytes: Int = SessionStateCodec.MAX_STATE_BYTES,
+) : SessionStateStore {
+    init {
+        require(maximumPersistedBytes in SessionStateCodec.MAX_STATE_BYTES..EncryptedSessionStateStore.MAX_PERSISTED_BYTES) {
+            "Maximum M3 stored-state bytes must preserve the canonical bound"
+        }
+    }
+
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, STATE_FILE_NAME))
 
     override fun read(): ByteArray? {
@@ -31,7 +40,7 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
                 // AtomicFile.openRead() restores a pending backup before opening the
                 // base file, so size validation must happen only after that recovery.
                 val length = file.baseFile.length()
-                if (length !in 1..SessionStateCodec.MAX_STATE_BYTES.toLong()) {
+                if (length !in 1..maximumPersistedBytes.toLong()) {
                     throw SessionStateException("Persisted session state size is invalid")
                 }
 
@@ -44,7 +53,7 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
                         break
                     }
                     total += read
-                    if (total > SessionStateCodec.MAX_STATE_BYTES) {
+                    if (total > maximumPersistedBytes) {
                         throw SessionStateException("Persisted session state is too large")
                     }
                     output.write(buffer, 0, read)
@@ -63,7 +72,7 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
     }
 
     override fun write(value: ByteArray): Boolean {
-        if (value.isEmpty() || value.size > SessionStateCodec.MAX_STATE_BYTES) {
+        if (value.isEmpty() || value.size > maximumPersistedBytes) {
             throw SessionStateException("Session state size is invalid")
         }
 

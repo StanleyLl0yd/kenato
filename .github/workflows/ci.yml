@@ -125,6 +125,74 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Compile isolated M5 probe instrumentation without changing debug JVM tests
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5ProbeInstrumentation=true
+          :android:app:assembleM5Probe
+          :android:app:assembleM5ProbeAndroidTest
+
+      - name: Parse physical M5 Keystore PowerShell acceptance helper
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/Run-KenatoM5KeystoreProbe.ps1',
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Exercise Windows acceptance helper against synthetic ADB
+        run: python3 scripts/test_run_kenato_m5_keystore_probe.py
+
+      - name: Verify separate test-only Keystore APK package IDs and digests
+        run: |
+          set -euo pipefail
+          probe=android/app/build/outputs/apk/m5Probe/app-m5Probe.apk
+          tests=android/app/build/outputs/apk/androidTest/m5Probe/app-m5Probe-androidTest.apk
+          test -s "$probe"
+          test -s "$tests"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          test -x "$aapt"
+          probe_badging="$("$aapt" dump badging "$probe")"
+          tests_badging="$("$aapt" dump badging "$tests")"
+          grep -Fq "package: name='com.sl.kenato.m5probe'" <<< "$probe_badging"
+          grep -Fq "package: name='com.sl.kenato.m5probe.test'" <<< "$tests_badging"
+          probe_permissions="$("$aapt" dump permissions "$probe")"
+          if grep -Eq 'android[.]permission[.](INTERNET|RECORD_AUDIO|CAMERA|CAPTURE_AUDIO_OUTPUT)' <<< "$probe_permissions"; then
+            echo "The offline Keystore probe must not request network or media permissions." >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/kenato-m5-keystore-probe"
+          cp "$probe" "$tests" "$RUNNER_TEMP/kenato-m5-keystore-probe/"
+          (
+            cd "$RUNNER_TEMP/kenato-m5-keystore-probe"
+            sha256sum app-m5Probe.apk app-m5Probe-androidTest.apk > SHA256SUMS
+            sha256sum --check SHA256SUMS
+            printf 'checked_out_sha=%s\n' "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > SCOPE.txt
+            printf 'pr_head_sha=%s\n' "${{ github.event.pull_request.head.sha || github.sha }}" >> SCOPE.txt
+            printf 'application_id=com.sl.kenato.m5probe\n' >> SCOPE.txt
+            printf 'status=research_only_no_device_pass_no_voice\n' >> SCOPE.txt
+            printf 'not_a_release=true\n' >> SCOPE.txt
+          )
+
+      - name: Upload temporary isolated M5 Keystore device-test APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kenato-m5-keystore-research-apks
+          path: |
+            ${{ runner.temp }}/kenato-m5-keystore-probe/app-m5Probe.apk
+            ${{ runner.temp }}/kenato-m5-keystore-probe/app-m5Probe-androidTest.apk
+            ${{ runner.temp }}/kenato-m5-keystore-probe/SHA256SUMS
+            ${{ runner.temp }}/kenato-m5-keystore-probe/SCOPE.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 
