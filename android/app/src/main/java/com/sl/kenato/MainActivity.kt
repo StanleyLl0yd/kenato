@@ -343,9 +343,106 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                                 },
                                 enabled = !state.busy,
                             ) { Text(if (selected) "Open chat" else "Select and open chat") }
+                            if (selected) {
+                                Text(
+                                    "Call approval for this contact is below.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            } else {
+                                TextButton(
+                                    onClick = { controller.selectContact(contact.peerIdentityId) },
+                                    enabled = !state.busy,
+                                ) { Text("Select for call approval") }
+                            }
                         }
                     }
                 }
+            }
+
+            // Voice-v2 approval is contact-specific, not part of first-run setup.
+            if (state.selectedPeerIdentityId != null) {
+                AcceptanceSection(title = "Call approval for selected contact (calls not yet available)") {
+                    Text(
+                        "Approve calls only for the selected, independently verified pinned contact. " +
+                            "QR/text records are not automatically transmitted and do not start a call.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        if (state.voiceCapabilityConfirmed) {
+                            "Voice-v2 signed proof: confirmed for selected contact"
+                        } else {
+                            "Voice-v2 signed proof: not yet confirmed"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    state.selectedPeerIdentityId?.let { peer ->
+                        Text("Verify selected peer identity before approving:", style = MaterialTheme.typography.bodySmall)
+                        SelectionContainer { Text(peer, style = MaterialTheme.typography.bodySmall) }
+                        Button(
+                            onClick = controller::issueVoiceCapabilityChallenge,
+                            enabled = !state.busy && !state.voiceCapabilityConfirmed,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("1. Issue one-time challenge for this peer") }
+                        state.voiceChallengeQr?.let { qr ->
+                            Text("Share this challenge with the selected peer (expires in 5 minutes):")
+                            SelectionContainer { Text(qr, style = MaterialTheme.typography.bodySmall) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { copyText(context, qr, "Kenato voice challenge") }) { Text("Copy challenge") }
+                                TextButton(onClick = { shareText(context, qr) }) { Text("Share") }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = voiceChallengeInput,
+                            onValueChange = { voiceChallengeInput = it.take(512) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !state.busy,
+                            minLines = 2,
+                            maxLines = 5,
+                            label = { Text("Challenge received from selected peer") },
+                        )
+                        Button(
+                            onClick = {
+                                controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput) {
+                                    voiceChallengeInput = ""
+                                }
+                            },
+                            enabled = !state.busy && voiceChallengeInput.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("2. Verify pinned identity and explicitly approve signing") }
+                        state.voiceProofQr?.let { proof ->
+                            Text("Share the signed proof back to the requesting peer:")
+                            SelectionContainer { Text(proof, style = MaterialTheme.typography.bodySmall) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { copyText(context, proof, "Kenato voice signed proof") }) { Text("Copy proof") }
+                                TextButton(onClick = { shareText(context, proof) }) { Text("Share") }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = voiceProofInput,
+                            onValueChange = { voiceProofInput = it.take(512) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !state.busy,
+                            minLines = 2,
+                            maxLines = 5,
+                            label = { Text("Signed proof returned by selected peer") },
+                        )
+                        Button(
+                            onClick = {
+                                controller.approveAndImportVoiceCapabilityProof(voiceProofInput) {
+                                    voiceProofInput = ""
+                                }
+                            },
+                            enabled = !state.busy && !state.voiceCapabilityConfirmed && voiceProofInput.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("3. Verify signature and explicitly approve import") }
+                    } ?: Text("Select a pinned contact to enable offline exchange.")
+                    Text(
+                        "A successful proof does not enable microphone, send signaling or start WebRTC. " +
+                            "Do not treat this as a phone-call test.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
             }
 
             }
@@ -362,88 +459,6 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             if (selectedScreen == "Setup") {
-            AcceptanceSection(title = "Call consent setup (calls not yet available)") {
-                Text(
-                    "Use only with the selected, independently verified pinned M2 contact. " +
-                        "QR/text records are not automatically transmitted and do not start a call.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    if (state.voiceCapabilityConfirmed) {
-                        "Voice-v2 signed proof: confirmed for selected contact"
-                    } else {
-                        "Voice-v2 signed proof: not yet confirmed"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                state.selectedPeerIdentityId?.let { peer ->
-                    Text("Verify selected peer identity before approving:", style = MaterialTheme.typography.bodySmall)
-                    SelectionContainer { Text(peer, style = MaterialTheme.typography.bodySmall) }
-                    Button(
-                        onClick = controller::issueVoiceCapabilityChallenge,
-                        enabled = !state.busy && !state.voiceCapabilityConfirmed,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("1. Issue one-time challenge for this peer") }
-                    state.voiceChallengeQr?.let { qr ->
-                        Text("Share this challenge with the selected peer (expires in 5 minutes):")
-                        SelectionContainer { Text(qr, style = MaterialTheme.typography.bodySmall) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { copyText(context, qr, "Kenato voice challenge") }) { Text("Copy challenge") }
-                            TextButton(onClick = { shareText(context, qr) }) { Text("Share") }
-                        }
-                    }
-                    OutlinedTextField(
-                        value = voiceChallengeInput,
-                        onValueChange = { voiceChallengeInput = it.take(512) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.busy,
-                        minLines = 2,
-                        maxLines = 5,
-                        label = { Text("Challenge received from selected peer") },
-                    )
-                    Button(
-                        onClick = {
-                            controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput) {
-                                voiceChallengeInput = ""
-                            }
-                        },
-                        enabled = !state.busy && voiceChallengeInput.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("2. Verify pinned identity and explicitly approve signing") }
-                    state.voiceProofQr?.let { proof ->
-                        Text("Share the signed proof back to the requesting peer:")
-                        SelectionContainer { Text(proof, style = MaterialTheme.typography.bodySmall) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { copyText(context, proof, "Kenato voice signed proof") }) { Text("Copy proof") }
-                            TextButton(onClick = { shareText(context, proof) }) { Text("Share") }
-                        }
-                    }
-                    OutlinedTextField(
-                        value = voiceProofInput,
-                        onValueChange = { voiceProofInput = it.take(512) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.busy,
-                        minLines = 2,
-                        maxLines = 5,
-                        label = { Text("Signed proof returned by selected peer") },
-                    )
-                    Button(
-                        onClick = {
-                            controller.approveAndImportVoiceCapabilityProof(voiceProofInput) {
-                                voiceProofInput = ""
-                            }
-                        },
-                        enabled = !state.busy && !state.voiceCapabilityConfirmed && voiceProofInput.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("3. Verify signature and explicitly approve import") }
-                } ?: Text("Select a pinned contact to enable offline exchange.")
-                Text(
-                    "A successful proof does not enable microphone, send signaling or start WebRTC. " +
-                        "Do not treat this as a phone-call test.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-
             AcceptanceSection(title = "Diagnostics") {
                 Text(
                     text = "Stored only on this device: timestamps and predefined connection/error codes. " +
