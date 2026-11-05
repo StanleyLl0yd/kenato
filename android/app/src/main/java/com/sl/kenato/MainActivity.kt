@@ -327,7 +327,13 @@ private fun KenatoApp(
             }
 
             AcceptanceSection(title = "Join using invite") {
-                Text("On the second phone, paste the invitation and join. Then finish pairing on the first phone.")
+                Text("Paste an invite or open an invitation link. Confirm the contact before joining; the first phone finishes pairing.")
+                if (state.serviceOrigin.isBlank()) {
+                    Text("Set up your HTTPS service connection before joining.")
+                    TextButton(onClick = { selectedScreen = "Setup" }) {
+                        Text("Open connection setup")
+                    }
+                }
                 OutlinedTextField(
                     value = inviteInput,
                     onValueChange = { inviteInput = it },
