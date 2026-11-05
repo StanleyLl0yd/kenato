@@ -10,12 +10,13 @@ class SctpScopeTests(unittest.TestCase):
         self.assertEqual(
             scope.bounded_context(text, "SctpDataChannel::~SctpDataChannel()",
                                   limit=9),
-            "SctpData")
+            "SctpDataC")
         self.assertEqual(scope.bounded_context(text, "nonexistent"), "")
         with self.assertRaises(scope.m158.M158EvidenceError):
             scope.bounded_context(text, "after", limit=10000)
         with self.assertRaises(scope.m158.M158EvidenceError):
-            scope.bounded_context(text + text, "SctpDataChannel::~SctpDataChannel()")
+            scope.bounded_context(text + text, "SctpDataChannel::~SctpDataChannel()",
+                                  unique=True)
 
     def test_no_executable_source_or_unreviewed_fallback(self):
         self.assertEqual(scope.TARGET, "pc/sctp_data_channel.cc")
