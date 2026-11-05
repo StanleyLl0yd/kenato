@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -83,6 +84,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     // QR inputs are deliberately not saveable/restored across activity/process recreation.
     var voiceChallengeInput by remember { mutableStateOf("") }
     var voiceProofInput by remember { mutableStateOf("") }
+
+    // System Back returns to the inbox before leaving the app.
+    BackHandler(enabled = selectedScreen != "Chats" || openConversationPeer != null) {
+        if (selectedScreen != "Chats") selectedScreen = "Chats"
+        openConversationPeer = null
+    }
 
     LaunchedEffect(state.voiceUiEpoch, state.selectedPeerIdentityId) {
         voiceChallengeInput = ""
