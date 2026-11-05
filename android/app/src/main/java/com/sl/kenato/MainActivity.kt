@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import com.sl.kenato.contact.ExternalInviteLink
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,13 +42,31 @@ import com.sl.kenato.ui.theme.KenatoTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var acceptance: M45AcceptanceController
+    // A bearer invitation received from another app is ephemeral and never enters SavedState.
+    private var pendingExternalInvite by mutableStateOf<String?>(null)
+
+    private fun offerExternalInvite(candidate: Intent?) {
+        if (candidate?.action != Intent.ACTION_VIEW) return
+        pendingExternalInvite = ExternalInviteLink.canonicalOrNull(candidate.dataString) ?: return
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        offerExternalInvite(intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         acceptance = M45AcceptanceController(applicationContext)
+        if (savedInstanceState == null) offerExternalInvite(intent)
         setContent {
             KenatoTheme {
-                KenatoApp(acceptance)
+                KenatoApp(
+                    acceptance,
+                    externalInvite = pendingExternalInvite,
+                    onExternalInviteConsumed = { pendingExternalInvite = null },
+                )
             }
         }
     }
@@ -69,12 +88,18 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun KenatoApp(controller: M45AcceptanceController) {
+private fun KenatoApp(
+    controller: M45AcceptanceController,
+    externalInvite: String?,
+    onExternalInviteConsumed: () -> Unit,
+) {
     val state = controller.state
     val context = LocalContext.current
     var originInput by rememberSaveable { mutableStateOf(state.serviceOrigin) }
     // Invitations and unsent E2EE drafts must not enter Android SavedState plaintext.
     var inviteInput by remember { mutableStateOf("") }
+    // QR visibility is an in-memory UI toggle; the invite is still a one-time bearer token.
+    var visibleInviteQr by remember { mutableStateOf<String?>(null) }
     // A draft belongs to exactly one pinned peer, never a different selected contact.
     var messageInput by remember(state.selectedPeerIdentityId) { mutableStateOf("") }
     var selectedScreen by rememberSaveable { mutableStateOf("Chats") }
@@ -89,6 +114,22 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     BackHandler(enabled = selectedScreen != "Chats" || openConversationPeer != null) {
         if (selectedScreen != "Chats") selectedScreen = "Chats"
         openConversationPeer = null
+    }
+
+    LaunchedEffect(externalInvite) {
+        if (externalInvite != null) {
+            // Deliberately do NOT redeem a link automatically: the user must tap Join securely.
+            inviteInput = externalInvite
+            selectedScreen = "Contacts"
+            openConversationPeer = null
+            onExternalInviteConsumed()
+        }
+    }
+
+    LaunchedEffect(state.pendingInvites) {
+        if (visibleInviteQr != null && visibleInviteQr !in state.pendingInvites) {
+            visibleInviteQr = null
+        }
     }
 
     LaunchedEffect(state.voiceUiEpoch, state.selectedPeerIdentityId) {
@@ -261,6 +302,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                         ) {
                             Text("Share")
                         }
+                        TextButton(onClick = {
+                            visibleInviteQr = if (visibleInviteQr == invite) null else invite
+                        }) {
+                            Text(if (visibleInviteQr == invite) "Hide QR" else "Show QR")
+                        }
+                    }
+                    if (visibleInviteQr == invite) {
+                        InviteQrImage(invite)
                     }
                     Button(
                         onClick = { controller.claimAndEstablish(invite) },
