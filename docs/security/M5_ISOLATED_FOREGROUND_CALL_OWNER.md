@@ -58,3 +58,19 @@ It does **not** assert exactly-once call execution, or physical media STOP.
 
 Protected main and release v0.0.4 must stay unchanged until separately
 approved gates. No APK deployment or production activation.
+
+## Simultaneous outbound glare: retiring the losing call
+
+The reducer's authenticated glare resolver can produce a combined transition:
+retire the losing outgoing call, then display the winning incoming call from
+the **same pinned peer**. A strict terminal-only effect gate had mistakenly
+rejected the legitimate `SEND_HANGUP` proposal because the new snapshot is
+`INCOMING_RINGING`, not `IDLE`. The isolated proposal gate now accepts only
+the **most recently retired** old call ID when the active incoming peer is
+identical but its call ID differs. Other peers, arbitrary old IDs and any
+native/media work remain rejected. Consent is still checked when the one-use
+proposal is claimed; no effect is executed by this owner.
+
+The change does not authorize real WSS sending, replace KDL1, or complete the
+P01–P24 physical glare tests; it only fixes the isolated reducer/proposal
+composition and adds a regression for the genuine simultaneous-call path.

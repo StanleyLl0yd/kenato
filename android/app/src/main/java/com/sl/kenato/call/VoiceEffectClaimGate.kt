@@ -131,10 +131,21 @@ internal class VoiceEffectClaimGate {
                 next.active.callId != effect.key.callId &&
                 effect.key.callId !in next.retiredCallIds
         VoiceCallEffectKind.SEND_REJECT,
-        VoiceCallEffectKind.SEND_HANGUP,
         VoiceCallEffectKind.STOP_MEDIA ->
             next.phase == VoiceCallPhase.IDLE &&
                 effect.key.callId == next.retiredCallIds.lastOrNull()
+        VoiceCallEffectKind.SEND_HANGUP ->
+            (next.phase == VoiceCallPhase.IDLE &&
+                effect.key.callId == next.retiredCallIds.lastOrNull()) ||
+                // The losing side of simultaneous outbound glare must retire
+                // its old outgoing ID while switching to the winning incoming
+                // ID from the SAME peer. Never hang up the new incoming call.
+                (next.phase == VoiceCallPhase.INCOMING_RINGING &&
+                    next.direction == VoiceCallDirection.INCOMING &&
+                    next.active != null &&
+                    next.active.peerIdentityId == effect.key.peerIdentityId &&
+                    next.active.callId != effect.key.callId &&
+                    effect.key.callId == next.retiredCallIds.lastOrNull())
     }
 
     private companion object {

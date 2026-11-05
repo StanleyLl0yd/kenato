@@ -1,6 +1,7 @@
 package com.sl.kenato.call
 
 import java.util.Base64
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -202,6 +203,54 @@ class VoiceEffectClaimGateTest {
             incoming, listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_ACCEPT, key)),
         )).single()
         assertEquals(VoiceCallEffect(VoiceCallEffectKind.SEND_ACCEPT, key), f.claim(ticket, incoming))
+    }
+
+    @Test
+    fun losingOutgoingGlareCanProposeOnlyOldCallHangupOnSamePeer() {
+        val localHigher = ByteArray(32) { 33 }
+        val remoteLower = ByteArray(32) { 11 }
+        val prior = VoiceCallKey(encoded(ByteArray(16) { 44 }), encoded(remoteLower))
+        val incoming = VoiceCallKey(encoded(ByteArray(16) { 55 }), encoded(remoteLower))
+        val activeOutgoing = VoiceCallSnapshot(
+            phase = VoiceCallPhase.OUTGOING_RINGING,
+            active = prior,
+            direction = VoiceCallDirection.OUTGOING,
+        )
+        val transition = VoiceCallGlareResolver.resolveAuthenticatedIncomingOffer(
+            encoded(localHigher), activeOutgoing, incoming,
+        )
+        assertEquals(VoiceCallPhase.INCOMING_RINGING, transition.next.phase)
+        assertEquals(incoming, transition.next.active)
+        assertEquals(listOf(prior.callId), transition.next.retiredCallIds)
+        assertEquals(listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_HANGUP, prior)), transition.effects)
+
+        val gate = VoiceEffectClaimGate()
+        val ticket = gate.replace(transition).single()
+        var approvals = 0
+        val permission = VoiceCallVerifiedPeerAdmission { ownerId, peerId ->
+            approvals++
+            assertArrayEquals(localHigher, ownerId)
+            assertArrayEquals(remoteLower, peerId)
+        }
+        assertEquals(transition.effects.single(),
+            gate.claim(ticket, transition.next, permission, localHigher))
+        assertNull(gate.claim(ticket, transition.next, permission, localHigher))
+        assertEquals(1, approvals)
+
+        val unrelated = VoiceCallKey(prior.callId, encoded(ByteArray(32) { 88 }))
+        val rejected = VoiceCallTransition(
+            transition.next,
+            listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_HANGUP, unrelated)),
+        )
+        assertThrows(IllegalArgumentException::class.java) { gate.replace(rejected) }
+        val wrongCall = VoiceCallKey(encoded(ByteArray(16) { 77 }), encoded(remoteLower))
+        assertThrows(IllegalArgumentException::class.java) {
+            gate.replace(VoiceCallTransition(
+                transition.next,
+                listOf(VoiceCallEffect(VoiceCallEffectKind.SEND_HANGUP, wrongCall)),
+            ))
+        }
+        assertEquals(1, approvals)
     }
 
     private inner class Fixture {
