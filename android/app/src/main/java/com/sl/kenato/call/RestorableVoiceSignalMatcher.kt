@@ -47,6 +47,58 @@ internal class RestorableVoiceSignalMatcher(
         } else null
     }
 
+    /**
+     * Isolated KDL1 research path: pair the *same* canonical semantic event
+     * and journal permit, then commit both the legacy claim and the separate
+     * rollback-resistant epoch ledger BEFORE returning a proposed event.
+     *
+     * A failed second commit loses this effect, never dispatches twice.
+     * This is not a production effect runner: permission revalidation and
+     * M2/M3/WSS ownership are still missing. No Android factory calls this.
+     */
+    @Synchronized
+    fun claimRestorableCandidateWithEpochLedger(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+        continuity: VoiceDispatchContinuityLedger,
+    ): VoiceSignalPlaintext? {
+        if (peerIdentityId.size != 32 || messageId.size != 16) {
+            throw RestorableVoiceSignalMismatchException("Invalid protected voice dispatch key")
+        }
+        val matched = verifiedCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.signal.senderIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.signal.messageId, messageId)
+        } ?: return null
+        if (!replay.claimLiveDispatchPermit(ownerIdentityId, matched.permit, nowEpochSeconds)) {
+            return null
+        }
+        if (!continuity.claim(ownerIdentityId, matched.permit)) return null
+
+        // A separately encrypted semantic file may change after the initial
+        // matcher snapshot but before the KDL1/fsync commitment. Never return
+        // the earlier plaintext if the authenticated counterpart changed.
+        // A mismatch consumes this permit and refuses an effect.
+        val current = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+            .singleOrNull {
+                MessageDigest.isEqual(it.signal.senderIdentityId, matched.signal.senderIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, matched.signal.messageId)
+            }
+        if (current == null ||
+            !MessageDigest.isEqual(current.envelopeDigest, matched.permit.envelopeDigest) ||
+            !MessageDigest.isEqual(
+                VoiceSignalingWire.encode(current.signal),
+                VoiceSignalingWire.encode(matched.signal),
+            )
+        ) {
+            throw RestorableVoiceSignalMismatchException(
+                "Durable M5 semantic state changed after protected effect claim",
+            )
+        }
+        return matched.signal
+    }
+
     @Synchronized
     fun restorableCandidates(
         ownerIdentityId: ByteArray,
