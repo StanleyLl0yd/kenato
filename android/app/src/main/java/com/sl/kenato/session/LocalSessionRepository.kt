@@ -1,5 +1,8 @@
 package com.sl.kenato.session
 
+import com.sl.kenato.storage.M45CrossProcessLease
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
+
 import android.content.Context
 import java.security.MessageDigest
 
@@ -978,10 +981,23 @@ internal class LocalSessionRepository(
         private const val FIRST_ONE_TIME_KEY_ID = 1L
         private const val TARGET_ONE_TIME_KEYS = 32
 
-        fun create(context: Context): LocalSessionRepository = LocalSessionRepository(
-            engine = JniSessionEngine(),
-            keyBackend = AndroidSessionPickleKeyBackend(),
-            stateStore = AtomicFileSessionStateStore(context),
-        )
+        // All Android factory callers targeting the same app storage use one process-local
+        // M3 monitor. Do not equate this with inter-process or multi-store transactions.
+        private val applicationOwners = ProcessLocalOwnerRegistry<LocalSessionRepository>()
+
+        fun create(context: Context): LocalSessionRepository {
+            val applicationContext = context.applicationContext
+            val storageDirectory = applicationContext.noBackupFilesDir.canonicalFile
+            M45CrossProcessLease.shared(storageDirectory)
+            return applicationOwners.getOrCreate(storageDirectory.path) {
+                LocalSessionRepository(
+                    engine = JniSessionEngine(),
+                    keyBackend = AndroidSessionPickleKeyBackend(),
+                    stateStore = AtomicFileSessionStateStore(applicationContext),
+                )
+            }
+        }
     }
 }
+
+

@@ -1,6 +1,7 @@
 package com.sl.kenato.call
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -19,11 +20,13 @@ import javax.crypto.spec.GCMParameterSpec
  * the M5 semantic SDP/ICE file or the M3 encrypted pickle file.
  */
 internal class AtomicFileVoiceCapabilityEncryptedStore(context: Context) : VoiceCapabilityEncryptedStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val file = AtomicFile(
         File(context.applicationContext.noBackupFilesDir, "kenato_m5_voice_capabilities_v1.enc"),
     )
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val stream = try {
             file.openRead()
         } catch (_: FileNotFoundException) {
@@ -59,6 +62,7 @@ internal class AtomicFileVoiceCapabilityEncryptedStore(context: Context) : Voice
     }
 
     override fun write(bytes: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (bytes.isEmpty() || bytes.size > VoiceCapabilityConsentStateCodec.MAX_ENCRYPTED_BYTES) {
             throw VoiceCapabilityConsentException("Encrypted capability write size invalid")
         }
@@ -79,6 +83,7 @@ internal class AtomicFileVoiceCapabilityEncryptedStore(context: Context) : Voice
     }
 
     override fun clear(): Boolean = try {
+        ownerLease.requireActive()
         file.delete()
         !file.baseFile.exists()
     } catch (error: Exception) {
