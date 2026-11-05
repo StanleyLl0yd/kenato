@@ -82,6 +82,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     // A draft belongs to exactly one pinned peer, never a different selected contact.
     var messageInput by remember(state.selectedPeerIdentityId) { mutableStateOf("") }
     var selectedScreen by rememberSaveable { mutableStateOf("Chats") }
+    val screenScroll = rememberScrollState()
     // QR inputs are deliberately not saveable/restored across activity/process recreation.
     var voiceChallengeInput by remember { mutableStateOf("") }
     var voiceProofInput by remember { mutableStateOf("") }
@@ -95,12 +96,17 @@ private fun KenatoApp(controller: M45AcceptanceController) {
         originInput = state.serviceOrigin
     }
 
+    // A long Setup page must not leave Chats or Contacts scrolled to its old offset.
+    LaunchedEffect(selectedScreen) {
+        screenScroll.scrollTo(0)
+    }
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(screenScroll)
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
