@@ -80,6 +80,11 @@ internal class RestorableVoiceSignalMatcher(
         // matcher snapshot but before the KDL1/fsync commitment. Never return
         // the earlier plaintext if the authenticated counterpart changed.
         // A mismatch consumes this permit and refuses an effect.
+        // A different semantic-only orphan could appear during the KDL1 fsync,
+        // while this exact claimed event remains unchanged. Recheck the FULL
+        // replay/semantic bijection after the irreversible durable claim too.
+        // Failure consumes the claim and never produces a call effect.
+        verifiedCandidates(ownerIdentityId, nowEpochSeconds)
         val current = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
             .singleOrNull {
                 MessageDigest.isEqual(it.signal.senderIdentityId, matched.signal.senderIdentityId) &&

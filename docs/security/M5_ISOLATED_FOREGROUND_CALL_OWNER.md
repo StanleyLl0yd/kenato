@@ -93,3 +93,10 @@ cover the orphan-only and orphan-with-valid-peer scenarios.
 This check is still a non-atomic pair of file snapshots, not a cross-store
 transaction or a proof of OS process exclusion. It does not activate the
 Android runtime, grant network/media side effects or replace P01–P24 tests.
+
+The protected KDL1 path additionally re-verifies that full bijection **after**
+its irreversible epoch-rotating claim. A separate semantic-only event introduced
+during the claim must not let the otherwise stable claimed call escape as an
+effect; a new adversarial JVM regression checks this fsync-window race.
+This is a fail-closed snapshot strengthening, **not** an interprocess atomicity
+or future mutation fence after method return.

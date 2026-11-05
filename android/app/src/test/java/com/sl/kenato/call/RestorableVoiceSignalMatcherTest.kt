@@ -232,6 +232,27 @@ class RestorableVoiceSignalMatcherTest {
     }
 
     @Test
+    fun orphanAppearingDuringProtectedClaimCannotReleaseAnUnrelatedCallEffect() {
+        val f = Fixture()
+        f.accept(handoff(146))
+        val original = f.journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        // The initial complete snapshot was valid. Another semantic file write
+        // completes during KDL1 fsync without its corresponding replay receipt.
+        f.ledgerRaw.afterWrite = {
+            f.semantic.persistAuthenticatedVoiceEvent(OWNER, handoff(147))
+        }
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(146), NOW, f.ledger(),
+            )
+        }
+        // The old candidate was permanently consumed, but no effect escaped.
+        assertTrue(f.ledger().hasClaim(OWNER, original))
+        assertTrue(f.journal.pendingLiveDispatchPermits(OWNER, NOW).isEmpty())
+        assertEquals(1, f.journal.pendingLiveReceipts(OWNER, NOW).size)
+    }
+
+    @Test
     fun disappearanceOfSemanticFileDuringEpochCommitCannotReturnStalePlaintext() {
         val f = Fixture()
         f.accept(handoff(126))
