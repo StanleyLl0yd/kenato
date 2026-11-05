@@ -43,7 +43,7 @@ internal fun ColumnScope.ChatConversationSection(
     draft: String,
     onDraftChange: (String) -> Unit,
     onDraftStaged: () -> Unit,
-    onChangeContact: () -> Unit,
+    onBackToChats: () -> Unit,
 ) {
     val peer = state.selectedPeerIdentityId
     val listState = rememberLazyListState()
@@ -67,8 +67,8 @@ internal fun ColumnScope.ChatConversationSection(
                     if (peer == null) "Choose a conversation" else "Chat · ${peer.take(12)}…",
                     style = MaterialTheme.typography.titleMedium,
                 )
-                TextButton(onClick = onChangeContact) {
-                    Text(if (peer == null) "Contacts" else "Change")
+                TextButton(onClick = onBackToChats) {
+                    Text("Back")
                 }
             }
 
@@ -106,7 +106,7 @@ internal fun ColumnScope.ChatConversationSection(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                Button(onClick = onChangeContact, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onBackToChats, modifier = Modifier.fillMaxWidth()) {
                     Text("Add a contact")
                 }
             } else {
