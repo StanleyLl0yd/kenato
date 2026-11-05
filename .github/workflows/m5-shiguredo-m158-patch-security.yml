@@ -7,6 +7,7 @@ on:
       - ".github/workflows/m5-shiguredo-m158-patch-security.yml"
       - "scripts/probe_shiguredo_m158_patch_security.py"
       - "scripts/test_probe_shiguredo_m158_patch_security.py"
+      - "scripts/probe_shiguredo_m158_sctp_scope.py"
       - "scripts/probe_shiguredo_m157_patch_security.py"
       - "scripts/probe_shiguredo_m157_source.py"
       - "scripts/probe_shiguredo_m157_notice.py"
@@ -36,11 +37,24 @@ jobs:
         run: >
           python3 scripts/probe_shiguredo_m158_patch_security.py
           --output /tmp/kenato-shiguredo-m158-patches-cves.json
+      - name: Collect exact SCTP SendAsync source for independent CVE scope review
+        if: always()
+        run: >
+          python3 scripts/probe_shiguredo_m158_sctp_scope.py
+          --output /tmp/kenato-m158-sctp-scope.json
       - name: Upload research-only source fingerprint JSON
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m158-1-source-cve-and-patch-evidence
           path: /tmp/kenato-shiguredo-m158-patches-cves.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload pinned SCTP method excerpt (not a security verdict)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m158-sctp-sendasync-scope
+          path: /tmp/kenato-m158-sctp-scope.json
           retention-days: 7
           if-no-files-found: ignore
