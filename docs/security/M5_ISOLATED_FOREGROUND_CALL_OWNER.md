@@ -74,3 +74,22 @@ proposal is claimed; no effect is executed by this owner.
 The change does not authorize real WSS sending, replace KDL1, or complete the
 P01–P24 physical glare tests; it only fixes the isolated reducer/proposal
 composition and adds a regression for the genuine simultaneous-call path.
+
+## Partial semantic/replay commit must block all effect admissions
+
+The original matcher checked only each currently dispatchable replay permit
+against the encrypted semantic file. A semantic-only orphan (for example,
+a process death after AES-GCM event persistence but before replay receipt
+commit) could coexist with an otherwise valid permit and allow a different
+effect to reach the reducer. The matcher now compares the **full live**
+receipt set bidirectionally with decrypted semantic events, including
+suppressed OFFERs and previously claimed receipts, before considering any
+single-use dispatch permit. Missing, extra, duplicate or contradictory
+records terminate this admission attempt without consuming a permit.
+Recovery must restore the missing replay receipt from the authenticated M3
+handoff rather than delete or waive the orphan. Synthetic JVM regressions
+cover the orphan-only and orphan-with-valid-peer scenarios.
+
+This check is still a non-atomic pair of file snapshots, not a cross-store
+transaction or a proof of OS process exclusion. It does not activate the
+Android runtime, grant network/media side effects or replace P01–P24 tests.

@@ -125,7 +125,41 @@ internal class RestorableVoiceSignalMatcher(
         // Both stores use one immutable receive-time snapshot. This avoids creating
         // an artificial mismatch when a 90-second expiry crosses between reads.
         val permits = replay.pendingLiveDispatchPermits(ownerIdentityId, nowEpochSeconds)
+        val receipts = replay.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
         val events = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+
+        // A crash can leave a semantic-only encrypted event before the replay
+        // commit. Do not dispatch even ANOTHER otherwise valid call until this
+        // owner has reconciled the full durable ACK/semantic set. Compare all
+        // receipts (including suppressed/claimed OFFERs), not just the subset
+        // still eligible to create effects.
+        if (receipts.size != events.size) {
+            throw RestorableVoiceSignalMismatchException(
+                "M5 effect admission has incomplete semantic/replay receipt sets",
+            )
+        }
+        receipts.forEach { receipt ->
+            val matches = events.filter {
+                MessageDigest.isEqual(it.signal.senderIdentityId, receipt.peerIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, receipt.messageId)
+            }
+            if (matches.size != 1) {
+                throw RestorableVoiceSignalMismatchException(
+                    "M5 effect admission requires exactly one authenticated semantic event per receipt",
+                )
+            }
+            val counterpart = matches.single()
+            if (!MessageDigest.isEqual(counterpart.envelopeDigest, receipt.envelopeDigest) ||
+                !MessageDigest.isEqual(counterpart.signal.recipientIdentityId, ownerIdentityId) ||
+                !MessageDigest.isEqual(counterpart.signal.callId, receipt.callId) ||
+                counterpart.signal.kind != receipt.kind ||
+                counterpart.signal.expiresAtEpochSeconds != receipt.expiresAtEpochSeconds
+            ) {
+                throw RestorableVoiceSignalMismatchException(
+                    "M5 effect admission found conflicting authenticated semantic/replay metadata",
+                )
+            }
+        }
 
         // Reject a mismatched live replay receipt instead of silently skipping
         // authenticated signaling that should have a durably recoverable payload.

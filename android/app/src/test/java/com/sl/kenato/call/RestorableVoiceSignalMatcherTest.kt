@@ -518,8 +518,40 @@ class RestorableVoiceSignalMatcherTest {
     fun semanticPayloadWithoutAdmittedReplayReceiptCannotBeDispatched() {
         val f = Fixture()
         f.semantic.persistAuthenticatedVoiceEvent(OWNER, handoff(4))
-        assertTrue(f.matcher().restorableCandidates(OWNER, NOW).isEmpty())
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().restorableCandidates(OWNER, NOW)
+        }
         assertTrue(f.journal.pendingLiveAcknowledgements(OWNER, NOW).isEmpty())
+    }
+
+    @Test
+    fun orphanEncryptedSemanticEventBlocksOtherValidEffectUntilDurableReconciliation() {
+        val f = Fixture()
+        f.accept(handoff(140))
+        val validPermit = f.journal.pendingLiveDispatchPermits(OWNER, NOW).single()
+        // Crash window: encrypted semantic write succeeded but the next replay
+        // receipt import did not commit. There is still another valid call.
+        val orphan = handoff(141)
+        f.semantic.persistAuthenticatedVoiceEvent(OWNER, orphan)
+        assertEquals(1, f.journal.pendingLiveReceipts(OWNER, NOW).size)
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().restorableCandidates(OWNER, NOW)
+        }
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
+            f.matcher().claimRestorableCandidateWithEpochLedger(
+                OWNER, PEER, id(140), NOW, f.ledger(),
+            )
+        }
+        // No irreversible claim is consumed while the stores are inconsistent.
+        assertEquals(null, f.ledgerRaw.bytes)
+        assertEquals(1, f.journal.pendingLiveDispatchPermits(OWNER, NOW).size)
+
+        // Recover from the actual authenticated M3 handoff, not by dropping
+        // or silently approving the orphan plaintext.
+        f.journal.importAuthenticatedInboundHandoff(OWNER, orphan, NOW)
+        assertTrue(f.matcher().restorableCandidates(OWNER, NOW).any {
+            it.messageId.contentEquals(validPermit.messageId)
+        })
     }
 
     @Test
