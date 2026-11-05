@@ -1,5 +1,6 @@
 package com.sl.kenato.messaging
 
+import com.sl.kenato.M45ProcessTransportGate
 import com.sl.kenato.diagnostics.M45DiagnosticEvent
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -8,6 +9,9 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MessagingWssCoordinatorTest {
     @Test
@@ -322,6 +326,56 @@ class MessagingWssCoordinatorTest {
             assertArrayEquals(PEER, ack.senderIdentityId)
             assertArrayEquals(delivery.messageId, ack.messageId)
         }
+    }
+
+    @Test
+    fun expiredVoiceDeliveryWaitingOnSharedAndroidOwnerCannotRatchetOrAck() {
+        val gate = M45ProcessTransportGate()
+        val fixture = Fixture(socketGate = gate)
+        val delivery = inboundEnvelope(47)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        val socket = fixture.authenticate()
+        val workerEntered = CountDownLatch(1)
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val callback = synchronized(gate) {
+                pool.submit {
+                    workerEntered.countDown()
+                    socket.serverFrame(MessagingServerFrame(delivery = delivery))
+                }.also {
+                    assertTrue(workerEntered.await(10, TimeUnit.SECONDS))
+                    assertFalse(it.isDone) // The WSS handler cannot bypass M2/M3 owner admission.
+                    assertEquals(1, socket.sent.size)
+                    assertTrue(fixture.inbound.deliveries.isEmpty())
+                    // TTL elapses during a simulated consent/M3 trust mutation.
+                    fixture.now = delivery.expiresAtEpochSeconds
+                }
+            }
+            callback.get(10, TimeUnit.SECONDS)
+            assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+            assertTrue(socket.cancelled)
+            assertTrue(fixture.inbound.deliveries.isEmpty())
+            assertEquals(1, socket.sent.size) // Authentication only; no expired voice ACK.
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun poisonedSharedOwnerDropsLateVoiceDeliveryBeforeDurableImportOrAck() {
+        val gate = M45ProcessTransportGate()
+        val fixture = Fixture(socketGate = gate)
+        val delivery = inboundEnvelope(48)
+        fixture.inbound.result = MessagingDeliveryAck(PEER.copyOf(), delivery.messageId.copyOf())
+        fixture.inbound.voiceExpiry = delivery.expiresAtEpochSeconds
+        val socket = fixture.authenticate()
+        gate.poison() // Uncertain socket cancellation makes process owner fail closed.
+
+        socket.serverFrame(MessagingServerFrame(delivery = delivery))
+
+        assertTrue(fixture.inbound.deliveries.isEmpty())
+        assertEquals(1, socket.sent.size) // Authentication only; not a recoverable ACK.
     }
 
     @Test
@@ -676,7 +730,10 @@ class MessagingWssCoordinatorTest {
         }
     }
 
-    private class Fixture(origin: URI = URI("https://example.test/")) {
+    private class Fixture(
+        origin: URI = URI("https://example.test/"),
+        socketGate: M45ProcessTransportGate? = null,
+    ) {
         val sockets = FakeSocketFactory()
         val identity = FakeIdentity()
         val recovery = FakeRecovery()
@@ -686,7 +743,9 @@ class MessagingWssCoordinatorTest {
         var now = 100L
         val coordinator = MessagingWssCoordinator(
             serviceOrigin = origin,
-            sockets = sockets,
+            sockets = if (socketGate == null) sockets else SerializedMessagingSocketFactory(
+                sockets, socketGate, socketGate::permitsTransportCallbacks,
+            ),
             identity = identity,
             recovery = recovery,
             inbound = inbound,
