@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +37,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sl.kenato.messaging.MessagingConversationDirection
+import com.sl.kenato.messaging.MessagingConversationDeliveryState
+import com.sl.kenato.messaging.MessagingWssState
+import java.text.DateFormat
+import java.util.Date
 import com.sl.kenato.ui.theme.KenatoTheme
 
 class MainActivity : ComponentActivity() {
@@ -72,8 +77,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
     val state = controller.state
     val context = LocalContext.current
     var originInput by rememberSaveable { mutableStateOf(state.serviceOrigin) }
-    var inviteInput by rememberSaveable { mutableStateOf("") }
-    var messageInput by rememberSaveable { mutableStateOf("") }
+    // Invitations and unsent E2EE drafts must not enter Android SavedState plaintext.
+    var inviteInput by remember { mutableStateOf("") }
+    // A draft belongs to exactly one pinned peer, never a different selected contact.
+    var messageInput by remember(state.selectedPeerIdentityId) { mutableStateOf("") }
+    var selectedScreen by rememberSaveable { mutableStateOf("Chats") }
+    val screenScroll = rememberScrollState()
     // QR inputs are deliberately not saveable/restored across activity/process recreation.
     var voiceChallengeInput by remember { mutableStateOf("") }
     var voiceProofInput by remember { mutableStateOf("") }
@@ -87,12 +96,17 @@ private fun KenatoApp(controller: M45AcceptanceController) {
         originInput = state.serviceOrigin
     }
 
+    // A long Setup page must not leave Chats or Contacts scrolled to its old offset.
+    LaunchedEffect(selectedScreen) {
+        screenScroll.scrollTo(0)
+    }
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(screenScroll)
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -106,7 +120,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                text = "M4.5 physical acceptance · 0.0.4",
+                text = "Encrypted messaging · Preview 0.0.4",
                 style = MaterialTheme.typography.labelLarge,
             )
 
@@ -125,7 +139,50 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 )
             }
 
-            AcceptanceSection(title = "1. Service") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf("Chats", "Contacts", "Setup").forEach { screen ->
+                    FilterChip(
+                        selected = selectedScreen == screen,
+                        onClick = { selectedScreen = screen },
+                        label = { Text(screen) },
+                    )
+                }
+            }
+
+            if (selectedScreen == "Chats" && (
+                    state.serviceOrigin.isBlank() || state.identityId == null ||
+                        state.contacts.isEmpty()
+                )
+            ) {
+                AcceptanceSection(title = "Get started") {
+                    Text(
+                        if (state.serviceOrigin.isBlank() || state.identityId == null) {
+                            "Configure your service and create your identity to begin."
+                        } else {
+                            "Connect with another Kenato user before sending messages."
+                        },
+                    )
+                    Button(
+                        onClick = {
+                            selectedScreen = if (state.serviceOrigin.isBlank() ||
+                                state.identityId == null
+                            ) "Setup" else "Contacts"
+                        },
+                    ) {
+                        Text(if (state.serviceOrigin.isBlank() || state.identityId == null) {
+                            "Open setup"
+                        } else {
+                            "Add a contact"
+                        })
+                    }
+                }
+            }
+
+            if (selectedScreen == "Setup") {
+            AcceptanceSection(title = "Connection settings") {
                 OutlinedTextField(
                     value = originInput,
                     onValueChange = { originInput = it },
@@ -162,7 +219,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 )
             }
 
-            AcceptanceSection(title = "2. Local identity") {
+            AcceptanceSection(title = "Your identity") {
                 Button(
                     onClick = controller::initializeIdentity,
                     enabled = !state.busy,
@@ -181,11 +238,15 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     enabled = !state.busy && state.identityId != null && state.serviceOrigin.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Publish identity + M3 bootstrap")
+                    Text("Enable secure connections")
                 }
             }
 
-            AcceptanceSection(title = "3A. Invite creator") {
+            }
+
+            if (selectedScreen == "Contacts") {
+            AcceptanceSection(title = "Invite another device") {
+                Text("Create an invitation, share it with the other phone, then finish pairing here after it joins.")
                 Button(
                     onClick = controller::createInvite,
                     enabled = !state.busy && state.identityId != null && state.serviceOrigin.isNotBlank(),
@@ -221,12 +282,13 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                         enabled = !state.busy && state.serviceOrigin.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Claim after peer redeems")
+                        Text("Finish pairing after other phone joins")
                     }
                 }
             }
 
-            AcceptanceSection(title = "3B. Invite redeemer") {
+            AcceptanceSection(title = "Join using invite") {
+                Text("On the second phone, paste the invitation and join. Then finish pairing on the first phone.")
                 OutlinedTextField(
                     value = inviteInput,
                     onValueChange = { inviteInput = it },
@@ -244,11 +306,11 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                         inviteInput.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Redeem + establish outbound M3 session")
+                    Text("Join securely")
                 }
             }
 
-            AcceptanceSection(title = "4. Pinned contacts") {
+            AcceptanceSection(title = "Contacts") {
                 if (state.contacts.isEmpty()) {
                     Text("No pinned contacts yet", style = MaterialTheme.typography.bodySmall)
                 }
@@ -283,9 +345,18 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 }
             }
 
-            AcceptanceSection(title = "5. M4 messaging") {
+            }
+
+            if (selectedScreen == "Chats") {
+            AcceptanceSection(title = "Messages") {
                 Text(
-                    text = "Transport: ${state.messagingState.name}",
+                    text = "Connection: ${when (state.messagingState) {
+                        MessagingWssState.STOPPED -> "Offline"
+                        MessagingWssState.AUTHENTICATED -> "Connected"
+                        MessagingWssState.FAILED -> "Connection error"
+                        MessagingWssState.RETRY_WAIT -> "Reconnecting"
+                        else -> "Connecting"
+                    }}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -317,9 +388,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 }
 
                 state.selectedPeerIdentityId?.let { peer ->
-                    Text("Peer", style = MaterialTheme.typography.labelMedium)
-                    SelectionContainer {
-                        Text(peer, style = MaterialTheme.typography.bodySmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Peer · ${peer.take(12)}…", style = MaterialTheme.typography.labelMedium)
+                        TextButton(onClick = { selectedScreen = "Contacts" }) {
+                            Text("Change")
+                        }
                     }
                     OutlinedTextField(
                         value = messageInput,
@@ -332,15 +408,15 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     )
                     Button(
                         onClick = {
-                            controller.sendText(messageInput)
-                            messageInput = ""
+                            // Keep the draft on failed persistence or stale foreground completion.
+                            controller.sendText(messageInput) { messageInput = "" }
                         },
                         enabled = !state.busy && messageInput.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Send durable E2EE text")
+                        Text("Send encrypted message")
                     }
-                } ?: Text("Select a pinned contact first", style = MaterialTheme.typography.bodySmall)
+                } ?: Text("Select a contact in Contacts to start chatting", style = MaterialTheme.typography.bodySmall)
 
                 HorizontalDivider()
 
@@ -353,26 +429,34 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            val direction = if (message.direction == MessagingConversationDirection.OUTBOUND) {
-                                "OUT"
+                            val sender = if (message.direction == MessagingConversationDirection.OUTBOUND) {
+                                "You"
                             } else {
-                                "IN"
+                                "Contact"
                             }
-                            Text(
-                                text = "$direction · ${message.deliveryState.name}",
-                                style = MaterialTheme.typography.labelMedium,
-                            )
+                            val time = DateFormat.getDateTimeInstance(
+                                DateFormat.SHORT, DateFormat.SHORT,
+                            ).format(Date(message.sentAtEpochSeconds * 1000L))
+                            Text("$sender · $time", style = MaterialTheme.typography.labelMedium)
                             Text(message.text, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                text = "sent=${message.sentAtEpochSeconds} · id=${message.messageId}",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                            // SENT means server acceptance, NOT recipient delivery/read.
+                            val status = when (message.deliveryState) {
+                                MessagingConversationDeliveryState.RECEIVED -> "Received"
+                                MessagingConversationDeliveryState.PENDING_SEND -> "Waiting to send"
+                                MessagingConversationDeliveryState.SENT -> "Accepted by server"
+                                MessagingConversationDeliveryState.EXPIRED_UNCONFIRMED ->
+                                    "Delivery unconfirmed · expired"
+                            }
+                            Text(status, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
 
-            AcceptanceSection(title = "5B. M5 offline voice capability (calls disabled)") {
+            }
+
+            if (selectedScreen == "Setup") {
+            AcceptanceSection(title = "Call consent setup (calls not yet available)") {
                 Text(
                     "Use only with the selected, independently verified pinned M2 contact. " +
                         "QR/text records are not automatically transmitted and do not start a call.",
@@ -413,8 +497,9 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     )
                     Button(
                         onClick = {
-                            controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput)
-                            voiceChallengeInput = ""
+                            controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput) {
+                                voiceChallengeInput = ""
+                            }
                         },
                         enabled = !state.busy && voiceChallengeInput.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
@@ -438,8 +523,9 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     )
                     Button(
                         onClick = {
-                            controller.approveAndImportVoiceCapabilityProof(voiceProofInput)
-                            voiceProofInput = ""
+                            controller.approveAndImportVoiceCapabilityProof(voiceProofInput) {
+                                voiceProofInput = ""
+                            }
                         },
                         enabled = !state.busy && !state.voiceCapabilityConfirmed && voiceProofInput.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
@@ -452,7 +538,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 )
             }
 
-            AcceptanceSection(title = "6. Local diagnostics") {
+            AcceptanceSection(title = "Diagnostics") {
                 Text(
                     text = "Stored only on this device: timestamps and predefined connection/error codes. " +
                         "No keys, identities, messages, addresses or protocol payloads. " +
@@ -495,10 +581,11 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             Text(
-                text = "Acceptance rule: do not reset app data between restart/reboot checks.",
+                text = "Testing note: preserve app data when checking restart and recovery.",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            }
         }
     }
 }
