@@ -139,17 +139,18 @@ def audit_apk_16k_zip_alignment(apk: Path, *, sdk: str | None = None,
 
 
 def build(wrapper: Path, apk_output: Path | None, *, downloader=evidence.download_snapshot,
-          runner=subprocess.run) -> dict:
+          runner=subprocess.run, tag: str = vendor.TAG) -> dict:
     if not wrapper.is_file():
         raise DeviceProbeError("Gradle wrapper missing")
     with tempfile.TemporaryDirectory(prefix="kenato-m157-device-") as directory:
         base = Path(directory)
         aar = base / "m157.aar"
-        digest, size = downloader(vendor.RELEASE_URL, aar, max_bytes=vendor.MAX_BYTES)
-        vendor.verify_observation(digest, size)
+        url, _size, _sha, _producer, source_revision = vendor.candidate(tag)
+        digest, size = downloader(url, aar, max_bytes=vendor.MAX_BYTES)
+        vendor.verify_observation(digest, size, tag=tag)
         if aar.stat().st_size != size:
             raise DeviceProbeError("AAR changed before verification")
-        vendor.inspect_pinned_aar(aar)
+        vendor.inspect_pinned_aar(aar, tag=tag)
         app = base / "disposable"
         write_device_probe(app, aar)
         try:
@@ -171,6 +172,8 @@ def build(wrapper: Path, apk_output: Path | None, *, downloader=evidence.downloa
                 raise DeviceProbeError("Copied APK SHA256 mismatch")
         return {
             "status": STATUS, "apk_sha256": sha, "apk_bytes": apk.stat().st_size,
+            "publisher_tag": tag, "publisher_asset_sha256": digest,
+            "declared_upstream_revision_UNVERIFIED_IN_BINARY": source_revision,
             "application_id": PACKAGE, "arm64_only": True, "no_permissions": True,
             "native_apk_zip_alignment_16k_verified": True,
             "jni_executed": False, "microphone_executed": False,
@@ -183,13 +186,15 @@ def main() -> int:
     parser.add_argument("--gradlew", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device-apk", type=Path)
+    parser.add_argument("--tag", choices=(vendor.TAG, vendor.PATCH_TAG), default=vendor.TAG)
     args = parser.parse_args()
     try:
-        report = build(args.gradlew, args.device_apk)
+        report = build(args.gradlew, args.device_apk, tag=args.tag)
         code = 0
     except (DeviceProbeError, OSError, vendor.CandidateProbeError,
             evidence.EvidenceError, evidence.audit.AarAuditError, d8.D8ResearchError) as error:
         report = {"status": "DEVICE_BUILD_BLOCKED", "error_type": type(error).__name__,
+                  "publisher_tag": args.tag,
                   "reason": str(error)[:160], "jni_executed": False,
                   "vendor_approved_for_kenato": False}
         code = 1

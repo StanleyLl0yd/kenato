@@ -94,6 +94,33 @@ class NativeInventoryTests(unittest.TestCase):
                     with self.assertRaisesRegex(probe.M157NativeError, "oversized"):
                         probe.inventory(file, scanner=lambda *x: self.fail("must not execute"))
 
+    def test_newer_patch_source_and_sha_are_distinct_in_static_inventory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "patch.aar"
+            raw = valid_arm64_elf()
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(probe.LIB_PATH, raw)
+            with patch.object(probe.m157, "inspect_pinned_aar",
+                              return_value={"status": "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL"}) as verified:
+                result = probe.inventory(path, scanner=lambda payload, abi: {"sha256": hashlib.sha256(payload).hexdigest()},
+                                         tag=probe.m157.PATCH_TAG)
+            self.assertEqual(result["publisher_tag"], probe.m157.PATCH_TAG)
+            self.assertEqual(result["sha256_pinned_aar"], probe.m157.PATCH_EXPECTED_SHA256)
+            self.assertEqual(result["declared_webrtc_source_UNVERIFIED_IN_BINARY"],
+                             probe.m157.PATCH_PUBLISHER_DECLARED_WEBRTC_SHA)
+            verified.assert_called_once_with(path, tag=probe.m157.PATCH_TAG)
+            self.assertFalse(result["vendor_approved_for_kenato"])
+
+    def test_wrong_patch_digest_rejected_before_native_scanner(self):
+        def stale_download(url, output, *, max_bytes):
+            self.assertEqual(url, probe.m157.PATCH_RELEASE_URL)
+            output.write_bytes(b"old-asset")
+            return probe.m157.EXPECTED_SHA256, probe.m157.EXPECTED_SIZE
+        with patch.object(probe, "inventory") as inv:
+            with self.assertRaises(probe.m157.CandidateProbeError):
+                probe.collect(downloader=stale_download, tag=probe.m157.PATCH_TAG)
+            inv.assert_not_called()
+
     def test_download_mismatch_blocks_before_binary_read(self):
         def fake_download(_url, output, *, max_bytes):
             output.write_bytes(b"untrusted")
