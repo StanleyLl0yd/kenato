@@ -441,6 +441,8 @@ private fun KenatoApp(
                                 TextButton(onClick = { copyText(context, qr, "Kenato voice challenge") }) { Text("Copy challenge") }
                                 TextButton(onClick = { shareText(context, qr) }) { Text("Share") }
                             }
+                            Text("Or scan this QR on the other phone:", style = MaterialTheme.typography.bodySmall)
+                            VoiceCapabilityQrImage(qr, "Voice capability challenge QR")
                         }
                         OutlinedTextField(
                             value = voiceChallengeInput,
@@ -467,6 +469,8 @@ private fun KenatoApp(
                                 TextButton(onClick = { copyText(context, proof, "Kenato voice signed proof") }) { Text("Copy proof") }
                                 TextButton(onClick = { shareText(context, proof) }) { Text("Share") }
                             }
+                            Text("Return this QR to the requesting phone:", style = MaterialTheme.typography.bodySmall)
+                            VoiceCapabilityQrImage(proof, "Signed voice capability proof QR")
                         }
                         OutlinedTextField(
                             value = voiceProofInput,
