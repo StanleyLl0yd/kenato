@@ -95,6 +95,15 @@ local_health() {
   curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/healthz >/dev/null || return 1
 }
 local_health || { echo 'Existing host/service unhealthy before deployment; no changes made' >&2; exit 1; }
+# A healthy listener may be unrelated to the existing root-owned executable.
+# Refuse to stop this service unless its live process runs the target bytes.
+existing_pid="$(systemctl show --property=MainPID --value "$service")"
+[[ "$existing_pid" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'Existing service has no valid main process PID' >&2; exit 1;
+}
+[[ "$(sha256sum "/proc/$existing_pid/exe" | awk '{print $1}')" == "$(sha256sum "$target" | awk '{print $1}')" ]] || {
+  echo 'Existing live executable differs from target; refusing restart' >&2; exit 1;
+}
 
 # Copy untrusted staging files into a root-owned private directory before changing
 # the live executable, preventing a post-verification source-path race.
@@ -149,7 +158,16 @@ rollback() {
       echo 'CRITICAL: rollback health failed; operator intervention required' >&2
       exit 1
     fi
-    echo 'ROLLBACK_OK: prior executable restored and local health passed' >&2
+    # Restoring the file is not sufficient: an old/candidate process might
+    # still answer /healthz after an unsuccessful systemd stop.
+    local rollback_pid
+    rollback_pid="$(systemctl show --property=MainPID --value "$service")"
+    if [[ ! "$rollback_pid" =~ ^[1-9][0-9]*$ ]] ||
+       [[ "$(sha256sum "/proc/$rollback_pid/exe" | awk '{print $1}')" != "$previous_sha" ]]; then
+      echo 'CRITICAL: rollback process executable digest mismatch' >&2
+      exit 1
+    fi
+    echo 'ROLLBACK_OK: prior executable restored, live digest and health passed' >&2
   fi
   exit "$status"
 }

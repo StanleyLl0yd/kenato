@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 $sourceSha = '04f8d78c3d730d512a9bca6462a4f4177db6ff58'
 $expectedZipSha = '9e0a95b00e8d81078e49e71a7a72788af3829420991098b3b72c2ef01dbb7811'
 $expectedElfSha = 'f651a2519ea555d224f49897944561447dd6a8810353dd34c4e87f5ff28b97e9'
-$expectedRootHelperSha = '7dcc74001e17416e0c0c7c149eb75a11290b7b8684ce7108f927e1e8d6d24df8'
+$expectedRootHelperSha = '087f5e7b591e4d727abe6db24967e57a4573d92ecd3abad9c0dee5b2c29d9afe'
 $zipSha = (Get-FileHash -LiteralPath $ArtifactZip -Algorithm SHA256).Hash.ToLowerInvariant()
 
 if ($zipSha -cne $expectedZipSha) {

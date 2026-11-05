@@ -82,7 +82,7 @@ for ss_output, should_accept in examples:
 
 
 operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
-reviewed_digest = "7dcc74001e17416e0c0c7c149eb75a11290b7b8684ce7108f927e1e8d6d24df8"
+reviewed_digest = "087f5e7b591e4d727abe6db24967e57a4573d92ecd3abad9c0dee5b2c29d9afe"
 assert hashlib.sha256(path.read_bytes()).hexdigest() == reviewed_digest
 assert f"$expectedRootHelperSha = '{reviewed_digest}'" in operator
 assert operator.index("$scriptHash -cne $expectedRootHelperSha") < operator.index(
@@ -114,3 +114,12 @@ for unsafe in (
     assert unsafe not in operator, f"Mutable unprivileged root script: {unsafe}"
 
 print("Existing-OCI rollout static policy: PASS (not host acceptance)")
+
+# Guard both the pre-stop executable baseline and the post-rollback process,
+# not merely the on-disk file or the HTTP listener.
+assert 'sha256sum "/proc/$existing_pid/exe"' in text
+assert 'sha256sum "/proc/$rollback_pid/exe"' in text
+assert '!= "$previous_sha"' in text
+assert text.index('sha256sum "/proc/$existing_pid/exe"') < text.index('systemctl stop "$service"')
+assert text.index('sha256sum "/proc/$rollback_pid/exe"') < text.index('ROLLBACK_OK:')
+assert 'CRITICAL: rollback process executable digest mismatch' in text
