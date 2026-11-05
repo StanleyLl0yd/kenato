@@ -86,6 +86,46 @@ class MessagingTypedVoiceRecoveryTest {
     }
 
     @Test
+    fun restartWithDivergentClocksStillUsesOneCapturedRecoveryTime() {
+        var sampled = 0
+        val f = Fixture(
+            recoveryClock = MessagingRecoveryClock {
+                sampled++
+                if (sampled != 1) throw AssertionError("Recovery must sample the clock only once")
+                NOW
+            },
+            semanticClock = VoiceSemanticClock {
+                throw AssertionError("Recovered semantic import must not resample a second clock")
+            },
+        )
+        f.sessions.handoffs += voiceHandoff(35)
+        val plan = f.coordinator.recover(OWNER)
+        assertEquals(1, sampled)
+        assertEquals(1, plan.inboundAcks.size)
+        assertEquals(1, f.semanticStore.writes)
+        assertEquals(1, f.voiceStore.writes)
+        assertTrue(f.sessions.handoffs.isEmpty())
+    }
+
+    @Test
+    fun semanticOnlyCrashWithoutPendingHandoffBlocksRecoveryUntilOriginalHandoffRestored() {
+        val f = Fixture()
+        val handoff = voiceHandoff(36)
+        f.semanticSink.persistAuthenticatedVoiceEvent(OWNER, handoff)
+        assertThrows(IllegalStateException::class.java) {
+            f.coordinator.recover(OWNER)
+        }
+        assertEquals(0, f.voiceStore.writes)
+        assertTrue(f.sessions.completed.isEmpty())
+        f.sessions.handoffs += handoff
+        val plan = f.coordinator.recover(OWNER)
+        assertEquals(1, plan.inboundAcks.size)
+        assertEquals(1, f.semanticStore.writes)
+        assertEquals(1, f.voiceStore.writes)
+        assertTrue(f.sessions.handoffs.isEmpty())
+    }
+
+    @Test
     fun voiceWithAdapterButWithoutDurableSemanticSinkIsStillFailClosed() {
         val f = Fixture()
         f.sessions.handoffs += voiceHandoff(21)
@@ -264,19 +304,23 @@ class MessagingTypedVoiceRecoveryTest {
         assertEquals(null, f.history.currentState(OWNER))
     }
 
-    private class Fixture(now: Long = NOW) {
+    private class Fixture(
+        now: Long = NOW,
+        recoveryClock: MessagingRecoveryClock = MessagingRecoveryClock { now },
+        semanticClock: VoiceSemanticClock = VoiceSemanticClock { now },
+    ) {
         val historyStore = MemoryHistoryStore()
         val history = ConversationHistoryRepository(historyStore)
         val voiceStore = MemoryVoiceStore()
         val voice = VoiceInboundHandoffRecovery(VoiceSignalReplayJournal(voiceStore))
         val semanticStore = MemoryEncryptedSemanticStore()
         val semanticSink = DurableVoiceSemanticEventRepository(
-            semanticStore, AesGcmTestCipher(), VoiceSemanticClock { now },
+            semanticStore, AesGcmTestCipher(), semanticClock,
         )
         val verified = VoiceInboundPersistenceFacade(voice, semanticSink)
         val sessions = FakeSessionHandoffs()
         val coordinator = MessagingRecoveryCoordinator(
-            sessions, history, voice, semanticSink, MessagingRecoveryClock { now }, verified,
+            sessions, history, voice, semanticSink, recoveryClock, verified,
         )
     }
 
