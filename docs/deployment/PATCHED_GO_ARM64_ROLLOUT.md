@@ -36,6 +36,74 @@ Record only the source SHA, binary SHA-256, Actions run ID, source/toolchain
 verification and operator approval in #91. Do not record the host address,
 secrets, raw requests, user identities or databases.
 
+## Guarded on-host operator helper (proposal; not yet deployed)
+
+A reviewed, **manual-only** helper at
+`scripts/rollout_existing_oci_arm64.sh` stages the exact existing Go
+1.27.2 ARM64 artifact on the **existing host only**, validates local checksums,
+source/provenance fields, binary architecture, existing service ownership,
+pre-change service health and loopback-only port, preserves the original binary
+under `/var/backups/kenato`, performs an atomic executable replacement and
+checks systemd, local HTTP health, listener scope and `/proc/<pid>/exe`
+binary digest. Failures after service stoppage trigger automatic local
+executable rollback and a health recheck. No SSH, firewall, Nginx, TLS, SQLite,
+secrets, server feature, additional host or TURN changes are attempted.
+
+The helper is hard-pinned to the original reviewed
+`source_sha=04f8d78c3d730d512a9bca6462a4f4177db6ff58` and actual ELF
+SHA-256 `f651a2519ea555d224f49897944561447dd6a8810353dd34c4e87f5ff28b97e9`.
+A different source or executable cannot be supplied just by changing an
+untrusted archive's own `SHA256SUMS`. New builds require a separately
+reviewed change to these pins.
+
+**This script is not evidence of deployment**: it has not been run on OCI.
+Before executing it, the host operator must independently authenticate the
+GitHub Actions ZIP digest and inner `SHA256SUMS`, authorize a change window,
+review the script and copy the extracted files to an operator-controlled
+directory on the real host. Then on the host:
+
+```sh
+sudo bash scripts/rollout_existing_oci_arm64.sh --apply /path/to/extracted-artifact 04f8d78c3d730d512a9bca6462a4f4177db6ff58
+```
+
+For a Windows operator using PowerShell 7 and an existing SSH config alias
+`kenato`, the reviewed helper can verify the **exact original ZIP digest**
+and actual ELF hash locally, then optionally stage and invoke the on-host
+script without accepting any SSH credential or host address as a command
+argument:
+
+```powershell
+pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-server-linux-arm64.zip
+# After review and maintenance-window approval:
+pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-server-linux-arm64.zip -SshAlias kenato -Apply
+```
+
+The PowerShell wrapper independently pins the **reviewed LF-normalized
+root-executed Bash helper** to SHA-256 `7dcc74001e17416e0c0c7c149eb75a11290b7b8684ce7108f927e1e8d6d24df8`
+and checks that digest before opening an SSH connection or changing the host.
+A locally modified or substituted helper is rejected, even if the verified
+server executable ZIP is unchanged. Windows CRLF is normalized to LF before
+this check; CR-only line endings are refused. A new reviewed Bash helper
+requires an explicit corresponding pin update and code review.
+
+The first command is local preflight only; the second requires the
+operator's existing SSH key and **noninteractive, separately approved**
+host-side sudo authorization (`sudo -n`). The reviewable Bash helper is
+streamed directly through SSH stdin to privileged Bash; it is NOT uploaded
+into an unprivileged host directory and then executed as root. The four
+artifact files alone are copied to a temporary user-writable directory,
+but the root helper rechecks the fixed source and ELF digest, then stages
+the candidate in a root-owned private directory before any systemd change.
+A successful return still requires independent public HTTPS, authenticated
+WSS and rollback-readiness checks. No deployment has been performed by
+adding this helper.
+
+The source SHA is the **original verified backend artifact's** source, not
+the latest Android-only `main` SHA. The script deliberately refuses to
+create an absent service or install onto an unhealthy host. A successful
+local result is not enough: independently test public HTTPS and authenticated
+WSS, document the backup and rollback readiness, and only then close #91.
+
 ## Operator-controlled deployment gate
 
 The live OCI host was previously reported to run an older Go-built binary.
@@ -66,3 +134,12 @@ A separately authorized operator must:
 Do not expose port 8080 publicly or bypass certificate verification during
 recovery. Mark #91 completed only after the running executable and health
 have been independently verified and the patch is actually deployed.
+
+### Windows OpenSSH option-fencing (research-only operator helper)
+
+The `-SshAlias` argument is now required to start with an alphanumeric
+character. Earlier validation allowed a leading hyphen, which OpenSSH could
+interpret as a client option instead of an SSH config host alias. The same
+restricted alias is used for `ssh` and `scp`; offline policy assertions
+reject leading-option inputs. This does not authorize `-Apply` or verify
+host-side identity, maintenance approval, external HTTPS/WSS or rollback.
