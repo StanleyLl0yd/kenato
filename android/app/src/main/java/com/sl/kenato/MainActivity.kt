@@ -47,12 +47,13 @@ class MainActivity : ComponentActivity() {
 
     private fun offerExternalInvite(candidate: Intent?) {
         if (candidate?.action != Intent.ACTION_VIEW) return
-        pendingExternalInvite = ExternalInviteLink.canonicalOrNull(candidate.dataString) ?: return
+        // Do not retain an invite bearer token in Activity.getIntent() after parsing.
+        pendingExternalInvite = ExternalInviteLink.canonicalOrNull(candidate.dataString)
+        setIntent(Intent(this, MainActivity::class.java))
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
         offerExternalInvite(intent)
     }
 
@@ -309,6 +310,10 @@ private fun KenatoApp(
                         }
                     }
                     if (visibleInviteQr == invite) {
+                        Text(
+                            "Scan this on the second phone, then explicitly approve joining there.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         InviteQrImage(invite)
                     }
                     Button(
