@@ -32,6 +32,42 @@ def bounded_context(text: str, needle: str, *, limit: int = 2500,
     return text[at:at + limit]
 
 
+
+def inspect_postfix_lifetime_markers(send_async: str, set_state: str) -> dict:
+    """Detect post-October source design; never certify cross-thread memory safety."""
+    alive = send_async.find("if (network_safety->alive())")
+    dereference = send_async.find("SendImpl(std::move(buffer))")
+    closed = set_state.find("network_safety_->SetNotAlive()")
+    controller = set_state.find("controller_->OnChannelStateChanged(this, state_)")
+    checks = {
+        "raw_this_capture_present": (
+            "PostTask([this, network_safety = network_safety_" in send_async
+        ),
+        "network_safety_checked_before_dereference": (
+            alive >= 0 and dereference > alive
+        ),
+        "closed_flag_invalidated_before_controller_callback": (
+            "if (state_ == kClosed)" in set_state and
+            closed >= 0 and controller > closed
+        ),
+        "refcounted_receiver_capture_present": (
+            "scoped_refptr<SctpDataChannel>" in send_async
+        ),
+    }
+    if not (checks["raw_this_capture_present"] and
+            checks["network_safety_checked_before_dereference"] and
+            checks["closed_flag_invalidated_before_controller_callback"]):
+        raise m158.M158EvidenceError("Post-fix SCTP lifecycle marker mismatch")
+    return {
+        "status": "POST_2026_10_LIFETIME_DESIGN_MARKERS_REVIEW_REQUIRED",
+        "upstream_change": "973b847ae1aabe072c405341dbd566c62bd44a0a",
+        "related_upstream_bug": "webrtc:510487699",
+        "checks": checks,
+        "controller_reference_transfer_independently_proven": False,
+        "concurrent_object_lifetime_proven": False,
+        "CVE_2026_9962_native_binary_approved": False,
+    }
+
 def collect(*, fetcher=m158.fetch_exact) -> dict:
     try:
         payload = base64.b64decode(fetcher(URL), validate=True)
@@ -46,6 +82,9 @@ def collect(*, fetcher=m158.fetch_exact) -> dict:
     if boundary < 0 or boundary - first > MAX_EXCERPT:
         raise m158.M158EvidenceError("SCTP method exceeds review excerpt bound")
     method = text[first:boundary]
+    set_state = bounded_context(text, "void SctpDataChannel::SetState(",
+                                limit=1100, unique=True)
+    lifecycle = inspect_postfix_lifetime_markers(method, set_state)
     # The excerpt is public pinned source only. No user data, private keys or
     # actual native/vendor SDK runtime enter these artifacts.
     return {
@@ -54,6 +93,7 @@ def collect(*, fetcher=m158.fetch_exact) -> dict:
         "source_path": TARGET,
         "source_file_sha256": hashlib.sha256(payload).hexdigest(),
         "send_async_excerpt": method,
+        "post_fix_lifetime_design_not_clearance": lifecycle,
         "destructor_context": bounded_context(
             text, "SctpDataChannel::~SctpDataChannel()", limit=1300, unique=True),
         "set_state_context": bounded_context(

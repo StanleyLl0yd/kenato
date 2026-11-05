@@ -18,6 +18,34 @@ class SctpScopeTests(unittest.TestCase):
             scope.bounded_context(text + text, "SctpDataChannel::~SctpDataChannel()",
                                   unique=True)
 
+    def test_new_lifetime_markers_are_not_native_security_clearance(self):
+        sending = """void SctpDataChannel::SendAsync() {
+            network_thread_->PostTask([this, network_safety = network_safety_,
+                buffer = std::move(buffer)]() mutable {
+                if (network_safety->alive()) {
+                    SendImpl(std::move(buffer));
+                }
+            });
+        }"""
+        closing = """void SctpDataChannel::SetState() {
+            if (state_ == kClosed) {
+                network_safety_->SetNotAlive();
+            }
+            controller_->OnChannelStateChanged(this, state_);
+        }"""
+        marker = scope.inspect_postfix_lifetime_markers(sending, closing)
+        self.assertFalse(marker["concurrent_object_lifetime_proven"])
+        self.assertFalse(marker["CVE_2026_9962_native_binary_approved"])
+        self.assertFalse(marker["checks"]["refcounted_receiver_capture_present"])
+        for bad_send, bad_state in (
+            (sending.replace("network_safety->alive()", "true"), closing),
+            (sending.replace("PostTask([this", "PostTask([other"), closing),
+            (sending, closing.replace("network_safety_->SetNotAlive()", "")),
+            (sending, closing.replace("controller_->OnChannelStateChanged", "other")),
+        ):
+            with self.assertRaises(scope.m158.M158EvidenceError):
+                scope.inspect_postfix_lifetime_markers(bad_send, bad_state)
+
     def test_no_executable_source_or_unreviewed_fallback(self):
         self.assertEqual(scope.TARGET, "pc/sctp_data_channel.cc")
         self.assertIn(scope.m158.SOURCE_SHA, scope.URL)
