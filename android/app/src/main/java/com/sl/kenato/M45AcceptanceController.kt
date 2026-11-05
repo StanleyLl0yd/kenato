@@ -199,7 +199,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         }
     }
 
-    fun sendText(text: String) = launchOperation("Message staged for durable delivery") {
+    fun sendText(text: String, onStaged: () -> Unit = {}) =
+        launchOperation("Message staged for durable delivery", onSuccess = onStaged) {
         val peer = selectedPeerBytes()
         requireRuntime().sendText(peer, text)
     }
@@ -216,8 +217,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         ephemeralVoicePeerId = encodePeerId(peer)
     }
 
-    fun approveAndSignVoiceCapabilityChallenge(qr: String) =
-        launchOperation("Signed voice capability proof ready to share") {
+    fun approveAndSignVoiceCapabilityChallenge(qr: String, onSigned: () -> Unit = {}) =
+        launchOperation("Signed voice capability proof ready to share", onSuccess = onSigned) {
             val peer = selectedPeerBytes()
             val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
             ephemeralVoiceChallenge = null
@@ -225,8 +226,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             ephemeralVoicePeerId = encodePeerId(peer)
         }
 
-    fun approveAndImportVoiceCapabilityProof(qr: String) =
-        launchOperation("Pinned voice capability proof accepted") {
+    fun approveAndImportVoiceCapabilityProof(qr: String, onImported: () -> Unit = {}) =
+        launchOperation("Pinned voice capability proof accepted", onSuccess = onImported) {
             val peer = selectedPeerBytes()
             voiceCapability.approveAndImportProofQr(peer, qr.trim())
             clearEphemeralVoiceQr()
@@ -248,15 +249,23 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         worker.shutdown()
     }
 
-    private fun launchOperation(notice: String, operation: () -> Unit) {
+    private fun launchOperation(
+        notice: String,
+        onSuccess: () -> Unit = {},
+        operation: () -> Unit,
+    ) {
         if (state.busy) return
+        val requestEpoch = state.voiceUiEpoch
         state = state.copy(busy = true, notice = null, error = null)
         worker.execute {
             try {
                 operation()
                 val snapshot = buildSnapshot()
                 mainHandler.post {
+                    // Never discard an in-progress draft on a stale Activity foreground.
+                    val mayClearInput = foreground && state.voiceUiEpoch == requestEpoch
                     applySnapshot(snapshot, notice = notice)
+                    if (mayClearInput) onSuccess()
                 }
             } catch (error: Exception) {
                 val snapshot = runCatching { buildSnapshot() }.getOrNull()
