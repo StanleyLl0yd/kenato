@@ -114,8 +114,14 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyLarge,
             )
+            // The preview label follows the installed APK, not an old hard-coded release.
+            val installedVersion = remember(context) {
+                @Suppress("DEPRECATION")
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                info.versionName ?: "unknown"
+            }
             Text(
-                text = "Encrypted messaging · Preview 0.0.4",
+                text = "Encrypted messaging · v$installedVersion",
                 style = MaterialTheme.typography.labelLarge,
             )
 
@@ -148,26 +154,23 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             if (selectedScreen == "Chats" && (
-                    state.serviceOrigin.isBlank() || state.identityId == null ||
-                        state.contacts.isEmpty()
+                    state.serviceOrigin.isBlank() || state.contacts.isEmpty()
                 )
             ) {
                 AcceptanceSection(title = "Get started") {
                     Text(
-                        if (state.serviceOrigin.isBlank() || state.identityId == null) {
-                            "Configure your service and create your identity to begin."
+                        if (state.serviceOrigin.isBlank()) {
+                            "Configure your HTTPS service to begin."
                         } else {
                             "Connect with another Kenato user before sending messages."
                         },
                     )
                     Button(
                         onClick = {
-                            selectedScreen = if (state.serviceOrigin.isBlank() ||
-                                state.identityId == null
-                            ) "Setup" else "Contacts"
+                            selectedScreen = if (state.serviceOrigin.isBlank()) "Setup" else "Contacts"
                         },
                     ) {
-                        Text(if (state.serviceOrigin.isBlank() || state.identityId == null) {
+                        Text(if (state.serviceOrigin.isBlank()) {
                             "Open setup"
                         } else {
                             "Add a contact"
@@ -215,13 +218,10 @@ private fun KenatoApp(controller: M45AcceptanceController) {
             }
 
             AcceptanceSection(title = "Your identity") {
-                Button(
-                    onClick = controller::initializeIdentity,
-                    enabled = !state.busy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (state.identityId == null) "Create identity" else "Verify persisted identity")
-                }
+                Text(
+                    "Set up your local identity and secure messaging in one step.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 state.identityId?.let { identityId ->
                     Text("Identity ID", style = MaterialTheme.typography.labelMedium)
                     SelectionContainer {
@@ -229,11 +229,15 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     }
                 }
                 Button(
-                    onClick = controller::prepareForAcceptance,
-                    enabled = !state.busy && state.identityId != null && state.serviceOrigin.isNotBlank(),
+                    onClick = {
+                        controller.prepareForAcceptance {
+                            selectedScreen = "Contacts"
+                        }
+                    },
+                    enabled = !state.busy && state.serviceOrigin.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Enable secure connections")
+                    Text(if (state.identityId == null) "Set up secure messaging" else "Refresh secure setup")
                 }
             }
 
@@ -244,7 +248,7 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                 Text("Create an invitation, share it with the other phone, then finish pairing here after it joins.")
                 Button(
                     onClick = controller::createInvite,
-                    enabled = !state.busy && state.identityId != null && state.serviceOrigin.isNotBlank(),
+                    enabled = !state.busy && state.serviceOrigin.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Create invite")
@@ -294,9 +298,12 @@ private fun KenatoApp(controller: M45AcceptanceController) {
                     label = { Text("Invite URI from the other phone") },
                 )
                 Button(
-                    onClick = { controller.redeemAndEstablish(inviteInput) },
+                    onClick = {
+                        controller.redeemAndEstablish(inviteInput) {
+                            inviteInput = ""
+                        }
+                    },
                     enabled = !state.busy &&
-                        state.identityId != null &&
                         state.serviceOrigin.isNotBlank() &&
                         inviteInput.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
