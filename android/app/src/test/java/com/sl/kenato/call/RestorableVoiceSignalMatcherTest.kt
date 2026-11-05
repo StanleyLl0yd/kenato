@@ -498,7 +498,9 @@ class RestorableVoiceSignalMatcherTest {
                 VoiceSignalReplayState(OWNER.copyOf(), listOf(replacement)),
             ))
         }
-        assertThrows(VoiceSignalReplayException::class.java) {
+        // The stronger complete-receipt check now rejects changed call metadata
+        // BEFORE the replay claim, instead of detecting it inside the claim.
+        assertThrows(RestorableVoiceSignalMismatchException::class.java) {
             f.matcher().claimRestorableCandidate(OWNER, PEER, id(61), NOW)
         }
         val state = VoiceSignalReplayStateCodec.decode(f.replayStore.read()!!)
