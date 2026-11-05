@@ -8,6 +8,7 @@ on:
       - "scripts/probe_shiguredo_m158_patch_security.py"
       - "scripts/test_probe_shiguredo_m158_patch_security.py"
       - "scripts/probe_shiguredo_m158_sctp_scope.py"
+      - "scripts/test_probe_shiguredo_m158_sctp_scope.py"
       - "scripts/probe_shiguredo_m157_patch_security.py"
       - "scripts/probe_shiguredo_m157_source.py"
       - "scripts/probe_shiguredo_m157_notice.py"
@@ -37,6 +38,9 @@ jobs:
         run: >
           python3 scripts/probe_shiguredo_m158_patch_security.py
           --output /tmp/kenato-shiguredo-m158-patches-cves.json
+      - name: Offline SCTP scope guards
+        if: always()
+        run: python3 scripts/test_probe_shiguredo_m158_sctp_scope.py
       - name: Collect exact SCTP SendAsync source for independent CVE scope review
         if: always()
         run: >

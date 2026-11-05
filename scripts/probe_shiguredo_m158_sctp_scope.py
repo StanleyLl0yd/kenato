@@ -19,6 +19,18 @@ URL = m158.SOURCE_ROOT + TARGET + "?format=TEXT"
 MAX_EXCERPT = 4096
 
 
+def bounded_context(text: str, needle: str, *, limit: int = 2500) -> str:
+    """Return a bounded, exact-source context, never the entire upstream file."""
+    if not 1 <= limit <= 4096:
+        raise m158.M158EvidenceError("Unsafe diagnostic context size")
+    at = text.find(needle)
+    if at < 0:
+        return ""
+    if text.find(needle, at + len(needle)) != -1:
+        raise m158.M158EvidenceError("Ambiguous source lifecycle marker")
+    return text[at:at + limit]
+
+
 def collect(*, fetcher=m158.fetch_exact) -> dict:
     try:
         payload = base64.b64decode(fetcher(URL), validate=True)
@@ -41,6 +53,17 @@ def collect(*, fetcher=m158.fetch_exact) -> dict:
         "source_path": TARGET,
         "source_file_sha256": hashlib.sha256(payload).hexdigest(),
         "send_async_excerpt": method,
+        "destructor_context": bounded_context(
+            text, "SctpDataChannel::~SctpDataChannel()", limit=1300),
+        "set_state_context": bounded_context(
+            text, "void SctpDataChannel::SetState(", limit=1800),
+        "transport_closed_context": bounded_context(
+            text, "void SctpDataChannel::OnTransportChannelClosed(", limit=1600),
+        "network_safety_invalidation_count":
+            text.count("network_safety_->SetNotAlive()"),
+        "network_safety_invalidation_context": bounded_context(
+            text, "network_safety_->SetNotAlive()", limit=650),
+        "destructor_invalidation_proven_before_object_free": False,
         "contains_ref_counted_capture": "scoped_refptr<SctpDataChannel>" in method,
         "contains_raw_this_capture": "[this" in method,
         "contains_network_safety": "network_safety_" in method,
