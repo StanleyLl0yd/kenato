@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import com.sl.kenato.contact.InviteQr
@@ -34,6 +35,7 @@ internal fun InviteQrImage(invite: String) {
             bitmap = qr,
             contentDescription = "One-time Kenato invitation QR code",
             modifier = Modifier.size(240.dp),
+            filterQuality = FilterQuality.None,
         )
     }
 }
