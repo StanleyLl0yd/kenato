@@ -169,7 +169,7 @@ internal class ContactRepository(
             serviceOrigin: java.net.URI,
         ): ContactRepository = ContactRepository(
             identity = LocalContactIdentityProvider(LocalIdentityRepository.create(context)),
-            localState = ContactLocalState(SharedPreferencesContactStateStore(context)),
+            localState = ContactLocalState.create(context),
             transport = HttpContactTransport(serviceOrigin),
             random = SecureRandom(),
             clock = SystemContactClock,

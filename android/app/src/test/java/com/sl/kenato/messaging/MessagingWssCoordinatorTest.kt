@@ -384,6 +384,107 @@ class MessagingWssCoordinatorTest {
     }
 
     @Test
+    fun stopDetachesSocketBeforeSynchronousCloseCallback() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.notifyCloseDuringCancel = true
+
+        fixture.coordinator.stop()
+
+        assertTrue(socket.cancelled)
+        assertEquals(1, socket.cancelCount)
+        assertEquals(MessagingWssState.STOPPED, fixture.coordinator.currentState())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        assertEquals(1, fixture.sockets.created.size)
+    }
+
+    @Test
+    fun reconnectDetachesSocketBeforeSynchronousCloseCallback() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.notifyCloseDuringCancel = true
+
+        socket.fail()
+
+        assertEquals(1, socket.cancelCount)
+        assertEquals(MessagingWssState.RETRY_WAIT, fixture.coordinator.currentState())
+        assertEquals(listOf(1_000L), fixture.scheduler.pendingDelays())
+        socket.closeCallback()
+        assertEquals(listOf(1_000L), fixture.scheduler.pendingDelays())
+        fixture.scheduler.runNext()
+        assertEquals(2, fixture.sockets.created.size)
+    }
+
+    @Test
+    fun failClosedDetachesSocketBeforeSynchronousCloseCallback() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.notifyCloseDuringCancel = true
+        socket.open()
+
+        socket.rawServerFrame(byteArrayOf(0x01))
+
+        assertEquals(1, socket.cancelCount)
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        socket.closeCallback()
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+    }
+
+    @Test
+    fun throwingCancelDuringReconnectPermanentlyDeniesRestart() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.throwDuringCancel = true
+
+        socket.fail()
+
+        assertEquals(1, socket.cancelCount)
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        assertThrows(MessagingWssException::class.java) { fixture.coordinator.start() }
+        assertThrows(MessagingWssException::class.java) { fixture.coordinator.stop() }
+        assertThrows(MessagingWssException::class.java) { fixture.coordinator.start() }
+    }
+
+    @Test
+    fun throwingCancelDuringFailClosedPermanentlyDeniesRestart() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.throwDuringCancel = true
+        socket.open()
+
+        socket.rawServerFrame(byteArrayOf(0x01))
+
+        assertEquals(1, socket.cancelCount)
+        assertEquals(MessagingWssState.FAILED, fixture.coordinator.currentState())
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        assertThrows(MessagingWssException::class.java) { fixture.coordinator.start() }
+        assertThrows(MessagingWssException::class.java) { fixture.coordinator.stop() }
+    }
+
+    @Test
+    fun throwingCancelLeavesDetachedStoppedStateAndIgnoresLateCallbacks() {
+        val fixture = Fixture()
+        fixture.coordinator.start()
+        val socket = fixture.sockets.latest
+        socket.throwDuringCancel = true
+
+        assertThrows(IllegalStateException::class.java) { fixture.coordinator.stop() }
+        assertTrue(socket.cancelled)
+        assertEquals(MessagingWssState.STOPPED, fixture.coordinator.currentState())
+        socket.closeCallback()
+        socket.fail()
+        assertTrue(fixture.scheduler.pendingDelays().isEmpty())
+        assertEquals(1, fixture.sockets.created.size)
+    }
+
+    @Test
     fun moreThanThirtyTwoRecoveredSendsFailsClosedWithoutSocketQueueGrowth() {
         val fixture = Fixture()
         fixture.recovery.plan = MessagingRecoveryPlan(
@@ -458,6 +559,9 @@ class MessagingWssCoordinatorTest {
         val sent = ArrayList<ByteArray>()
         var connectCount = 0
         var cancelled = false
+        var cancelCount = 0
+        var notifyCloseDuringCancel = false
+        var throwDuringCancel = false
         var acceptSends = true
 
         override fun connect() {
@@ -472,7 +576,13 @@ class MessagingWssCoordinatorTest {
 
         override fun cancel() {
             cancelled = true
+            cancelCount++
+            // Bounded so a regression fails the count without infinite recursion.
+            if (notifyCloseDuringCancel && cancelCount <= 3) listener.onClosed(this)
+            if (throwDuringCancel) throw IllegalStateException("simulated socket cancel failure")
         }
+
+        fun closeCallback() = listener.onClosed(this)
 
         fun open() = listener.onOpen(this)
 

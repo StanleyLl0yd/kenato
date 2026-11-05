@@ -1,6 +1,7 @@
 package com.sl.kenato.messaging
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import android.util.AtomicFile
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -15,9 +16,11 @@ internal interface ConversationHistoryStore {
 }
 
 internal class AtomicFileConversationHistoryStore(context: Context) : ConversationHistoryStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, STATE_FILE_NAME))
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val input = try {
             file.openRead()
         } catch (_: FileNotFoundException) {
@@ -59,6 +62,7 @@ internal class AtomicFileConversationHistoryStore(context: Context) : Conversati
     }
 
     override fun write(value: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (value.isEmpty() || value.size > ConversationHistoryStateCodec.MAX_STATE_BYTES) {
             throw ConversationHistoryException("Conversation history size is invalid")
         }
@@ -80,6 +84,7 @@ internal class AtomicFileConversationHistoryStore(context: Context) : Conversati
     }
 
     override fun clear(): Boolean = try {
+        ownerLease.requireActive()
         file.delete()
         !file.baseFile.exists()
     } catch (error: Exception) {
