@@ -144,3 +144,18 @@ The completed #53 implementation evidence revalidated by #54 includes:
 - all protected-branch exact-head checks must be green.
 
 Issue #54 final repository-wide M4 end-to-end/security verification is complete. M4 closure is verified; #59/M4.5 is the next permitted work. M5 calling is not part of this review and remains blocked until #59 completes.
+
+## OkHttp TLS certificate blocklist update — 2026-11-03 research note
+
+Security-relevant Dependabot #169 upgrades the pinned runtime OkHttp dependency
+from 5.5.0 to **5.5.1** (upstream CVE-2026-111943 / compromised eMudhra
+intermediate certificates). This vendor update is especially relevant on JVM
+and AOSP devices without Google Play Services' certificate revocation update.
+The M4 static policy now requires the reviewed exact version and rejects the
+obsolete pin; all existing HTTPS-only, platform certificate validation,
+no custom trust manager/hostname verifier and no WebSocket redirects remain.
+
+This policy check and passing CI do **not** establish real AOSP device TLS
+behavior, eliminate other trust-store vulnerabilities or approve M5 WebRTC.
+Dependabot #169 remains an unmerged dependency update until reviewed exact-head
+CI/security; protected main, server and release baseline unchanged.
