@@ -20,6 +20,7 @@ internal class LocalSessionRepository(
     private val engine: SessionEngine,
     private val keyBackend: SessionPickleKeyBackend,
     private val stateStore: SessionStateStore,
+    private val voiceHandoffAtRest: SessionVoiceHandoffAtRest = SessionVoiceHandoffAtRest(keyBackend),
 ) {
     @Synchronized
     fun loadOrCreateAccount(ownerIdentityId: ByteArray): SessionAccountState {
@@ -676,10 +677,13 @@ internal class LocalSessionRepository(
                 "Persisted M3 state exists but Android Keystore wrapping material is missing; refusing silent regeneration",
             )
         }
-        val state = SessionStateCodec.decode(encoded)
-        if (!state.ownerIdentityId.contentEquals(ownerIdentityId)) {
+        val decoded = SessionStateCodec.decode(encoded)
+        if (!decoded.ownerIdentityId.contentEquals(ownerIdentityId)) {
             throw SessionStateException("Persisted M3 state belongs to a different local identity")
         }
+        // Unseal only after owner identity and Keystore presence are confirmed.
+        // Unknown, raw voice-v2 and tampered sealed records fail before M3 native use.
+        val state = voiceHandoffAtRest.restoreFromDisk(decoded)
         validateNativeAccount(state)
         return state
     }
@@ -784,7 +788,9 @@ internal class LocalSessionRepository(
     }
 
     private fun persist(state: SessionState) {
-        val encoded = SessionStateCodec.encode(state)
+        // The advanced M3 ratchet and any sealed voice handoff retain one
+        // AtomicFile commit. In-memory handoffs stay plaintext for verified recovery.
+        val encoded = SessionStateCodec.encode(voiceHandoffAtRest.protectForDisk(state))
         if (!stateStore.write(encoded)) {
             throw SessionStateException("Unable to durably commit M3 session state")
         }

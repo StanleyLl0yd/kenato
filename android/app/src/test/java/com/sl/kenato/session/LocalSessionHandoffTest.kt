@@ -195,6 +195,88 @@ class LocalSessionHandoffTest {
         )
     }
 
+    @Test
+    fun voiceV2HandoffIsSealedInSameAtomicM3StateAndRestoredWithoutRatchetReplay() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x7f)
+        val beforeWrites = f.store.writeCount
+
+        val staged = f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, voice,
+        ) { _, _ -> outboundHandoff(voice) }
+
+        assertEquals(beforeWrites + 1, f.store.writeCount)
+        val disk = SessionStateCodec.decode(f.store.value!!)
+        val protected = disk.messageHandoffs.single().encodedPlaintext
+        assertFalse(voice.contentEquals(protected))
+        assertTrue(protected.size > voice.size)
+        assertArrayEquals(voice, staged.encodedPlaintext)
+        assertArrayEquals(voice, f.newRepository().pendingMessageHandoffs(OWNER).single().encodedPlaintext)
+        assertEquals(1, f.engine.encryptCalls)
+        assertEquals(0, f.engine.decryptCalls)
+    }
+
+    @Test
+    fun tamperedSealedVoiceRecordCannotBeOpenedAfterChecksumIsRecomputed() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x55)
+        f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, voice,
+        ) { _, _ -> outboundHandoff(voice) }
+        val disk = SessionStateCodec.decode(f.store.value!!)
+        val prior = disk.messageHandoffs.single()
+        val tampered = prior.encodedPlaintext.copyOf().also {
+            it[it.lastIndex] = (it.last().toInt() xor 1).toByte()
+        }
+        f.store.value = SessionStateCodec.encode(disk.copy(
+            messageHandoffs = listOf(prior.copy(encodedPlaintext = tampered)),
+        ))
+        assertThrows(SessionStateException::class.java) { f.newRepository().currentState(OWNER) }
+        assertEquals(0, f.engine.decryptCalls)
+    }
+
+    @Test
+    fun restoredRawV2VoiceStateFailsClosedInsteadOfMigratingUnsafePlaintext() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x55)
+        f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, voice,
+        ) { _, _ -> outboundHandoff(voice) }
+        val recoveredPlain = f.repository.currentState(OWNER)!!
+        f.store.value = SessionStateCodec.encode(recoveredPlain)
+        assertThrows(SessionStateException::class.java) { f.newRepository().pendingMessageHandoffs(OWNER) }
+    }
+
+    @Test
+    fun sealedVoiceEnvelopeBindingRejectsEditedMetadataAndRetainsOriginalState() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x55)
+        f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, voice,
+        ) { _, _ -> outboundHandoff(voice) }
+        val disk = SessionStateCodec.decode(f.store.value!!)
+        val prior = disk.messageHandoffs.single()
+        val alteredEnvelope = prior.encodedEnvelope.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+        f.store.value = SessionStateCodec.encode(disk.copy(
+            messageHandoffs = listOf(prior.copy(encodedEnvelope = alteredEnvelope)),
+        ))
+        assertThrows(SessionStateException::class.java) { f.newRepository().pendingMessageHandoffs(OWNER) }
+    }
+
+    @Test
+    fun failedWriteOfSealedVoiceNeverPublishesAdvancedRatchet() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val before = f.store.value!!.copyOf()
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x55)
+        f.store.failWrites = true
+        assertThrows(SessionStateException::class.java) {
+            f.repository.encryptAndStageMessageHandoff(
+                OWNER, CONTACT, voice,
+            ) { _, _ -> outboundHandoff(voice) }
+        }
+        assertArrayEquals(before, f.store.value)
+    }
+
     private class Fixture {
         val engine = FakeEngine()
         val keys = FakeKeyBackend()
