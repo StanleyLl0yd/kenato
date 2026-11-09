@@ -4,9 +4,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.sl.kenato.contact.ExternalInviteLink
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +41,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.sl.kenato.call.VoiceCapabilityQrPhotoKind
 import com.sl.kenato.ui.theme.KenatoTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private lateinit var acceptance: M45AcceptanceController
@@ -88,6 +94,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class VoicePhotoRequest(val kind: VoiceCapabilityQrPhotoKind, val peerId: String)
+private data class VoicePhotoSelection(val uri: Uri, val request: VoicePhotoRequest)
+
 @Composable
 private fun KenatoApp(
     controller: M45AcceptanceController,
@@ -110,6 +119,19 @@ private fun KenatoApp(
     // QR inputs are deliberately not saveable/restored across activity/process recreation.
     var voiceChallengeInput by remember { mutableStateOf("") }
     var voiceProofInput by remember { mutableStateOf("") }
+    // The picker is an explicit user action. Its URI/decoded plaintext are never SavedState.
+    var requestedVoicePhoto by remember { mutableStateOf<VoicePhotoRequest?>(null) }
+    var selectedVoicePhoto by remember { mutableStateOf<VoicePhotoSelection?>(null) }
+    var voicePhotoError by remember { mutableStateOf<String?>(null) }
+    val voicePhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val request = requestedVoicePhoto
+        requestedVoicePhoto = null
+        if (uri != null && request != null) {
+            selectedVoicePhoto = VoicePhotoSelection(uri, request)
+        }
+    }
 
     // System Back returns to the inbox before leaving the app.
     BackHandler(enabled = selectedScreen != "Chats" || openConversationPeer != null) {
@@ -136,6 +158,31 @@ private fun KenatoApp(
     LaunchedEffect(state.voiceUiEpoch, state.selectedPeerIdentityId) {
         voiceChallengeInput = ""
         voiceProofInput = ""
+        voicePhotoError = null
+    }
+
+    LaunchedEffect(selectedVoicePhoto) {
+        val selection = selectedVoicePhoto ?: return@LaunchedEffect
+        try {
+            val value = withContext(Dispatchers.IO) {
+                VoiceCapabilityQrPhotoReader.read(context, selection.uri, selection.request.kind)
+            }
+            // Contact may have changed while the external image picker was open.
+            if (controller.state.selectedPeerIdentityId == selection.request.peerId) {
+                when (selection.request.kind) {
+                    VoiceCapabilityQrPhotoKind.CHALLENGE -> voiceChallengeInput = value
+                    VoiceCapabilityQrPhotoKind.PROOF -> voiceProofInput = value
+                }
+                voicePhotoError = null
+            }
+        } catch (_: Exception) {
+            if (controller.state.selectedPeerIdentityId == selection.request.peerId) {
+                // Do not echo malformed QR plaintext or sensitive content URI into the UI.
+                voicePhotoError = "The selected image has no readable matching Kenato voice QR."
+            }
+        } finally {
+            selectedVoicePhoto = null
+        }
     }
 
     LaunchedEffect(state.serviceOrigin) {
@@ -418,6 +465,9 @@ private fun KenatoApp(
                             "QR/text records are not automatically transmitted and do not start a call.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    voicePhotoError?.let { error ->
+                        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
                     Text(
                         if (state.voiceCapabilityConfirmed) {
                             "Voice-v2 signed proof: confirmed for selected contact"
@@ -453,6 +503,16 @@ private fun KenatoApp(
                             maxLines = 5,
                             label = { Text("Challenge received from selected peer") },
                         )
+                        TextButton(
+                            onClick = {
+                                requestedVoicePhoto = VoicePhotoRequest(
+                                    VoiceCapabilityQrPhotoKind.CHALLENGE, peer,
+                                )
+                                voicePhotoError = null
+                                voicePhotoPicker.launch("image/*")
+                            },
+                            enabled = !state.busy,
+                        ) { Text("Import challenge QR from an image") }
                         Button(
                             onClick = {
                                 controller.approveAndSignVoiceCapabilityChallenge(voiceChallengeInput) {
@@ -481,6 +541,16 @@ private fun KenatoApp(
                             maxLines = 5,
                             label = { Text("Signed proof returned by selected peer") },
                         )
+                        TextButton(
+                            onClick = {
+                                requestedVoicePhoto = VoicePhotoRequest(
+                                    VoiceCapabilityQrPhotoKind.PROOF, peer,
+                                )
+                                voicePhotoError = null
+                                voicePhotoPicker.launch("image/*")
+                            },
+                            enabled = !state.busy,
+                        ) { Text("Import signed proof QR from an image") }
                         Button(
                             onClick = {
                                 controller.approveAndImportVoiceCapabilityProof(voiceProofInput) {
