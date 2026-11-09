@@ -7,9 +7,9 @@ Security dependency amendment: 2026-11-09 (see #188/#189)
 
 ## Security amendment (2026-11-09)
 
-The original M3 decision was accepted on vodozemac 0.10.0. RUSTSEC-2026-0451 (2026-11-06) exposed incomplete Olm root/chain secret zeroization in that version. The reviewed security upgrade proposal #189 now pins **vodozemac 0.11.2**, **zeroize 1.9.1**, **Rust 1.96.0**, and reproducible lockfiles in both native crates. The selected one-to-one Olm `SessionConfig::version_1()`, Kenato's P-256 identity binding, 3 ABI set, Android NDK and M3 wire contracts are unchanged. No release or live voice activation is implied.
+The original M3 decision was accepted on vodozemac 0.10.0. RUSTSEC-2026-0451 (2026-11-06) exposed incomplete Olm root/chain secret zeroization in that version. Merged security fix #189 now pins **vodozemac 0.11.2**, **zeroize 1.9.1**, **Rust 1.96.0**, and reproducible lockfiles in both native crates. The selected one-to-one Olm `SessionConfig::version_1()`, Kenato's P-256 identity binding, 3 ABI set, Android NDK and M3 wire contracts are unchanged. No release or live voice activation is implied.
 
-A dedicated CI interoperability test creates account/session encrypted pickles and a reply with the exact legacy 0.10.0 source, restores and advances the ratchet using 0.11.2, then verifies that a 0.10.0 peer decrypts the upgraded client's reply. **Synthetic cross-version PASS** is not a substitute for Android Keystore/JNI device acceptance, current exact-head CI, or #87 physical review. The original 0.10.0 audit and internal skipped-key limits below are historical findings, not independent findings on all 0.11.2 internals. Protected main remains on the older version until a separately reviewed merge.
+A dedicated CI interoperability test creates account/session encrypted pickles and a reply with the exact legacy 0.10.0 source, restores and advances the ratchet using 0.11.2, then verifies that a 0.10.0 peer decrypts the upgraded client's reply. **Synthetic cross-version PASS** is not a substitute for Android Keystore/JNI device acceptance, current exact-head CI, or #87 physical review. The original 0.10.0 audit and internal skipped-key limits below are historical findings, not independent findings on all 0.11.2 internals. The corrected dependency is in protected main as of merge `bf28a6a6`; Android device acceptance remains outstanding.
 
 ## Context
 
@@ -21,9 +21,9 @@ Dependency choice is also a security and distribution decision. ADR 0006 intenti
 
 ## Decision
 
-At initial M3 acceptance, Kenato selected **vodozemac 0.10.0** and its one-to-one **Olm** implementation. The 2026-11-09 security amendment selects patched **0.11.2** as a compatible, pinned replacement, subject to its merge and final gates.
+At initial M3 acceptance, Kenato selected **vodozemac 0.10.0** and its one-to-one **Olm** implementation. The 2026-11-09 security amendment selects patched **0.11.2** as a compatible, pinned replacement, merged into the protected main; physical acceptance and voice release gates remain open.
 
-In the security-upgrade candidate, the dependency is exact-pinned to `=0.11.2` and its resolved Rust dependency graph is committed in Cargo lockfiles for the native engine and JNI crates. M3 uses `olm::SessionConfig::version_1()` only. Experimental session configurations, Megolm/group ratchets, low-level/hazmat APIs, fallback keys, and custom modifications to vodozemac cryptography are out of scope.
+In the current protected main, the dependency is exact-pinned to `=0.11.2` and its resolved Rust dependency graph is committed in Cargo lockfiles for the native engine and JNI crates. M3 uses `olm::SessionConfig::version_1()` only. Experimental session configurations, Megolm/group ratchets, low-level/hazmat APIs, fallback keys, and custom modifications to vodozemac cryptography are out of scope.
 
 The initially reviewed 0.10.0 release (historical review; newer version requires its own evidence):
 
