@@ -196,6 +196,38 @@ class LocalSessionHandoffTest {
     }
 
     @Test
+    fun legacyM4TextHandoffPersistsWithoutFormatOrCiphertextChanges() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val text = "existing-m4-message".toByteArray()
+        val before = f.store.writeCount
+
+        val staged = f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, text,
+        ) { _, _ -> outboundHandoff(text) }
+
+        assertEquals(before + 1, f.store.writeCount)
+        val disk = SessionStateCodec.decode(f.store.value!!).messageHandoffs.single()
+        assertArrayEquals(text, disk.encodedPlaintext)
+        assertArrayEquals(staged.encodedEnvelope, disk.encodedEnvelope)
+        assertArrayEquals(text, f.newRepository().pendingMessageHandoffs(OWNER).single().encodedPlaintext)
+        assertEquals(1, f.engine.encryptCalls)
+    }
+
+    @Test
+    fun sealedVoiceDoesNotSilentlyRegenerateMissingKeystoreMaterial() {
+        val f = Fixture().also(Fixture::establishReadyOutbound)
+        val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x55)
+        f.repository.encryptAndStageMessageHandoff(
+            OWNER, CONTACT, voice,
+        ) { _, _ -> outboundHandoff(voice) }
+        f.keys.deleteWrappingKey()
+        assertThrows(SessionStateException::class.java) {
+            f.newRepository().pendingMessageHandoffs(OWNER)
+        }
+        assertFalse(f.keys.hasWrappingKey())
+    }
+
+    @Test
     fun voiceV2HandoffIsSealedInSameAtomicM3StateAndRestoredWithoutRatchetReplay() {
         val f = Fixture().also(Fixture::establishReadyOutbound)
         val voice = byteArrayOf(0x08, 0x02, 0x12, 0x01, 0x7f)
