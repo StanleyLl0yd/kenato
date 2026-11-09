@@ -49,6 +49,32 @@ class MessagingTypedInboundDeliveryTest {
     }
 
     @Test
+    fun authenticatedVoiceAckCarriesExpiryButTextAndLegacyDoNot() {
+        val f = Fixture()
+        val voiceEnvelope = envelope(31)
+        f.sessions.decryptedPlaintext = encodedVoice(voiceEnvelope)
+        val voice = f.handler.handleWithAckExpiry(voiceEnvelope, NOW)
+        assertEquals(voiceEnvelope.expiresAtEpochSeconds, voice.voiceExpiresAtEpochSeconds)
+        assertArrayEquals(voiceEnvelope.messageId, voice.ack.messageId)
+        val duplicate = f.handler.handleWithAckExpiry(voiceEnvelope, NOW)
+        assertEquals(voiceEnvelope.expiresAtEpochSeconds, duplicate.voiceExpiresAtEpochSeconds)
+        assertEquals(1, f.sessions.decryptCount)
+
+        val textFixture = Fixture()
+        val text = envelope(32)
+        textFixture.sessions.decryptedPlaintext = MessagingWire.encodePlaintext(
+            MessagingPlaintext(
+                senderIdentityId = PEER, recipientIdentityId = OWNER,
+                messageId = text.messageId, sentAtEpochSeconds = NOW,
+                expiresAtEpochSeconds = NOW + 60, text = "chat",
+            ),
+        )
+        val textOutcome = textFixture.handler.handleWithAckExpiry(text, NOW)
+        assertEquals(null, textOutcome.voiceExpiresAtEpochSeconds)
+        assertEquals(1, textFixture.chat.writes)
+    }
+
+    @Test
     fun exactVoiceRedeliveryAcksWithoutSecondRatchetDecrypt() {
         val f = Fixture()
         val envelope = envelope(2)
