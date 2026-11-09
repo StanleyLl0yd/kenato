@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly RUST_TOOLCHAIN="1.85.0"
+readonly RUST_TOOLCHAIN="1.96.0"
 readonly CARGO_NDK_VERSION="4.1.2"
 readonly ANDROID_NDK_VERSION="28.2.13676358"
 readonly ANDROID_API_LEVEL="26"
@@ -31,7 +31,7 @@ if [[ "$actual_ndk_revision" != "$ANDROID_NDK_VERSION" ]]; then
   exit 1
 fi
 
-if ! rustc "+$RUST_TOOLCHAIN" --version | grep -Fq "rustc 1.85.0"; then
+if ! rustc "+$RUST_TOOLCHAIN" --version | grep -Fq "rustc 1.96.0"; then
   echo "Rust $RUST_TOOLCHAIN is required for the M3 JNI library." >&2
   exit 1
 fi

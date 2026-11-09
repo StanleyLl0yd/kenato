@@ -279,8 +279,8 @@ else:
         errors.append(f"native/session-engine: unable to parse Cargo.toml: {error}")
     else:
         package = native_manifest.get("package", {})
-        if package.get("rust-version") != "1.85":
-            errors.append("native/session-engine: rust-version must remain 1.85")
+        if package.get("rust-version") != "1.96":
+            errors.append("native/session-engine: rust-version must remain 1.96")
         if package.get("edition") != "2024":
             errors.append("native/session-engine: Rust edition must remain 2024")
         if package.get("publish") is not False:
@@ -291,8 +291,8 @@ else:
         if not isinstance(vodozemac, dict):
             errors.append("native/session-engine: vodozemac dependency must use an explicit table")
         else:
-            if vodozemac.get("version") != "=0.10.0":
-                errors.append("native/session-engine: vodozemac must remain exactly pinned to =0.10.0")
+            if vodozemac.get("version") != "=0.11.2":
+                errors.append("native/session-engine: vodozemac must remain exactly pinned to =0.11.2")
             if vodozemac.get("default-features") is not False:
                 errors.append("native/session-engine: vodozemac default features must remain disabled")
             if vodozemac.get("features"):
@@ -310,8 +310,8 @@ else:
     except (OSError, tomllib.TOMLDecodeError) as error:
         errors.append(f"native/session-engine: unable to parse rust-toolchain.toml: {error}")
     else:
-        if toolchain.get("channel") != "1.85.0":
-            errors.append("native/session-engine: CI/toolchain channel must remain exactly 1.85.0")
+        if toolchain.get("channel") != "1.96.0":
+            errors.append("native/session-engine: CI/toolchain channel must remain exactly 1.96.0")
         components = toolchain.get("components", [])
         if sorted(components) != ["clippy", "rustfmt"]:
             errors.append("native/session-engine: rustfmt and clippy must remain pinned toolchain components")
@@ -328,8 +328,8 @@ else:
         errors.append(f"native/session-jni: unable to parse Cargo.toml: {error}")
     else:
         package = jni_manifest.get("package", {})
-        if package.get("rust-version") != "1.85":
-            errors.append("native/session-jni: rust-version must remain 1.85")
+        if package.get("rust-version") != "1.96":
+            errors.append("native/session-jni: rust-version must remain 1.96")
         if package.get("edition") != "2021":
             errors.append("native/session-jni: Rust edition must remain 2021 until the JNI export policy is re-reviewed")
         if package.get("publish") is not False:
@@ -352,8 +352,8 @@ else:
         engine_dependency = dependencies.get("kenato-session-engine")
         if not isinstance(engine_dependency, dict) or engine_dependency.get("path") != "../session-engine":
             errors.append("native/session-jni: session engine must remain a local path dependency")
-        if dependencies.get("zeroize") != "=1.8.2":
-            errors.append("native/session-jni: zeroize must remain exactly pinned to =1.8.2")
+        if dependencies.get("zeroize") != "=1.9.1":
+            errors.append("native/session-jni: zeroize must remain exactly pinned to =1.9.1")
 
         rust_lints = jni_manifest.get("lints", {}).get("rust", {})
         if rust_lints.get("unsafe_code") != "allow":
@@ -371,8 +371,8 @@ else:
     except (OSError, tomllib.TOMLDecodeError) as error:
         errors.append(f"native/session-jni: unable to parse rust-toolchain.toml: {error}")
     else:
-        if toolchain.get("channel") != "1.85.0":
-            errors.append("native/session-jni: toolchain channel must remain exactly 1.85.0")
+        if toolchain.get("channel") != "1.96.0":
+            errors.append("native/session-jni: toolchain channel must remain exactly 1.96.0")
         components = toolchain.get("components", [])
         if sorted(components) != ["clippy", "rustfmt"]:
             errors.append("native/session-jni: rustfmt and clippy must remain pinned toolchain components")

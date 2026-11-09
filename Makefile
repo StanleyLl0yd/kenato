@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-RUST_TOOLCHAIN ?= 1.85.0
+RUST_TOOLCHAIN ?= 1.96.0
 PROTO_FILES := \
 	protocol/kenato/v1/envelope.proto \
 	protocol/kenato/v1/contact.proto \

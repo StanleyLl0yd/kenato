@@ -2,13 +2,13 @@
 name = "kenato-session-engine"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.96"
 publish = false
 
 [dependencies]
 rand = "=0.8.6"
-vodozemac = { version = "=0.10.0", default-features = false }
-zeroize = "=1.8.2"
+vodozemac = { version = "=0.11.2", default-features = false }
+zeroize = "=1.9.1"
 
 [lints.rust]
 unsafe_code = "deny"
