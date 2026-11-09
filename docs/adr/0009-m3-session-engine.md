@@ -3,6 +3,13 @@
 Status: Accepted and implemented; M3 final repository-wide verification complete  
 Date: 2026-09-10  
 Implementation review updated: 2026-09-14
+Security dependency amendment: 2026-11-09 (see #188/#189)
+
+## Security amendment (2026-11-09)
+
+The original M3 decision was accepted on vodozemac 0.10.0. RUSTSEC-2026-0451 (2026-11-06) exposed incomplete Olm root/chain secret zeroization in that version. The reviewed security upgrade proposal #189 now pins **vodozemac 0.11.2**, **zeroize 1.9.1**, **Rust 1.96.0**, and reproducible lockfiles in both native crates. The selected one-to-one Olm `SessionConfig::version_1()`, Kenato's P-256 identity binding, 3 ABI set, Android NDK and M3 wire contracts are unchanged. No release or live voice activation is implied.
+
+A dedicated CI interoperability test creates account/session encrypted pickles and a reply with the exact legacy 0.10.0 source, restores and advances the ratchet using 0.11.2, then verifies that a 0.10.0 peer decrypts the upgraded client's reply. **Synthetic cross-version PASS** is not a substitute for Android Keystore/JNI device acceptance, current exact-head CI, or #87 physical review. The original 0.10.0 audit and internal skipped-key limits below are historical findings, not independent findings on all 0.11.2 internals. Protected main remains on the older version until a separately reviewed merge.
 
 ## Context
 
@@ -14,11 +21,11 @@ Dependency choice is also a security and distribution decision. ADR 0006 intenti
 
 ## Decision
 
-M3 uses **vodozemac 0.10.0**, specifically its one-to-one **Olm** implementation, as the cryptographic session engine.
+At initial M3 acceptance, Kenato selected **vodozemac 0.10.0** and its one-to-one **Olm** implementation. The 2026-11-09 security amendment selects patched **0.11.2** as a compatible, pinned replacement, subject to its merge and final gates.
 
-The dependency is exact-pinned to `=0.10.0` and its resolved Rust dependency graph is committed in Cargo lockfiles for the native engine and JNI crates. M3 uses `olm::SessionConfig::version_1()` only. Experimental session configurations, Megolm/group ratchets, low-level/hazmat APIs, fallback keys, and custom modifications to vodozemac cryptography are out of scope.
+In the security-upgrade candidate, the dependency is exact-pinned to `=0.11.2` and its resolved Rust dependency graph is committed in Cargo lockfiles for the native engine and JNI crates. M3 uses `olm::SessionConfig::version_1()` only. Experimental session configurations, Megolm/group ratchets, low-level/hazmat APIs, fallback keys, and custom modifications to vodozemac cryptography are out of scope.
 
-The selected release:
+The initially reviewed 0.10.0 release (historical review; newer version requires its own evidence):
 
 - is a pure-Rust implementation of Olm/Double Ratchet;
 - implements asynchronous 3DH session establishment with Curve25519 account and one-time keys;
@@ -27,7 +34,7 @@ The selected release:
 - has a published independent Least Authority security audit with no significant findings according to upstream release documentation;
 - internally bounds out-of-order handling: vodozemac 0.10.0 retains at most 40 skipped message keys and rejects message gaps larger than 2000.
 
-Kenato integrates the Rust library behind a deliberately small Android JNI boundary. The bridge marshals bounded inputs/outputs and encrypted engine snapshots but does not reimplement, fork, weaken, or expose low-level ratchet cryptography. The implementation pins Rust `1.85.0`, Android NDK `28.2.13676358`, `cargo-ndk 4.1.2`, API 26 native targets, and the `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABI set. The engine's direct `rand` dependency is exact-pinned to the reviewed fixed `=0.8.6`; CI/repository verification audits both native Cargo lockfiles with pinned cargo-audit 0.22.2. CI/release paths build and verify the native boundary before Gradle packaging.
+Kenato integrates the Rust library behind a deliberately small Android JNI boundary. The bridge marshals bounded inputs/outputs and encrypted engine snapshots but does not reimplement, fork, weaken, or expose low-level ratchet cryptography. The security-upgrade implementation pins Rust `1.96.0`, Android NDK `28.2.13676358`, `cargo-ndk 4.1.2`, API 26 native targets, and the `armeabi-v7a`, `arm64-v8a`, and `x86_64` ABI set. The engine's direct `rand` dependency is exact-pinned to the reviewed fixed `=0.8.6`; CI/repository verification audits both native Cargo lockfiles with pinned cargo-audit 0.22.2. CI/release paths build and verify the native boundary before Gradle packaging.
 
 Post-M3 audit hardening additionally requires temporary JNI plaintext and pickle-key copies to use zeroizing native buffers and requires Dependency Review to enforce an explicit AGPL/GPL deny policy while ADR 0006 reserves the permanent licensing decision to the owner. These are defense-in-depth controls and do not change the selected engine or protocol.
 
