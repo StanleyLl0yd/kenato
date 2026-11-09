@@ -25,6 +25,7 @@ required = (
     "readelf -h",
     "vcs.revision=$GITHUB_SHA",
     "sha256sum --check SHA256SUMS",
+    "cat dist/SHA256SUMS",
     "PROVENANCE.txt",
     "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "retention-days: 14",

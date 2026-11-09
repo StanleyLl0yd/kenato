@@ -74,6 +74,8 @@ jobs:
           grep -F 'GOARCH=arm64' dist/GO_BUILD_INFO.txt
           grep -F 'CGO_ENABLED=0' dist/GO_BUILD_INFO.txt
           (cd dist && sha256sum kenato-server-linux-arm64 > SHA256SUMS && sha256sum --check SHA256SUMS)
+          # Publish the inner ELF digest in the immutable Actions log for independent review.
+          cat dist/SHA256SUMS
           {
             printf 'source_sha=%s\n' "$GITHUB_SHA"
             printf 'source_ref=%s\n' "$GITHUB_REF"
