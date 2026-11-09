@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class VoicePhotoRequest(val kind: VoiceCapabilityQrPhotoKind, val peerId: String)
+private data class VoicePhotoRequest(val kind: VoiceCapabilityQrPhotoKind, val peerId: String? = null)
 private data class VoicePhotoSelection(val uri: Uri, val request: VoicePhotoRequest)
 
 @Composable
@@ -123,6 +123,7 @@ private fun KenatoApp(
     var requestedVoicePhoto by remember { mutableStateOf<VoicePhotoRequest?>(null) }
     var selectedVoicePhoto by remember { mutableStateOf<VoicePhotoSelection?>(null) }
     var voicePhotoError by remember { mutableStateOf<String?>(null) }
+    var invitePhotoError by remember { mutableStateOf<String?>(null) }
     val voicePhotoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri ->
@@ -167,17 +168,31 @@ private fun KenatoApp(
             val value = withContext(Dispatchers.IO) {
                 VoiceCapabilityQrPhotoReader.read(context, selection.uri, selection.request.kind)
             }
-            // Contact may have changed while the external image picker was open.
-            if (controller.state.selectedPeerIdentityId == selection.request.peerId) {
+            // Ignore stale picker results after a contact or navigation change.
+            val inviteTarget = selection.request.kind == VoiceCapabilityQrPhotoKind.INVITE &&
+                selectedScreen == "Contacts"
+            val voiceTarget = selection.request.kind != VoiceCapabilityQrPhotoKind.INVITE &&
+                controller.state.selectedPeerIdentityId == selection.request.peerId
+            if (inviteTarget || voiceTarget) {
                 when (selection.request.kind) {
+                    VoiceCapabilityQrPhotoKind.INVITE -> {
+                        inviteInput = value
+                        invitePhotoError = null
+                    }
                     VoiceCapabilityQrPhotoKind.CHALLENGE -> voiceChallengeInput = value
                     VoiceCapabilityQrPhotoKind.PROOF -> voiceProofInput = value
                 }
-                voicePhotoError = null
+                if (voiceTarget) voicePhotoError = null
             }
         } catch (_: Exception) {
-            if (controller.state.selectedPeerIdentityId == selection.request.peerId) {
-                // Do not echo malformed QR plaintext or sensitive content URI into the UI.
+            // Never echo malicious QR text or private content-provider URI into UI/logs.
+            if (selection.request.kind == VoiceCapabilityQrPhotoKind.INVITE &&
+                selectedScreen == "Contacts"
+            ) {
+                invitePhotoError = "The image does not contain a valid Kenato invitation QR."
+            } else if (selection.request.kind != VoiceCapabilityQrPhotoKind.INVITE &&
+                controller.state.selectedPeerIdentityId == selection.request.peerId
+            ) {
                 voicePhotoError = "The selected image has no readable matching Kenato voice QR."
             }
         } finally {
@@ -390,6 +405,21 @@ private fun KenatoApp(
                     maxLines = 6,
                     label = { Text("Invite URI from the other phone") },
                 )
+                invitePhotoError?.let { message ->
+                    Text(
+                        message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        requestedVoicePhoto = VoicePhotoRequest(VoiceCapabilityQrPhotoKind.INVITE)
+                        invitePhotoError = null
+                        voicePhotoPicker.launch("image/*")
+                    },
+                    enabled = !state.busy,
+                ) { Text("Import invitation QR from an image") }
                 Button(
                     onClick = {
                         controller.redeemAndEstablish(inviteInput) {

@@ -1,6 +1,7 @@
 package com.sl.kenato.call
 
 import com.google.zxing.BinaryBitmap
+import com.sl.kenato.contact.ExternalInviteLink
 import com.google.zxing.ReaderException
 import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
@@ -11,6 +12,7 @@ import java.util.Base64
 internal enum class VoiceCapabilityQrPhotoKind {
     CHALLENGE,
     PROOF,
+    INVITE,
 }
 
 internal object VoiceCapabilityQrPhotoDecoder {
@@ -42,9 +44,18 @@ internal object VoiceCapabilityQrPhotoDecoder {
             throw VoiceCapabilityQrException("Invalid selected QR image", error)
         }
 
+        // An M2 invitation is a bearer token, not a base64 voice proof.
+        // Reuse the exact deep-link canonicalizer; never redeem or open it here.
+        if (expected == VoiceCapabilityQrPhotoKind.INVITE) {
+            if (record.length > 2048 || ExternalInviteLink.canonicalOrNull(record) != record) {
+                throw VoiceCapabilityQrException("Invalid or noncanonical Kenato invitation QR")
+            }
+            return record
+        }
         val prefix = when (expected) {
             VoiceCapabilityQrPhotoKind.CHALLENGE -> CHALLENGE_PREFIX
             VoiceCapabilityQrPhotoKind.PROOF -> PROOF_PREFIX
+            VoiceCapabilityQrPhotoKind.INVITE -> error("Handled above")
         }
         if (record.length !in (prefix.length + 1)..MAX_RECORD_CHARS ||
             !record.startsWith(prefix)

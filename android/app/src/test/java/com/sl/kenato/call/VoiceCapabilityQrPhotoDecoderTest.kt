@@ -1,6 +1,10 @@
 package com.sl.kenato.call
 
 import com.google.zxing.BarcodeFormat
+import com.sl.kenato.contact.CONTACT_ID_BYTES
+import com.sl.kenato.contact.INVITE_TOKEN_BYTES
+import com.sl.kenato.contact.InviteUriCodec
+import com.sl.kenato.contact.M2InviteDescriptor
 import com.google.zxing.qrcode.QRCodeWriter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -47,6 +51,35 @@ class VoiceCapabilityQrPhotoDecoderTest {
             assertThrows(VoiceCapabilityQrException::class.java) {
                 VoiceCapabilityQrPhotoDecoder.decode(
                     512, 512, bitmap(record), VoiceCapabilityQrPhotoKind.CHALLENGE,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun importsOnlyCanonicalM2InviteQrWithoutRedeemingBearerToken() {
+        val uri = InviteUriCodec.encode(
+            M2InviteDescriptor(
+                creatorIdentityId = ByteArray(CONTACT_ID_BYTES) { (it + 1).toByte() },
+                token = ByteArray(INVITE_TOKEN_BYTES) { (it + 33).toByte() },
+                signature = byteArrayOf(1, 2, 3, 4),
+            ),
+        )
+        assertEquals(
+            uri,
+            VoiceCapabilityQrPhotoDecoder.decode(
+                512, 512, bitmap(uri), VoiceCapabilityQrPhotoKind.INVITE,
+            ),
+        )
+        assertThrows(VoiceCapabilityQrException::class.java) {
+            VoiceCapabilityQrPhotoDecoder.decode(
+                512, 512, bitmap(uri), VoiceCapabilityQrPhotoKind.PROOF,
+            )
+        }
+        listOf("https://example.org", "kenato-voice-v2:proof:AAAA").forEach { invalid ->
+            assertThrows(VoiceCapabilityQrException::class.java) {
+                VoiceCapabilityQrPhotoDecoder.decode(
+                    512, 512, bitmap(invalid), VoiceCapabilityQrPhotoKind.INVITE,
                 )
             }
         }
