@@ -1,6 +1,7 @@
 package com.sl.kenato.call
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -16,11 +17,13 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** No-backup atomic file storing ONLY AES-GCM-encrypted M5 event state. */
 internal class AtomicFileVoiceSemanticEncryptedStore(context: Context) : VoiceSemanticEncryptedStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val file = AtomicFile(
         File(context.applicationContext.noBackupFilesDir, "kenato_m5_voice_events_v1.enc"),
     )
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val stream = try {
             file.openRead()
         } catch (_: FileNotFoundException) {
@@ -56,6 +59,7 @@ internal class AtomicFileVoiceSemanticEncryptedStore(context: Context) : VoiceSe
     }
 
     override fun write(value: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (value.isEmpty() || value.size > VoiceSemanticEventStateCodec.MAX_ENCRYPTED_BYTES) {
             throw VoiceSemanticEventException("Encrypted voice event size is invalid")
         }
@@ -76,6 +80,7 @@ internal class AtomicFileVoiceSemanticEncryptedStore(context: Context) : VoiceSe
     }
 
     override fun clear(): Boolean = try {
+        ownerLease.requireActive()
         file.delete()
         !file.baseFile.exists()
     } catch (error: Exception) {

@@ -1,6 +1,7 @@
 package com.sl.kenato.call
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import android.util.AtomicFile
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -8,9 +9,11 @@ import java.io.FileNotFoundException
 
 /** No-backup atomic metadata journal. No voice content or ciphertext is persisted here. */
 internal class AtomicFileVoiceSignalReplayStore(context: Context) : VoiceSignalReplayStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, "kenato_voice_replay_v1.state"))
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val input = try {
             file.openRead()
         } catch (_: FileNotFoundException) {
@@ -46,6 +49,7 @@ internal class AtomicFileVoiceSignalReplayStore(context: Context) : VoiceSignalR
     }
 
     override fun write(bytes: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (bytes.isEmpty() || bytes.size > VoiceSignalReplayStateCodec.MAX_STATE_BYTES) {
             throw VoiceSignalReplayException("Voice replay state size is invalid")
         }
@@ -66,6 +70,7 @@ internal class AtomicFileVoiceSignalReplayStore(context: Context) : VoiceSignalR
     }
 
     override fun clear(): Boolean = try {
+        ownerLease.requireActive()
         file.delete()
         !file.baseFile.exists()
     } catch (error: Exception) {

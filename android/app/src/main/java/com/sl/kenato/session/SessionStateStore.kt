@@ -1,6 +1,7 @@
 package com.sl.kenato.session
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import android.util.AtomicFile
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -15,9 +16,11 @@ internal interface SessionStateStore {
 }
 
 internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, STATE_FILE_NAME))
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val input = try {
             file.openRead()
         } catch (_: FileNotFoundException) {
@@ -63,6 +66,7 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
     }
 
     override fun write(value: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (value.isEmpty() || value.size > SessionStateCodec.MAX_STATE_BYTES) {
             throw SessionStateException("Session state size is invalid")
         }
@@ -84,6 +88,7 @@ internal class AtomicFileSessionStateStore(context: Context) : SessionStateStore
     }
 
     override fun clear(): Boolean = try {
+        ownerLease.requireActive()
         file.delete()
         !file.baseFile.exists()
     } catch (error: Exception) {

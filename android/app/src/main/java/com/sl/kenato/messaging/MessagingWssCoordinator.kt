@@ -110,8 +110,22 @@ internal class DurableMessagingRecoveryDriver(
  * decrypted inner-context validation. They may return an ACK only after the exact delivery is
  * already represented durably in authenticated local history.
  */
+/** Internal-only metadata from authenticated M3, never a relay claim or wire field. */
+internal data class MessagingInboundAckOutcome(
+    val ack: MessagingDeliveryAck,
+    val voiceExpiresAtEpochSeconds: Long? = null,
+)
+
 internal fun interface MessagingInboundDeliveryHandler {
     fun handle(envelope: MessagingEnvelope, receivedAtEpochSeconds: Long): MessagingDeliveryAck?
+
+    /** The default M4 text path preserves its existing ACK semantics. */
+    fun handleWithAckExpiry(
+        envelope: MessagingEnvelope,
+        receivedAtEpochSeconds: Long,
+    ): MessagingInboundAckOutcome? = handle(envelope, receivedAtEpochSeconds)?.let {
+        MessagingInboundAckOutcome(it)
+    }
 }
 
 internal interface MessagingScheduledTask {
@@ -178,6 +192,8 @@ internal class MessagingWssCoordinator(
 
     private var state = MessagingWssState.STOPPED
     private var running = false
+    // A failed external cancel leaves native socket shutdown unprovable for this coordinator.
+    private var uncertainSocketShutdown = false
     private var activeSocket: MessagingSocket? = null
     private var scheduledReconnect: MessagingScheduledTask? = null
     private var authenticationTimeout: MessagingScheduledTask? = null
@@ -209,6 +225,9 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     fun start() {
+        if (uncertainSocketShutdown) {
+            throw MessagingWssException("M4 socket shutdown is uncertain")
+        }
         if (running) return
         running = true
         note(M45DiagnosticEvent.TRANSPORT_STARTED)
@@ -220,9 +239,10 @@ internal class MessagingWssCoordinator(
 
     @Synchronized
     fun stop() {
+        // Detach before invoking cancel(): a socket may invoke onClosed/onFailure
+        // synchronously from cancel(), including on this same monitor.
         running = false
-        cancelTimers()
-        activeSocket?.cancel()
+        val socket = activeSocket
         activeSocket = null
         authenticatedIdentityId = null
         reconnectAttempts = 0
@@ -232,6 +252,11 @@ internal class MessagingWssCoordinator(
         recoveredAcksSentThisConnection.clear()
         pendingAckRetryMessageIds.clear()
         state = MessagingWssState.STOPPED
+        val failure = cancelTimersAndSocket(socket)
+        failure?.let { throw it }
+        if (uncertainSocketShutdown) {
+            throw MessagingWssException("M4 socket shutdown remains uncertain")
+        }
         note(M45DiagnosticEvent.TRANSPORT_STOPPED)
     }
 
@@ -426,15 +451,34 @@ internal class MessagingWssCoordinator(
         if (!envelope.recipientIdentityId.contentEquals(owner)) {
             throw MessagingWssException("M4 delivery recipient does not match authenticated identity")
         }
-        val ack = inbound.handle(envelope, receivedAt) ?: return
+        val outcome = inbound.handleWithAckExpiry(envelope, receivedAt) ?: return
+        val ack = outcome.ack
         if (
             !ack.senderIdentityId.contentEquals(envelope.senderIdentityId) ||
             !ack.messageId.contentEquals(envelope.messageId)
         ) {
             throw MessagingWssException("M4 delivery handler returned a mismatched ACK")
         }
-        // ACK is idempotent server-side. Track the key for RETRY_LATER correlation but still re-ACK
-        // an authenticated duplicate delivery so an earlier queued ACK cannot strand server state.
+        val voiceExpiry = outcome.voiceExpiresAtEpochSeconds
+        if (voiceExpiry != null) {
+            if (voiceExpiry != envelope.expiresAtEpochSeconds) {
+                throw MessagingWssException("Authenticated M5 ACK expiry does not match ciphertext")
+            }
+            // Serialize before the last trusted-clock sample; the native/Keystore
+            // commit may have crossed the M5 deadline since receive-time validation.
+            val encoded = MessagingWire.encodeClientFrame(MessagingClientFrame(ack = ack))
+            val dispatchTime = nowEpochSeconds()
+            if (dispatchTime < receivedAt) {
+                throw MessagingWssException("M5 inbound ACK clock regressed before socket dispatch")
+            }
+            if (dispatchTime >= voiceExpiry) return
+            recoveredAcksSentThisConnection.add(MessageKey(ack.senderIdentityId, ack.messageId))
+            if (!socket.sendBinary(encoded)) {
+                throw MessagingWssRetryException("Unable to enqueue M5 WebSocket ACK")
+            }
+            return
+        }
+        // Preserve M4 text ACK and duplicate delivery behavior without a voice TTL policy.
         recoveredAcksSentThisConnection.add(MessageKey(ack.senderIdentityId, ack.messageId))
         sendFrame(socket, MessagingClientFrame(ack = ack))
     }
@@ -537,9 +581,10 @@ internal class MessagingWssCoordinator(
         }
         plan.inboundAcks.forEach { recovered ->
             val key = MessageKey(recovered.peerIdentityId, recovered.messageId)
-            if (recoveredAcksSentThisConnection.add(key)) {
-                sendFrame(
-                    socket,
+            if (!recoveredAcksSentThisConnection.contains(key)) {
+                // Pre-serialize first; a long recovery or serialization must not
+                // enqueue an expired M5 voice ACK after its verified TTL.
+                val encoded = MessagingWire.encodeClientFrame(
                     MessagingClientFrame(
                         ack = MessagingDeliveryAck(
                             senderIdentityId = recovered.peerIdentityId.copyOf(),
@@ -547,6 +592,21 @@ internal class MessagingWssCoordinator(
                         ),
                     ),
                 )
+                val expiry = recovered.expiresAtEpochSeconds
+                val verifiedAt = recovered.validatedAtEpochSeconds
+                if (expiry != null || verifiedAt != null) {
+                    if (expiry == null || verifiedAt == null || expiry <= verifiedAt) {
+                        throw MessagingWssException("Recovered M5 ACK has an invalid expiry proof")
+                    }
+                    val dispatchTime = nowEpochSeconds()
+                    if (dispatchTime < verifiedAt) {
+                        throw MessagingWssException("M5 recovered ACK clock regressed before socket dispatch")
+                    }
+                    if (dispatchTime >= expiry) return@forEach
+                }
+                if (recoveredAcksSentThisConnection.add(key) && !socket.sendBinary(encoded)) {
+                    throw MessagingWssRetryException("Unable to enqueue M4 WebSocket frame")
+                }
             }
         }
         if (activeStagedSends == 0) {
@@ -677,25 +737,29 @@ internal class MessagingWssCoordinator(
     private fun retryConnection(socket: MessagingSocket) {
         if (socket !== activeSocket) return
         disconnectActiveSocket(socket)
+        if (uncertainSocketShutdown) return
         if (running) scheduleReconnect() else state = MessagingWssState.STOPPED
     }
 
     private fun retryDurableWork(socket: MessagingSocket) {
         if (socket !== activeSocket) return
         disconnectActiveSocket(socket)
+        if (uncertainSocketShutdown) return
         if (running) scheduleDurableReconnect() else state = MessagingWssState.STOPPED
     }
 
     private fun disconnectActiveSocket(socket: MessagingSocket) {
-        authenticationTimeout?.cancel()
-        authenticationTimeout = null
-        cancelSendAcceptanceTimeout()
-        cancelAckRetry()
-        socket.cancel()
+        // External cancellation can synchronously call back into this synchronized coordinator.
+        // Make stale socket events inert before asking the socket or timers to shut down.
         activeSocket = null
         authenticatedIdentityId = null
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
+        pendingAckRetryMessageIds.clear()
+        if (cancelTimersAndSocket(socket) != null) {
+            running = false
+            state = MessagingWssState.FAILED
+        }
     }
 
     private fun scheduleReconnect() {
@@ -747,22 +811,44 @@ internal class MessagingWssCoordinator(
         if (socket !== activeSocket) return
         note(M45DiagnosticEvent.TRANSPORT_FAILED_CLOSED)
         running = false
-        cancelTimers()
-        socket.cancel()
+        state = MessagingWssState.FAILED
         activeSocket = null
         authenticatedIdentityId = null
         sentThisConnection.clear()
         recoveredAcksSentThisConnection.clear()
-        state = MessagingWssState.FAILED
+        pendingAckRetryMessageIds.clear()
+        cancelTimersAndSocket(socket)
     }
 
-    private fun cancelTimers() {
-        scheduledReconnect?.cancel()
+    /**
+     * Detach timer references before external cancel callbacks; always attempt every
+     * cancellation. Any thrown teardown result is sticky and prevents future starts.
+     */
+    private fun cancelTimersAndSocket(socket: MessagingSocket?): Throwable? {
+        val tasks = listOf(
+            scheduledReconnect, authenticationTimeout, sendAcceptanceTimeout, ackRetryTask,
+        )
         scheduledReconnect = null
-        authenticationTimeout?.cancel()
         authenticationTimeout = null
-        cancelSendAcceptanceTimeout()
-        cancelAckRetry()
+        sendAcceptanceTimeout = null
+        ackRetryTask = null
+        var failure: Throwable? = null
+        for (task in tasks) {
+            try {
+                task?.cancel()
+            } catch (error: Throwable) {
+                val prior = failure
+                if (prior == null) failure = error else prior.addSuppressed(error)
+            }
+        }
+        try {
+            socket?.cancel()
+        } catch (error: Throwable) {
+            val prior = failure
+            if (prior == null) failure = error else prior.addSuppressed(error)
+        }
+        if (failure != null) uncertainSocketShutdown = true
+        return failure
     }
 
     private fun requireAuthenticatedIdentity(): ByteArray =
