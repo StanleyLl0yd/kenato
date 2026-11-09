@@ -1,0 +1,55 @@
+name: M5 Olm 0.10 to 0.11 session migration (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-vodozemac-compatibility.yml"
+      - "native/session-engine/**"
+      - "native/session-jni/**"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  olm-interop:
+    name: Legacy Olm account/session recovery and mixed-version ratchet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout patched candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkout exact legacy public M3 source without production secrets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fe236eec8a50ebd0309f879886e45e620bb7ddcd
+          path: legacy
+          persist-credentials: false
+      - name: Install exact old and patched Rust toolchains
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup toolchain install 1.96.0 --profile minimal
+      - name: Prepare synthetic-only cross-version fixture
+        run: |
+          mkdir -p legacy/native/session-engine/examples
+          cp native/session-engine/examples/m3_pickle_compat.rs legacy/native/session-engine/examples/
+          mkdir -p "$RUNNER_TEMP/kenato-synthetic-olm"
+          chmod 700 "$RUNNER_TEMP/kenato-synthetic-olm"
+      - name: Produce old 0.10.0 Olm account/session pickles
+        run: |
+          grep -F 'vodozemac = { version = "=0.10.0"' legacy/native/session-engine/Cargo.toml
+          cargo +1.85.0 run --quiet --locked --manifest-path legacy/native/session-engine/Cargo.toml --example m3_pickle_compat -- create "$RUNNER_TEMP/kenato-synthetic-olm"
+      - name: Reopen old pickles and advance ratchet using patched 0.11.2
+        run: |
+          grep -F 'vodozemac = { version = "=0.11.2"' native/session-engine/Cargo.toml
+          cargo +1.96.0 run --quiet --locked --manifest-path native/session-engine/Cargo.toml --example m3_pickle_compat -- upgrade "$RUNNER_TEMP/kenato-synthetic-olm"
+      - name: Confirm older client decrypts updated client's reply
+        run: |
+          cargo +1.85.0 run --quiet --locked --manifest-path legacy/native/session-engine/Cargo.toml --example m3_pickle_compat -- legacy "$RUNNER_TEMP/kenato-synthetic-olm"
+      - name: Delete all synthetic test key material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/kenato-synthetic-olm"
