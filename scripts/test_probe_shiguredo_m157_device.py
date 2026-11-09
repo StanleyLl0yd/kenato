@@ -92,6 +92,33 @@ class DeviceTests(unittest.TestCase):
                 probe.audit_apk_16k_zip_alignment(Path(directory) / "app.apk",
                            sdk=directory, runner=lambda *a, **k: ok_but_incomplete)
 
+    def test_newer_m157_device_build_rejects_stale_asset_before_gradle_or_apk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            wrapper = Path(directory) / "gradlew"
+            wrapper.write_text("#!/bin/sh\n")
+            target = Path(directory) / "not-authorized.apk"
+
+            def wrong_old_asset(url, destination, *, max_bytes):
+                self.assertEqual(url, probe.vendor.PATCH_RELEASE_URL)
+                destination.write_bytes(b"wrong-old-file")
+                return probe.vendor.EXPECTED_SHA256, probe.vendor.EXPECTED_SIZE
+
+            with patch.object(probe, "write_device_probe") as writer:
+                with self.assertRaises(probe.vendor.CandidateProbeError):
+                    probe.build(wrapper, target, downloader=wrong_old_asset,
+                                tag=probe.vendor.PATCH_TAG)
+                writer.assert_not_called()
+            self.assertFalse(target.exists())
+
+    def test_device_probe_unreviewed_tag_never_requests_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            wrapper = Path(directory) / "gradlew"
+            wrapper.write_text("#!/bin/sh\n")
+            with patch.object(probe.evidence, "download_snapshot") as downloader:
+                with self.assertRaises(probe.vendor.CandidateProbeError):
+                    probe.build(wrapper, None, tag="m158.unreviewed")
+                downloader.assert_not_called()
+
     def test_corrupt_vendor_digest_blocks_build(self):
         with tempfile.TemporaryDirectory() as directory:
             wrapper = Path(directory) / "gradlew"
