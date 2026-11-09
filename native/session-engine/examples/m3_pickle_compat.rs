@@ -5,7 +5,12 @@ use kenato_session_engine::{
     EncryptedSnapshot, create_account, create_inbound_session, create_outbound_session,
     decrypt_session, encrypt_session, inspect_account,
 };
-use std::{env, error::Error, fs, io, path::{Path, PathBuf}};
+use std::{
+    env,
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 fn write(root: &Path, name: &str, value: &[u8]) -> io::Result<()> {
     fs::write(root.join(name), value)
@@ -16,7 +21,11 @@ fn read(root: &Path, name: &str) -> io::Result<Vec<u8>> {
 }
 
 fn save_snapshot(root: &Path, name: &str, snapshot: &EncryptedSnapshot) -> io::Result<()> {
-    write(root, &format!("{name}.pickle"), snapshot.ciphertext().as_bytes())?;
+    write(
+        root,
+        &format!("{name}.pickle"),
+        snapshot.ciphertext().as_bytes(),
+    )?;
     write(root, &format!("{name}.key"), snapshot.pickle_key())
 }
 
@@ -41,7 +50,10 @@ fn load_message(root: &Path, name: &str) -> Result<(u32, Vec<u8>), Box<dyn Error
     }
     let mut encoded = [0u8; 4];
     encoded.copy_from_slice(&bytes);
-    Ok((u32::from_be_bytes(encoded), read(root, &format!("{name}.wire"))?))
+    Ok((
+        u32::from_be_bytes(encoded),
+        read(root, &format!("{name}.wire"))?,
+    ))
 }
 
 fn create_legacy(root: &Path) -> Result<(), Box<dyn Error>> {
@@ -56,7 +68,8 @@ fn create_legacy(root: &Path) -> Result<(), Box<dyn Error>> {
         b"kenato-versioned-initial-control",
     )?;
     let inbound = create_inbound_session(
-        bob.snapshot.ciphertext(), bob.snapshot.pickle_key(),
+        bob.snapshot.ciphertext(),
+        bob.snapshot.pickle_key(),
         &alice.public.identity.curve25519,
         outbound.initial_message.message_type,
         &outbound.initial_message.ciphertext,
@@ -64,7 +77,8 @@ fn create_legacy(root: &Path) -> Result<(), Box<dyn Error>> {
     assert_eq!(inbound.plaintext, b"kenato-versioned-initial-control");
     assert_eq!(outbound.session_id, inbound.session_id);
     let old_reply = encrypt_session(
-        inbound.session.ciphertext(), inbound.session.pickle_key(),
+        inbound.session.ciphertext(),
+        inbound.session.pickle_key(),
         b"legacy-to-patched-message",
     )?;
 
@@ -74,7 +88,12 @@ fn create_legacy(root: &Path) -> Result<(), Box<dyn Error>> {
     write(root, "bob-id", &bob.public.identity.curve25519)?;
     save_snapshot(root, "alice-session", &outbound.session)?;
     save_snapshot(root, "bob-session", &old_reply.session)?;
-    save_message(root, "legacy-reply", old_reply.message.message_type, &old_reply.message.ciphertext)?;
+    save_message(
+        root,
+        "legacy-reply",
+        old_reply.message.message_type,
+        &old_reply.message.ciphertext,
+    )?;
     Ok(())
 }
 
@@ -82,11 +101,17 @@ fn upgrade_with_patched(root: &Path) -> Result<(), Box<dyn Error>> {
     let (alice_account, alice_key) = load_snapshot(root, "alice-account")?;
     let (bob_account, bob_key) = load_snapshot(root, "bob-account")?;
     assert_eq!(
-        inspect_account(&alice_account, &alice_key)?.identity.curve25519.as_slice(),
+        inspect_account(&alice_account, &alice_key)?
+            .identity
+            .curve25519
+            .as_slice(),
         read(root, "alice-id")?,
     );
     assert_eq!(
-        inspect_account(&bob_account, &bob_key)?.identity.curve25519.as_slice(),
+        inspect_account(&bob_account, &bob_key)?
+            .identity
+            .curve25519
+            .as_slice(),
         read(root, "bob-id")?,
     );
 
@@ -95,16 +120,28 @@ fn upgrade_with_patched(root: &Path) -> Result<(), Box<dyn Error>> {
     let received = decrypt_session(&alice, &key, old_type, &old_message)?;
     assert_eq!(received.plaintext, b"legacy-to-patched-message");
     // Migration never needs to replay the same ciphertext after committed advancement.
-    assert!(decrypt_session(
-        received.session.ciphertext(), received.session.pickle_key(), old_type, &old_message,
-    ).is_err());
+    assert!(
+        decrypt_session(
+            received.session.ciphertext(),
+            received.session.pickle_key(),
+            old_type,
+            &old_message,
+        )
+        .is_err()
+    );
 
     let new_reply = encrypt_session(
-        received.session.ciphertext(), received.session.pickle_key(),
+        received.session.ciphertext(),
+        received.session.pickle_key(),
         b"patched-to-legacy-message",
     )?;
     save_snapshot(root, "alice-patched-session", &new_reply.session)?;
-    save_message(root, "patched-reply", new_reply.message.message_type, &new_reply.message.ciphertext)?;
+    save_message(
+        root,
+        "patched-reply",
+        new_reply.message.message_type,
+        &new_reply.message.ciphertext,
+    )?;
     Ok(())
 }
 
@@ -113,15 +150,26 @@ fn accept_patched_from_legacy(root: &Path) -> Result<(), Box<dyn Error>> {
     let (new_type, new_message) = load_message(root, "patched-reply")?;
     let received = decrypt_session(&bob, &key, new_type, &new_message)?;
     assert_eq!(received.plaintext, b"patched-to-legacy-message");
-    assert!(decrypt_session(
-        received.session.ciphertext(), received.session.pickle_key(), new_type, &new_message,
-    ).is_err());
+    assert!(
+        decrypt_session(
+            received.session.ciphertext(),
+            received.session.pickle_key(),
+            new_type,
+            &new_message,
+        )
+        .is_err()
+    );
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let operation = env::args().nth(1).ok_or("Expected create, upgrade or legacy")?;
-    let root: PathBuf = env::args().nth(2).ok_or("Missing private fixture directory")?.into();
+    let operation = env::args()
+        .nth(1)
+        .ok_or("Expected create, upgrade or legacy")?;
+    let root: PathBuf = env::args()
+        .nth(2)
+        .ok_or("Missing private fixture directory")?
+        .into();
     match operation.as_str() {
         "create" => create_legacy(&root),
         "upgrade" => upgrade_with_patched(&root),
