@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 jni = { version = "=0.21.1", default-features = false }
 kenato-session-engine = { path = "../session-engine" }
-zeroize = "=1.8.2"
+zeroize = "=1.9.1"
 
 [lints.rust]
 # JNI needs stable, unmangled exported symbols. Repository policy separately
