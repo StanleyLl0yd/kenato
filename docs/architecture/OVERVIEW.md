@@ -42,7 +42,7 @@ Android stack in the current architecture:
 
 - Kotlin / Jetpack Compose;
 - Android Keystore;
-- vodozemac 0.10.0 Olm behind a Kenato-owned Rust/JNI boundary;
+- vodozemac 0.11.2 Olm behind a Kenato-owned Rust/JNI boundary;
 - app-private atomic identity/contact/session persistence;
 - Coroutines / Flow where asynchronous application integration requires them;
 - implemented M4 messaging transport/history layers;
@@ -141,7 +141,7 @@ The mailbox does not trust caller-supplied raw protobuf bytes separately from va
 
 ## E2EE session boundary
 
-M3 uses exact-pinned vodozemac 0.10.0 Olm/Double Ratchet through a minimal Rust/JNI bridge. It provides the crypto/session primitive used by M4:
+M3 uses exact-pinned vodozemac 0.11.2 Olm/Double Ratchet through a minimal Rust/JNI bridge. It provides the crypto/session primitive used by M4:
 
 - create/restore the local Olm account;
 - publish/replenish bounded authenticated public OTK state;

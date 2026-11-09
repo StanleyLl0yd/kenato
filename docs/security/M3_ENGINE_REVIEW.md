@@ -6,6 +6,10 @@ Final verification: 2026-09-13
 
 This review records both the dependency/security decision behind ADR 0009 and the Android/native implementation merged through #34/#40, together with the final repository-wide #35 audit/remediation and exact-main verification. M3 is complete; later post-M3 hardening must preserve the same trust, persistence, and scope boundaries unless an explicit reviewed decision changes them.
 
+## Security update after #189 merge (2026-11-09)
+
+This document records the **original 0.10.0 acceptance** and must not be mistaken for a renewed independent review of 0.11.2. RUSTSEC-2026-0451 (2026-11-06) identified incomplete zeroization of Olm root/chain KDF output. [Issue #188](https://github.com/StanleyLl0yd/kenato/issues/188) tracks the finding; merged [PR #189](https://github.com/StanleyLl0yd/kenato/pull/189) switched to **vodozemac 0.11.2**, **zeroize 1.9.1**, **Rust 1.96.0**, exact Cargo locks and unchanged 3-ABI Android/JNI constraints. The separately executed old/new Olm fixture passes account/session pickle restoration, forward/reverse messaging and replay rejection. The exact-head #189 checks finished 14/14 PASS, and physical Keystore/JNI evidence remains mandatory before a voice release. This historical document is not itself a new independent upstream audit.
+
 ## Requirements
 
 The M3 engine must provide a mature asynchronous one-to-one Double Ratchet implementation while preserving these Kenato constraints:
@@ -19,7 +23,7 @@ The M3 engine must provide a mature asynchronous one-to-one Double Ratchet imple
 - dependency licensing compatible with ADR 0006 without making an implicit repository-license decision;
 - Android support is reproducibly buildable and security-reviewed.
 
-## Selected: vodozemac 0.10.0 / Olm
+## Originally selected: vodozemac 0.10.0 / Olm (historical)
 
 Upstream release: <https://github.com/matrix-org/vodozemac/releases/tag/0.10.0>
 
@@ -46,7 +50,7 @@ Kenato does not expose an API that changes those constants or low-level message-
 
 ## Implemented dependency and native boundary
 
-The M3 implementation exact-pins the native dependency and build boundary:
+At original M3 completion, the following native dependency and build boundary was exact-pinned (superseded in protected main by the security update above):
 
 - `vodozemac = =0.10.0`, with the reviewed feature surface;
 - Rust `1.85.0` for both native crates;
