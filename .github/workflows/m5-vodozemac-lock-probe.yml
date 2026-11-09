@@ -1,0 +1,46 @@
+name: M5 vodozemac 0.11.2 migration probe (draft only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-vodozemac-lock-probe.yml"
+      - "native/session-engine/Cargo.toml"
+      - "native/session-jni/Cargo.toml"
+
+permissions: {}
+
+jobs:
+  dependency-probe:
+    name: Generate exact Rust locks and compile native core (research)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact research candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.96.0 for patched vodozemac
+        run: rustup toolchain install 1.96.0 --profile minimal --component clippy --component rustfmt
+      - name: Resolve exact pinned 0.11.2 dependencies for both native crates
+        run: |
+          cargo +1.96.0 update --manifest-path native/session-engine/Cargo.toml -p vodozemac --precise 0.11.2
+          cargo +1.96.0 update --manifest-path native/session-jni/Cargo.toml -p vodozemac --precise 0.11.2
+          grep -A 3 '^name = "vodozemac"$' native/session-engine/Cargo.lock
+          grep -A 3 '^name = "vodozemac"$' native/session-jni/Cargo.lock
+      - name: Print exact resolved lockfiles (temporary deterministic migration probe)
+        run: |
+          echo KENATO_LOCK_BEGIN_ENGINE
+          cat native/session-engine/Cargo.lock
+          echo KENATO_LOCK_END_ENGINE
+          echo KENATO_LOCK_BEGIN_JNI
+          cat native/session-jni/Cargo.lock
+          echo KENATO_LOCK_END_JNI
+      - name: Check full Rust native core at fixed version
+        run: |
+          cargo +1.96.0 check --manifest-path native/session-engine/Cargo.toml --locked
+          cargo +1.96.0 test --manifest-path native/session-engine/Cargo.toml --locked
+          cargo +1.96.0 check --manifest-path native/session-jni/Cargo.toml --locked
+          cargo +1.96.0 test --manifest-path native/session-jni/Cargo.toml --locked
