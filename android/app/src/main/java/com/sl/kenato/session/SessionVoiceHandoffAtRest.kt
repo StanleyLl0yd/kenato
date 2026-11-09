@@ -189,8 +189,9 @@ internal class SessionVoiceHandoffAtRest(
         const val IV_BYTES = 12
         const val GCM_TAG_BITS = 128
         const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
-        // The voice signaling wire is bounded below M3's 32-KiB handoff field.
-        const val MAX_VOICE_PLAINTEXT_BYTES = 16 * 1024
+        // The canonical voice record is at most 24 KiB, including SDP and wire fields.
+        // Its sealed envelope fits inside M3's existing 32-KiB handoff field.
+        const val MAX_VOICE_PLAINTEXT_BYTES = 24 * 1024
         const val MAX_ENCRYPTED_BYTES = MAX_VOICE_PLAINTEXT_BYTES + GCM_TAG_BYTES
     }
 }
