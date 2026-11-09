@@ -3,6 +3,8 @@
 from pathlib import Path
 
 workflow = Path(".github/workflows/build-server-arm64.yml").read_text(encoding="utf-8")
+if "go 1.27.3" not in Path("server/go.mod").read_text(encoding="utf-8").splitlines():
+    raise SystemExit("Go module must refuse unpatched 1.27.x local toolchains")
 required = (
     "workflow_dispatch:",
     '''push:
