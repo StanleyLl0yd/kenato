@@ -34,15 +34,24 @@ recovery is independently implemented. The M4 text recovery intentionally
 fails closed if it sees an outbound v2 record.
 
 Signed consent is not inferred from relay behavior and no plaintext SDP/ICE
-leaves M3/M4 ciphertext. The current M3 handoff retains a temporary
-plaintext copy of the exact application record in an Android no-backup
-AtomicFile. This file is isolated by the app sandbox but **is not itself
-AES-GCM encrypted at rest** (unlike the separate durable M5 semantic event
-store). This inherited M3 trust boundary needs explicit threat-model/owner
-review before live voice staging is enabled, especially because SDP can
-contain private local-network addresses. The ciphertext sent to the server
-never includes this plaintext outside M3 encryption. Only one pending voice
-event is allowed during this foundation phase.
+leaves M3/M4 ciphertext. The original M3 handoff journal stored the exact
+application plaintext in an Android no-backup AtomicFile. #187 hardens that
+specific **voice-v2** trust boundary: before the atomic commit, the M3
+repository seals each pending voice application plaintext with a fresh
+AES-256-GCM data key, wraps that key with the existing non-exportable M3
+Android Keystore key, and authenticates owner/contact/peer/message/direction
+plus the exact M4 envelope digest. The sealed record and advanced Olm
+ratchet remain in one AtomicFile write, and approved recovery restores
+plaintext only in process memory. Corrupted, mismatched, missing-key, or
+legacy raw voice-v2 journal entries fail closed rather than silently migrate.
+Existing M4 text handoff journal bytes are intentionally unchanged at rest.
+
+This protection does **not** cover managed-process memory, whole-state
+rollback (#118), or the separate semantic store, and is not proof of real
+Android Keystore/device safety (#87). Plaintext SDP may include private
+local-network addresses; it must not reach logs, server plaintext, crash
+reports or UI histories. This stage is not wired into live voice calls;
+only one pending voice event is allowed during the foundation phase.
 
 The optional `VoiceOutboundHandoffRecovery` and `MessagingRecoveryCoordinator.outboundVoice`
 adapter now recognize the committed v2 record without re-encrypting it,
