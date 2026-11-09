@@ -1,6 +1,6 @@
-# Go 1.27.2 Linux ARM64 backend rebuild and guarded rollout
+# Go 1.27.3 Linux ARM64 backend rebuild and guarded rollout
 
-Status: **build preparation only** for #91. No live deployment, backend
+Status: **build preparation only** for #91. Go 1.27.3 addresses CVE-2026-111943 in `crypto/x509` (official security release 2026-10-19). Older 1.27.2 artifacts are not authorized for this upgrade; generate a new exact-main artifact first. No live deployment, backend
 feature change, new Kenato server, release signing, TURN, or M6.
 
 ## Produce and verify a reviewed-source binary
@@ -10,7 +10,7 @@ later rebuilds may be run manually from **Verified Go ARM64 backend artifact**.
 A push upload is never deployment approval. Require successful exact-main
 CI/security checks before trusting its output. The job rejects non-`main`
 refs; its checkout is checked against
-`GITHUB_SHA`. The pinned Go 1.27.2 toolchain builds with
+`GITHUB_SHA`. The pinned Go 1.27.3 toolchain builds with
 `GOTOOLCHAIN=local`, `GOOS=linux`, `GOARCH=arm64`, `CGO_ENABLED=0`,
 `-trimpath`, and embedded VCS revision. Go unit tests, module verification,
 ELF architecture, build metadata, clean tree and SHA-256 verification must
