@@ -9,6 +9,9 @@ on:
       - "scripts/audit_kenato_jvm_target.py"
       - "scripts/test_audit_kenato_jvm_target.py"
       - "android/app/build.gradle.kts"
+      # Changes to M3 session durability must exercise full Android/JVM and JNI builds.
+      - "android/app/src/main/java/com/sl/kenato/session/**"
+      - "android/app/src/test/java/com/sl/kenato/session/**"
       - "gradle/libs.versions.toml"
       - "gradle/wrapper/gradle-wrapper.properties"
       - "settings.gradle.kts"
