@@ -3,6 +3,8 @@
 from pathlib import Path
 
 workflow = Path(".github/workflows/build-server-arm64.yml").read_text(encoding="utf-8")
+if "go 1.27.3" not in Path("server/go.mod").read_text(encoding="utf-8").splitlines():
+    raise SystemExit("Go module must refuse unpatched 1.27.x local toolchains")
 required = (
     "workflow_dispatch:",
     '''push:
@@ -12,7 +14,7 @@ required = (
     "permissions: {}",
     'test "$GITHUB_REF" = "refs/heads/main"',
     'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
-    'go-version: "1.27.2"',
+    'go-version: "1.27.3"',
     "GOTOOLCHAIN: local",
     "GOOS: linux",
     "GOARCH: arm64",
@@ -25,10 +27,23 @@ required = (
     "readelf -h",
     "vcs.revision=$GITHUB_SHA",
     "sha256sum --check SHA256SUMS",
+    "cat dist/SHA256SUMS",
     "PROVENANCE.txt",
     "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "retention-days: 14",
 )
+# CI, CodeQL and the artifact producer must all consume the same patched Go.
+# The server/go.mod language floor does not override the pinned build toolchain.
+expected_pins = {
+    ".github/workflows/build-server-arm64.yml": 1,
+    ".github/workflows/ci.yml": 3,
+    ".github/workflows/codeql.yml": 1,
+}
+for workflow_path, count in expected_pins.items():
+    content = Path(workflow_path).read_text(encoding="utf-8")
+    if content.count('go-version: "1.27.3"') != count or 'go-version: "1.27.2"' in content:
+        raise SystemExit(f"Go toolchain security pin drift: {workflow_path}")
+
 for token in required:
     if token not in workflow:
         raise SystemExit(f"ARM64 verified-build workflow missing: {token}")
