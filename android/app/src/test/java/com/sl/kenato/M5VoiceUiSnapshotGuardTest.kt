@@ -104,6 +104,8 @@ class M5VoiceUiSnapshotGuardTest {
         assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr(null, "peer-a", 2L, 2L))
         // A picker/decode initiated before a completed reset cannot repopulate stale proof text.
         assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 2L, 3L))
+        // In-flight reset/other worker operations must not accept async stale QR results.
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 2L, 2L, true))
         // Foreground changes do not invalidate an otherwise legitimate picker return.
         assertEquals(true, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 3L, 3L))
     }
