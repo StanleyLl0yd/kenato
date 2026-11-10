@@ -105,15 +105,16 @@ Exit: `0.0.1` remains the immutable signed baseline; the acceptance-capable nume
 
 ## M5 — Voice Core
 
-Status: **Active** (2026-10-09; tracker #84). First slice: deterministic client-side call control. No voice feature is complete until reviewed signaling, media, connectivity and physical tests pass. Owner's no-new-server-component requirement conflicts with the roadmap's coturn fallback; do not silently add server infrastructure. See `docs/development/M5_CALL_STATE.md`.
+Status: **Active** (2026-10-09; tracker #84). **Delivery scope frozen 2026-11-10:** one verified, consented, end-to-end encrypted, one-to-one **audio** call between two physical Android phones. Focus on integrating existing components into an auditable call path, not expanding independent research prototypes. This does not relax the exact-native/vendor, cryptographic, storage-continuity, licensing, or physical-release gates (#88, #116, #87).
 
-- audio-only WebRTC;
-- Opus;
-- authenticated encrypted call signaling;
-- ICE/STUN;
-- P2P connectivity;
-- coturn fallback;
-- deterministic call state machine.
+- Android single-owner, durable encrypted signaling/ACK/effect admission, explicit M2-pinned identity and single-use voice-v2 consent;
+- audio-only WebRTC + Opus; one exact-keyed PeerConnection, explicit microphone permission and deterministic teardown;
+- **direct P2P ICE only** for M5: no Kenato TURN/coturn/server component and no implicit third-party STUN service. STUN is a separate privacy/architecture decision. Without a relay, CGNAT/restrictive NAT failures are an accepted, user-visible limitation, not a reason for a plaintext downgrade;
+- deterministic call state machine and failure handling; no M6 notifications, background-call feature set, or video implementation;
+- independently approved exact ARM64 WebRTC binary/source/security/license posture and real-device JNI/audio checks. Preserve **future video-capable vendor APIs** as a selection constraint; **building a camera/video proof of concept is not an M5 acceptance test**;
+- final exact-head/exact-main CI and repository-wide security review, followed by documented P01-P24 physical acceptance. No unapproved voice APK or modification of signed `v0.0.4`.
+
+Exit: #116 actual Android call path, #88 permitted media adapter, and #87 two-phone security/physical acceptance all pass; separately verify #91 deployed OCI backend. Keep M5 OPEN until then, and M6 closed. The former generic roadmap's coturn fallback is explicitly deferred, not silently implemented. See `docs/development/M5_CALL_STATE.md` and `docs/security/M5_PHYSICAL_ACCEPTANCE_PROTOCOL.md`.
 
 ## M6 — Real Mobile Calling
 
