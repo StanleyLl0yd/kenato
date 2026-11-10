@@ -236,6 +236,16 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             clearEphemeralVoiceQr()
         }
 
+    fun revokeVoiceCapability(peerIdentityId: String) =
+        launchOperation("Local call approval and pending challenge cleared") {
+            val currentPeer = selectedPeerBytes()
+            if (encodePeerId(currentPeer) != peerIdentityId) {
+                throw IllegalStateException("Selected contact changed; reset was not applied")
+            }
+            voiceCapability.revokeLocalCapability(currentPeer)
+            clearEphemeralVoiceQr()
+        }
+
     fun refresh() = launchOperation("State refreshed") { }
 
     fun clearDiagnostics() = launchOperation("Local diagnostic journal cleared") {
