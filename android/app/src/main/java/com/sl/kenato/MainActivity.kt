@@ -95,7 +95,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class VoicePhotoRequest(val kind: VoiceCapabilityQrPhotoKind, val peerId: String? = null)
+private data class VoicePhotoRequest(
+    val kind: VoiceCapabilityQrPhotoKind,
+    val peerId: String? = null,
+    val consentResetEpoch: Long = 0L,
+)
 private data class VoicePhotoSelection(val uri: Uri, val request: VoicePhotoRequest)
 
 @Composable
@@ -165,6 +169,21 @@ private fun KenatoApp(
         voicePhotoError = null
     }
 
+    // An approved local reset also invalidates a picker request or decode still in flight.
+    // Do not use the foreground epoch: launching the Android picker can pause the Activity.
+    LaunchedEffect(state.voiceConsentResetEpoch) {
+        // A voice reset must not discard an unrelated M2 invitation image import.
+        if (requestedVoicePhoto?.kind != VoiceCapabilityQrPhotoKind.INVITE) {
+            requestedVoicePhoto = null
+        }
+        if (selectedVoicePhoto?.request?.kind != VoiceCapabilityQrPhotoKind.INVITE) {
+            selectedVoicePhoto = null
+        }
+        voiceChallengeInput = ""
+        voiceProofInput = ""
+        voicePhotoError = null
+    }
+
     LaunchedEffect(selectedVoicePhoto) {
         val selection = selectedVoicePhoto ?: return@LaunchedEffect
         try {
@@ -175,7 +194,13 @@ private fun KenatoApp(
             val inviteTarget = selection.request.kind == VoiceCapabilityQrPhotoKind.INVITE &&
                 selectedScreen == "Contacts"
             val voiceTarget = selection.request.kind != VoiceCapabilityQrPhotoKind.INVITE &&
-                controller.state.selectedPeerIdentityId == selection.request.peerId
+                M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr(
+                    selection.request.peerId,
+                    controller.state.selectedPeerIdentityId,
+                    selection.request.consentResetEpoch,
+                    controller.state.voiceConsentResetEpoch,
+                    controller.state.busy,
+                )
             if (inviteTarget || voiceTarget) {
                 when (selection.request.kind) {
                     VoiceCapabilityQrPhotoKind.INVITE -> {
@@ -194,7 +219,13 @@ private fun KenatoApp(
             ) {
                 invitePhotoError = "The image does not contain a valid Kenato invitation QR."
             } else if (selection.request.kind != VoiceCapabilityQrPhotoKind.INVITE &&
-                controller.state.selectedPeerIdentityId == selection.request.peerId
+                M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr(
+                    selection.request.peerId,
+                    controller.state.selectedPeerIdentityId,
+                    selection.request.consentResetEpoch,
+                    controller.state.voiceConsentResetEpoch,
+                    controller.state.busy,
+                )
             ) {
                 voicePhotoError = "The selected image has no readable matching Kenato voice QR."
             }
@@ -570,7 +601,7 @@ private fun KenatoApp(
                         TextButton(
                             onClick = {
                                 requestedVoicePhoto = VoicePhotoRequest(
-                                    VoiceCapabilityQrPhotoKind.CHALLENGE, peer,
+                                    VoiceCapabilityQrPhotoKind.CHALLENGE, peer, state.voiceConsentResetEpoch,
                                 )
                                 voicePhotoError = null
                                 voicePhotoPicker.launch("image/*")
@@ -608,7 +639,7 @@ private fun KenatoApp(
                         TextButton(
                             onClick = {
                                 requestedVoicePhoto = VoicePhotoRequest(
-                                    VoiceCapabilityQrPhotoKind.PROOF, peer,
+                                    VoiceCapabilityQrPhotoKind.PROOF, peer, state.voiceConsentResetEpoch,
                                 )
                                 voicePhotoError = null
                                 voicePhotoPicker.launch("image/*")

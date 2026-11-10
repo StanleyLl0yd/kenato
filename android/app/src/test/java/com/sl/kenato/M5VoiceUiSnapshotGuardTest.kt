@@ -96,4 +96,38 @@ class M5VoiceUiSnapshotGuardTest {
         assertNull(next.voiceProofQr)
         assertEquals(6L, next.voiceUiEpoch)
     }
+
+    @Test
+    fun voicePhotoImportIsFencedByContactAndSuccessfulConsentReset() {
+        assertEquals(true, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 2L, 2L))
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-b", 2L, 2L))
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr(null, "peer-a", 2L, 2L))
+        // A picker/decode initiated before a completed reset cannot repopulate stale proof text.
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 2L, 3L))
+        // In-flight reset/other worker operations must not accept async stale QR results.
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 2L, 2L, true))
+        // Foreground changes do not invalidate an otherwise legitimate picker return.
+        assertEquals(true, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr("peer-a", "peer-a", 3L, 3L))
+    }
+
+    @Test
+    fun olderSnapshotCannotRollbackTheLocalConsentResetFence() {
+        val current = M45AcceptanceUiState(
+            selectedPeerIdentityId = "peer-a",
+            voiceUiEpoch = 8L,
+            voiceConsentResetEpoch = 3L,
+            busy = true,
+        )
+        val stale = current.copy(
+            voiceConsentResetEpoch = 2L,
+            voiceChallengeQr = "old-challenge",
+            voiceProofQr = "old-proof",
+            busy = false,
+        )
+        val updated = M5VoiceUiSnapshotGuard.redactStaleProofs(current, stale, true)
+        assertEquals(3L, updated.voiceConsentResetEpoch)
+        assertNull(updated.voiceChallengeQr)
+        assertNull(updated.voiceProofQr)
+        assertEquals(false, updated.busy)
+    }
 }
