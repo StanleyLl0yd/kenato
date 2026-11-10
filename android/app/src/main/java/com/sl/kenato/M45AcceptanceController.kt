@@ -9,7 +9,6 @@ import androidx.compose.runtime.setValue
 import com.sl.kenato.contact.ContactLocalState
 import com.sl.kenato.contact.InviteUriCodec
 import com.sl.kenato.contact.M2InviteDescriptor
-import com.sl.kenato.contact.SharedPreferencesContactStateStore
 import com.sl.kenato.diagnostics.M45DiagnosticJournal
 import com.sl.kenato.identity.LocalIdentityRepository
 import com.sl.kenato.messaging.MessagingConversationDirection
@@ -60,7 +59,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val identityRepository = LocalIdentityRepository.create(appContext)
     private val diagnosticJournal = M45DiagnosticJournal(appContext)
-    private val contactState = ContactLocalState(SharedPreferencesContactStateStore(appContext))
+    private val contactState = ContactLocalState.create(appContext)
     private val voiceCapability by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         M5VoiceCapabilityLocalBridge(appContext, identityRepository, contactState)
     }
