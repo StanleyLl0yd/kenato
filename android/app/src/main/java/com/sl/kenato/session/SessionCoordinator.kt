@@ -11,7 +11,6 @@ import com.sl.kenato.contact.InviteUriCodec
 import com.sl.kenato.contact.LocalContactIdentityProvider
 import com.sl.kenato.contact.M2InviteDescriptor
 import com.sl.kenato.contact.PinnedContact
-import com.sl.kenato.contact.SharedPreferencesContactStateStore
 import com.sl.kenato.contact.toUnsignedContactBundle
 import com.sl.kenato.identity.LocalIdentityRepository
 import java.net.URI
@@ -615,7 +614,7 @@ internal class SessionCoordinator(
             return SessionCoordinator(
                 identity = ContactSessionIdentityBoundary(identityProvider),
                 contacts = LocalSessionContactBoundary(
-                    ContactLocalState(SharedPreferencesContactStateStore(context)),
+                    ContactLocalState.create(context),
                 ),
                 sessions = LocalSessionBoundary(sessionRepository),
                 transport = HttpSessionTransport(serviceOrigin),
