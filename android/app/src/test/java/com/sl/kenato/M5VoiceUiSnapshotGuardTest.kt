@@ -207,6 +207,8 @@ class M5VoiceUiSnapshotGuardTest {
         assertEquals(3L, updated.voiceConsentResetEpoch)
         assertNull(updated.voiceChallengeQr)
         assertNull(updated.voiceProofQr)
-        assertEquals(false, updated.busy)
+        // A stale snapshot cannot release an unrelated in-flight operation;
+        // only settleStaleOperation with the matching ticket may do so.
+        assertEquals(true, updated.busy)
     }
 }
