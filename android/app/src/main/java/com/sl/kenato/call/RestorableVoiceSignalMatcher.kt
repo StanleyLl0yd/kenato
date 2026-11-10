@@ -47,6 +47,63 @@ internal class RestorableVoiceSignalMatcher(
         } else null
     }
 
+    /**
+     * Isolated KDL1 research path: pair the *same* canonical semantic event
+     * and journal permit, then commit both the legacy claim and the separate
+     * rollback-resistant epoch ledger BEFORE returning a proposed event.
+     *
+     * A failed second commit loses this effect, never dispatches twice.
+     * This is not a production effect runner: permission revalidation and
+     * M2/M3/WSS ownership are still missing. No Android factory calls this.
+     */
+    @Synchronized
+    fun claimRestorableCandidateWithEpochLedger(
+        ownerIdentityId: ByteArray,
+        peerIdentityId: ByteArray,
+        messageId: ByteArray,
+        nowEpochSeconds: Long,
+        continuity: VoiceDispatchContinuityLedger,
+    ): VoiceSignalPlaintext? {
+        if (peerIdentityId.size != 32 || messageId.size != 16) {
+            throw RestorableVoiceSignalMismatchException("Invalid protected voice dispatch key")
+        }
+        val matched = verifiedCandidates(ownerIdentityId, nowEpochSeconds).singleOrNull {
+            MessageDigest.isEqual(it.signal.senderIdentityId, peerIdentityId) &&
+                MessageDigest.isEqual(it.signal.messageId, messageId)
+        } ?: return null
+        if (!replay.claimLiveDispatchPermit(ownerIdentityId, matched.permit, nowEpochSeconds)) {
+            return null
+        }
+        if (!continuity.claim(ownerIdentityId, matched.permit)) return null
+
+        // A separately encrypted semantic file may change after the initial
+        // matcher snapshot but before the KDL1/fsync commitment. Never return
+        // the earlier plaintext if the authenticated counterpart changed.
+        // A mismatch consumes this permit and refuses an effect.
+        // A different semantic-only orphan could appear during the KDL1 fsync,
+        // while this exact claimed event remains unchanged. Recheck the FULL
+        // replay/semantic bijection after the irreversible durable claim too.
+        // Failure consumes the claim and never produces a call effect.
+        verifiedCandidates(ownerIdentityId, nowEpochSeconds)
+        val current = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+            .singleOrNull {
+                MessageDigest.isEqual(it.signal.senderIdentityId, matched.signal.senderIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, matched.signal.messageId)
+            }
+        if (current == null ||
+            !MessageDigest.isEqual(current.envelopeDigest, matched.permit.envelopeDigest) ||
+            !MessageDigest.isEqual(
+                VoiceSignalingWire.encode(current.signal),
+                VoiceSignalingWire.encode(matched.signal),
+            )
+        ) {
+            throw RestorableVoiceSignalMismatchException(
+                "Durable M5 semantic state changed after protected effect claim",
+            )
+        }
+        return matched.signal
+    }
+
     @Synchronized
     fun restorableCandidates(
         ownerIdentityId: ByteArray,
@@ -73,7 +130,41 @@ internal class RestorableVoiceSignalMatcher(
         // Both stores use one immutable receive-time snapshot. This avoids creating
         // an artificial mismatch when a 90-second expiry crosses between reads.
         val permits = replay.pendingLiveDispatchPermits(ownerIdentityId, nowEpochSeconds)
+        val receipts = replay.pendingLiveReceipts(ownerIdentityId, nowEpochSeconds)
         val events = semantic.pendingLiveEventSnapshots(ownerIdentityId, nowEpochSeconds)
+
+        // A crash can leave a semantic-only encrypted event before the replay
+        // commit. Do not dispatch even ANOTHER otherwise valid call until this
+        // owner has reconciled the full durable ACK/semantic set. Compare all
+        // receipts (including suppressed/claimed OFFERs), not just the subset
+        // still eligible to create effects.
+        if (receipts.size != events.size) {
+            throw RestorableVoiceSignalMismatchException(
+                "M5 effect admission has incomplete semantic/replay receipt sets",
+            )
+        }
+        receipts.forEach { receipt ->
+            val matches = events.filter {
+                MessageDigest.isEqual(it.signal.senderIdentityId, receipt.peerIdentityId) &&
+                    MessageDigest.isEqual(it.signal.messageId, receipt.messageId)
+            }
+            if (matches.size != 1) {
+                throw RestorableVoiceSignalMismatchException(
+                    "M5 effect admission requires exactly one authenticated semantic event per receipt",
+                )
+            }
+            val counterpart = matches.single()
+            if (!MessageDigest.isEqual(counterpart.envelopeDigest, receipt.envelopeDigest) ||
+                !MessageDigest.isEqual(counterpart.signal.recipientIdentityId, ownerIdentityId) ||
+                !MessageDigest.isEqual(counterpart.signal.callId, receipt.callId) ||
+                counterpart.signal.kind != receipt.kind ||
+                counterpart.signal.expiresAtEpochSeconds != receipt.expiresAtEpochSeconds
+            ) {
+                throw RestorableVoiceSignalMismatchException(
+                    "M5 effect admission found conflicting authenticated semantic/replay metadata",
+                )
+            }
+        }
 
         // Reject a mismatched live replay receipt instead of silently skipping
         // authenticated signaling that should have a durably recoverable payload.

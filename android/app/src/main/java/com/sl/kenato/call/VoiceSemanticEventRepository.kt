@@ -208,9 +208,24 @@ internal class DurableVoiceSemanticEventRepository(
     override fun persistAuthenticatedVoiceEvent(
         ownerIdentityId: ByteArray,
         handoff: SessionMessageHandoff,
+    ) = persistAuthenticatedVoiceEventAt(ownerIdentityId, handoff, requireNow())
+
+    /**
+     * One caller-captured clock instant must govern semantic persistence and replay/ACK
+     * reconciliation. Re-reading a separate clock can create a partial commit at expiry.
+     * This opt-in entrypoint does not authorize ACKs, effects, or live voice.
+     */
+    @Synchronized
+    fun persistAuthenticatedVoiceEventAt(
+        ownerIdentityId: ByteArray,
+        handoff: SessionMessageHandoff,
+        nowEpochSeconds: Long,
     ) {
         requireOwner(ownerIdentityId)
-        val now = requireNow()
+        if (nowEpochSeconds < 0L) {
+            throw VoiceSemanticEventException("Voice semantic import clock is invalid")
+        }
+        val now = nowEpochSeconds
         if (handoff.direction != SessionStateCodec.HANDOFF_DIRECTION_INBOUND ||
             handoff.localContactId.size != SessionStateCodec.LOCAL_CONTACT_ID_BYTES
         ) {

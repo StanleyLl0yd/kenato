@@ -60,7 +60,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val identityRepository = LocalIdentityRepository.create(appContext)
     private val diagnosticJournal = M45DiagnosticJournal(appContext)
-    private val contactState = ContactLocalState(SharedPreferencesContactStateStore(appContext))
+    private val contactState = ContactLocalState.create(appContext)
     private val voiceCapability by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         M5VoiceCapabilityLocalBridge(appContext, identityRepository, contactState)
     }
@@ -79,6 +79,10 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private var foreground = false
     private var runtime: M45AcceptanceRuntime? = null
     private var runtimeOrigin: String? = null
+    // Main-thread ownership of explicit UI operations. Epoch and ticket are
+    // separate: an old-epoch completion can release only its own UI lock.
+    private var nextOperationTicket = 0L
+    private var activeOperationTicket: Long? = null
 
     var state by mutableStateOf(
         M45AcceptanceUiState(
@@ -103,6 +107,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     fun onAppForeground() {
         foreground = true
         mainHandler.removeCallbacks(pollRunnable)
+        val requestEpoch = state.voiceUiEpoch
         worker.execute {
             try {
                 if (
@@ -112,11 +117,17 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                 ) {
                     requireRuntime().startMessaging()
                 }
-                val snapshot = buildSnapshot()
-                mainHandler.post { applySnapshot(snapshot) }
+                val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
+                mainHandler.post {
+                    if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
+                        applySnapshot(snapshot)
+                    }
+                }
             } catch (error: Exception) {
                 mainHandler.post {
-                    state = state.copy(error = userError(error))
+                    if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
+                        state = state.copy(error = userError(error))
+                    }
                 }
             }
         }
@@ -156,7 +167,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     fun initializeIdentity() = launchOperation("Local identity is ready") {
-        identityRepository.loadOrCreate()
+        withLocalTrustMutation { identityRepository.loadOrCreate() }
     }
 
     fun prepareForAcceptance(onPrepared: () -> Unit = {}) =
@@ -208,8 +219,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
 
     fun sendText(text: String, onStaged: () -> Unit = {}) =
         launchOperation("Message staged for durable delivery", onSuccess = onStaged) {
-        val peer = selectedPeerBytes()
-        requireRuntime().sendText(peer, text)
+        requireRuntime().sendTextSelectingPeer({ selectedPeerBytes() }, text)
     }
 
     /**
@@ -217,27 +227,33 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
      * proof flow. None of them starts a call or probes an M4 text-only client.
      */
     fun issueVoiceCapabilityChallenge() = launchOperation("Voice capability challenge ready to share") {
-        val peer = selectedPeerBytes()
-        val challenge = voiceCapability.issueChallengeQr(peer)
-        ephemeralVoiceChallenge = challenge
-        ephemeralVoiceProof = null
-        ephemeralVoicePeerId = encodePeerId(peer)
+        withLocalTrustMutation {
+            val peer = selectedPeerBytes()
+            val challenge = voiceCapability.issueChallengeQr(peer)
+            ephemeralVoiceChallenge = challenge
+            ephemeralVoiceProof = null
+            ephemeralVoicePeerId = encodePeerId(peer)
+        }
     }
 
     fun approveAndSignVoiceCapabilityChallenge(qr: String, onSigned: () -> Unit = {}) =
         launchOperation("Signed voice capability proof ready to share", onSuccess = onSigned) {
-            val peer = selectedPeerBytes()
-            val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
-            ephemeralVoiceChallenge = null
-            ephemeralVoiceProof = proof
-            ephemeralVoicePeerId = encodePeerId(peer)
+            withLocalTrustMutation {
+                val peer = selectedPeerBytes()
+                val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
+                ephemeralVoiceChallenge = null
+                ephemeralVoiceProof = proof
+                ephemeralVoicePeerId = encodePeerId(peer)
+            }
         }
 
     fun approveAndImportVoiceCapabilityProof(qr: String, onImported: () -> Unit = {}) =
         launchOperation("Pinned voice capability proof accepted", onSuccess = onImported) {
-            val peer = selectedPeerBytes()
-            voiceCapability.approveAndImportProofQr(peer, qr.trim())
-            clearEphemeralVoiceQr()
+            withLocalTrustMutation {
+                val peer = selectedPeerBytes()
+                voiceCapability.approveAndImportProofQr(peer, qr.trim())
+                clearEphemeralVoiceQr()
+            }
         }
 
     fun revokeVoiceCapability(peerIdentityId: String, onReset: () -> Unit = {}) =
@@ -272,46 +288,91 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         onSuccess: () -> Unit = {},
         operation: () -> Unit,
     ) {
-        if (state.busy) return
+        if (state.busy || activeOperationTicket != null) return
+        check(nextOperationTicket < Long.MAX_VALUE) { "UI operation ticket exhausted" }
+        val ticket = ++nextOperationTicket
+        activeOperationTicket = ticket
         val requestEpoch = state.voiceUiEpoch
         state = state.copy(busy = true, notice = null, error = null)
         worker.execute {
             try {
                 operation()
-                val snapshot = buildSnapshot()
+                val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
+                val completedResetEpoch = voiceConsentResetEpoch
                 mainHandler.post {
-                    // Never discard an in-progress draft on a stale Activity foreground.
-                    val mayClearInput = foreground && state.voiceUiEpoch == requestEpoch
-                    applySnapshot(snapshot, notice = notice)
-                    if (mayClearInput) onSuccess()
+                    finishOperation(
+                        ticket, requestEpoch, snapshot, completedResetEpoch,
+                        notice, null, onSuccess,
+                    )
                 }
             } catch (error: Exception) {
-                val snapshot = runCatching { buildSnapshot() }.getOrNull()
+                val snapshot = runCatching {
+                    buildSnapshot().copy(voiceUiEpoch = requestEpoch)
+                }.getOrNull()
+                val message = userError(error)
+                val completedResetEpoch = voiceConsentResetEpoch
                 mainHandler.post {
-                    if (snapshot != null) {
-                        applySnapshot(snapshot, error = userError(error))
-                    } else {
-                        state = state.copy(
-                            busy = false,
-                            notice = null,
-                            error = userError(error),
-                        )
-                    }
+                    finishOperation(
+                        ticket, requestEpoch, snapshot, completedResetEpoch,
+                        null, message, onSuccess,
+                    )
                 }
             }
         }
     }
 
+    private fun finishOperation(
+        ticket: Long,
+        requestEpoch: Long,
+        snapshot: M45AcceptanceUiState?,
+        completedResetEpoch: Long,
+        notice: String?,
+        error: String?,
+        onSuccess: () -> Unit,
+    ) {
+        if (activeOperationTicket != ticket) return
+        activeOperationTicket = null
+        if (state.voiceUiEpoch != requestEpoch) {
+            // The old operation really ended, but its snapshot, proof, notice
+            // and error belong to a previous foreground and must be discarded.
+            state = M5VoiceUiSnapshotGuard.settleStaleOperation(
+                M5VoiceUiSnapshotGuard.carryConsentResetEpoch(state, completedResetEpoch),
+                requestEpoch, ticket, ticket,
+            )
+            if (foreground) refreshSilently()
+        } else if (snapshot != null) {
+            applySnapshot(snapshot, notice = notice, error = error)
+            if (error == null && foreground) onSuccess()
+        } else {
+            // A successful reset may precede a failed snapshot build. In that
+            // case the picker/QR fence must survive the display error as well.
+            state = M5VoiceUiSnapshotGuard.carryConsentResetEpoch(
+                state.copy(busy = false, notice = null, error = error),
+                completedResetEpoch,
+            )
+        }
+    }
+
     private fun refreshSilently() {
         if (!silentRefreshInFlight.compareAndSet(false, true)) return
+        val requestEpoch = state.voiceUiEpoch
         worker.execute {
-            val result = runCatching { buildSnapshot() }
+            val result = runCatching { buildSnapshot().copy(voiceUiEpoch = requestEpoch) }
             mainHandler.post {
                 silentRefreshInFlight.set(false)
                 result.onSuccess { snapshot ->
                     if (!state.busy) applySnapshot(snapshot)
                 }
             }
+        }
+    }
+
+    private fun <T> withLocalTrustMutation(block: () -> T): T {
+        val currentRuntime = runtime
+        return if (currentRuntime != null) {
+            currentRuntime.withLocalTrustMutation(block)
+        } else {
+            withM45StandaloneTrustMutation(appContext, block)
         }
     }
 
