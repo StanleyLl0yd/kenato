@@ -133,6 +133,20 @@ internal class VoiceCapabilityOutOfBandService(
         )
     }
 
+    /**
+     * Explicitly clear local, contact-scoped voice consent and any outstanding
+     * challenge. This never sends a revocation to the peer or executes media.
+     */
+    @Synchronized
+    fun revokeLocalCapability(peerIdentityId: ByteArray, explicitUserApproval: Boolean) {
+        if (!explicitUserApproval) {
+            throw VoiceCapabilityExchangeException("Explicit approval to reset voice-v2 consent required")
+        }
+        val owner = requireLocalIdentity()
+        requirePinned(owner, peerIdentityId)
+        consent.revoke(owner.copyOf(), peerIdentityId.copyOf())
+    }
+
     private fun requireLocalIdentity(): ByteArray =
         identity.localIdentityId().also { id ->
             if (id.size != 32 || id.all { it == 0.toByte() }) {
