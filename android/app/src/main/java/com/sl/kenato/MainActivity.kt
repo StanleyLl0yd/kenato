@@ -199,6 +199,7 @@ private fun KenatoApp(
                     controller.state.selectedPeerIdentityId,
                     selection.request.consentResetEpoch,
                     controller.state.voiceConsentResetEpoch,
+                    controller.state.busy,
                 )
             if (inviteTarget || voiceTarget) {
                 when (selection.request.kind) {
@@ -223,6 +224,7 @@ private fun KenatoApp(
                     controller.state.selectedPeerIdentityId,
                     selection.request.consentResetEpoch,
                     controller.state.voiceConsentResetEpoch,
+                    controller.state.busy,
                 )
             ) {
                 voicePhotoError = "The selected image has no readable matching Kenato voice QR."
