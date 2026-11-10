@@ -39,8 +39,16 @@ internal object M5VoiceUiSnapshotGuard {
         if (current.voiceUiEpoch != incoming.voiceUiEpoch ||
             incoming.voiceConsentResetEpoch < current.voiceConsentResetEpoch
         ) {
+            // A successful reset can complete after an Activity foreground epoch
+            // changes. Do not discard its monotonic consent-reset fence even while
+            // redacting the old snapshot's contact and QR fields.
+            val newerReset = incoming.voiceConsentResetEpoch > current.voiceConsentResetEpoch
             return current.copy(
                 busy = incoming.busy,
+                voiceConsentResetEpoch = maxOf(
+                    current.voiceConsentResetEpoch, incoming.voiceConsentResetEpoch,
+                ),
+                voiceCapabilityConfirmed = current.voiceCapabilityConfirmed && !newerReset,
                 voiceChallengeQr = null,
                 voiceProofQr = null,
             )

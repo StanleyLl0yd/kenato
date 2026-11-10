@@ -111,6 +111,34 @@ class M5VoiceUiSnapshotGuardTest {
     }
 
     @Test
+    fun newerSuccessfulResetFromOldForegroundStillInvalidatesPickerEpoch() {
+        val current = M45AcceptanceUiState(
+            selectedPeerIdentityId = "peer-a",
+            voiceUiEpoch = 8L,
+            voiceConsentResetEpoch = 2L,
+            voiceCapabilityConfirmed = true,
+            busy = true,
+        )
+        // Serialized reset completed after the Activity switched foreground epochs.
+        val oldForegroundReset = current.copy(
+            voiceUiEpoch = 7L,
+            voiceConsentResetEpoch = 3L,
+            voiceCapabilityConfirmed = false,
+            voiceProofQr = "stale-proof",
+            busy = false,
+        )
+        val updated = M5VoiceUiSnapshotGuard.redactStaleProofs(current, oldForegroundReset, true)
+        assertEquals(8L, updated.voiceUiEpoch)
+        assertEquals(3L, updated.voiceConsentResetEpoch)
+        assertEquals(false, updated.voiceCapabilityConfirmed)
+        assertEquals(false, updated.busy)
+        assertNull(updated.voiceProofQr)
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyImportedVoiceQr(
+            "peer-a", updated.selectedPeerIdentityId, 2L, updated.voiceConsentResetEpoch,
+        ))
+    }
+
+    @Test
     fun olderSnapshotCannotRollbackTheLocalConsentResetFence() {
         val current = M45AcceptanceUiState(
             selectedPeerIdentityId = "peer-a",
