@@ -47,6 +47,10 @@ internal class M5VoiceCapabilityLocalBridge(
         )
     }
 
+    fun revokeLocalCapability(peerIdentityId: ByteArray) {
+        service.revokeLocalCapability(peerIdentityId.copyOf(), explicitUserApproval = true)
+    }
+
     fun isConfirmed(ownerIdentityId: ByteArray, peerIdentityId: ByteArray): Boolean {
         val contact = pinned.pinnedContact(ownerIdentityId.copyOf(), peerIdentityId.copyOf())
             ?: return false
