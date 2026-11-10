@@ -23,10 +23,11 @@ must enforce message freshness, identity bindings and expiry separately,
 including after process restart. Simultaneous outgoing calls also require
 an explicit glare policy in a later M5 slice.
 
-The original M5 roadmap names WebRTC, Opus, ICE/STUN and coturn fallback,
-while the owner requested no new server components. This first slice is
-limited to Android call control and adds none. NAT fallback architecture
-requires an explicit owner decision before claiming M5 completion.
+The active M5 scope is audio-only WebRTC/Opus with direct P2P ICE and no
+new server, TURN/coturn or implicit external STUN. Restrictive NAT/CGNAT
+connection failure is an explicit M5 limitation, not a product blocker to
+be worked around by adding unreviewed relay infrastructure. This first slice
+remains limited to Android call control and adds no media.
 
 Do not expose call content to a server or permit unauthenticated media.
 M5 signaling, WebRTC media, audio permissions, background calling and

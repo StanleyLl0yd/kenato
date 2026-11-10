@@ -40,7 +40,7 @@ Current repository phase:
 
 M0–M4 are complete. M4 — Minimal Messaging completed tracker #49 through #50 protocol/auth, #51 bounded mailbox persistence, #52 authenticated WSS/direct routing, #53 Android messaging/history, and #54 final repository-wide verification. Final audit PR #60 was squash-merged and the resulting exact `main` revision independently passed the required push verification matrix.
 
-#59/M4.5 is complete after the signed `v0.0.4` closed Android 10/13 physical acceptance (2026-10-08). M5/#84 Voice Core is now the active milestone. Keep voice work in focused reviewed slices and do not start M6 or later milestones before M5 exits. The owner previously requested no new server components; do not silently implement new backend signaling endpoints or coturn infrastructure before resolving this explicit architecture constraint.
+#59/M4.5 is complete after the signed `v0.0.4` closed Android 10/13 physical acceptance (2026-10-08). M5/#84 Voice Core is now the active milestone. Keep voice work in focused reviewed slices and do not start M6 or later milestones before M5 exits. The owner approved an M5 delivery scope freeze (2026-11-10): audio-only, direct-P2P ICE and **no new Kenato server, TURN/coturn or implicit external STUN**. Restrictive NAT/CGNAT failure is an explicit M5 limitation. Keep exact-native, storage, crypto and physical acceptance gates; defer video implementation and M6. Do not expand research work unless needed to close a demonstrated release blocker.
 
 Kenato 1.0 is intentionally narrow:
 
@@ -98,7 +98,7 @@ Current architecture baseline:
 - server: Go;
 - media: WebRTC + Opus;
 - signaling transport: HTTPS/WSS;
-- NAT traversal/relay: ICE + STUN/TURN via coturn;
+- NAT traversal in M5: direct ICE only, no implicit STUN or TURN; a future relay requires a separate owner-approved milestone/architecture change;
 - initial server datastore: SQLite;
 - protocol serialization: Protocol Buffers.
 
@@ -128,7 +128,7 @@ The initial backend is intentionally small:
 
 - one Go service binary;
 - SQLite/WAL;
-- coturn as a separate system service.
+- no new media relay component in M5; coturn is a deferred architecture option, not a deployed M5 service.
 
 Do not introduce Redis, Kafka, RabbitMQ, Kubernetes, a service mesh, or a microservice split unless measured requirements justify the added complexity.
 
@@ -251,7 +251,7 @@ Voice is audio-only for 1.0.
 
 Use WebRTC for media transport.
 
-Use direct P2P connectivity when available and coturn relay when direct connectivity fails.
+M5 uses direct P2P only and must fail cleanly when NAT traversal is impossible. Do not silently contact a STUN provider or deploy/enable coturn; both require a separate owner-approved privacy and infrastructure decision.
 
 TURN is an untrusted packet relay and must not require plaintext voice.
 
