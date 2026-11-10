@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -123,6 +124,8 @@ private fun KenatoApp(
     var requestedVoicePhoto by remember { mutableStateOf<VoicePhotoRequest?>(null) }
     var selectedVoicePhoto by remember { mutableStateOf<VoicePhotoSelection?>(null) }
     var voicePhotoError by remember { mutableStateOf<String?>(null) }
+    // A reset confirmation is tied to one selected pinned peer and is never saved.
+    var voiceRevokeConfirmation by remember(state.selectedPeerIdentityId) { mutableStateOf<String?>(null) }
     var invitePhotoError by remember { mutableStateOf<String?>(null) }
     val voicePhotoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
@@ -509,6 +512,33 @@ private fun KenatoApp(
                     state.selectedPeerIdentityId?.let { peer ->
                         Text("Verify selected peer identity before approving:", style = MaterialTheme.typography.bodySmall)
                         SelectionContainer { Text(peer, style = MaterialTheme.typography.bodySmall) }
+                        if (voiceRevokeConfirmation == peer) {
+                            AlertDialog(
+                                onDismissRequest = { voiceRevokeConfirmation = null },
+                                title = { Text("Reset call approval?") },
+                                text = {
+                                    Text(
+                                        "Clear the local voice approval and any pending challenge for this " +
+                                            "contact? A new signed proof will be required. " +
+                                            "This does not change the other phone or start a call.",
+                                    )
+                                },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            voiceRevokeConfirmation = null
+                                            controller.revokeVoiceCapability(peer)
+                                        },
+                                        enabled = !state.busy,
+                                    ) { Text("Reset approval") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { voiceRevokeConfirmation = null }) {
+                                        Text("Cancel")
+                                    }
+                                },
+                            )
+                        }
                         Button(
                             onClick = controller::issueVoiceCapabilityChallenge,
                             enabled = !state.busy && !state.voiceCapabilityConfirmed,
@@ -590,6 +620,10 @@ private fun KenatoApp(
                             enabled = !state.busy && !state.voiceCapabilityConfirmed && voiceProofInput.isNotBlank(),
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("3. Verify signature and explicitly approve import") }
+                        TextButton(
+                            onClick = { voiceRevokeConfirmation = peer },
+                            enabled = !state.busy,
+                        ) { Text("Reset local call approval or pending request") }
                     } ?: Text("Select a pinned contact to enable offline exchange.")
                     Text(
                         "A successful proof does not enable microphone, send signaling or start WebRTC. " +
