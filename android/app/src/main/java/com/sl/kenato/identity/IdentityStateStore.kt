@@ -1,6 +1,7 @@
 package com.sl.kenato.identity
 
 import android.content.Context
+import com.sl.kenato.storage.M45CrossProcessLease
 import java.util.Base64
 
 internal interface IdentityStateStore {
@@ -12,11 +13,13 @@ internal interface IdentityStateStore {
 }
 
 internal class SharedPreferencesIdentityStateStore(context: Context) : IdentityStateStore {
+    private val ownerLease = M45CrossProcessLease.shared(context.applicationContext.noBackupFilesDir)
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
     override fun read(): ByteArray? {
+        ownerLease.requireActive()
         val encoded = try {
             preferences.getString(STATE_KEY, null)
         } catch (error: ClassCastException) {
@@ -41,13 +44,17 @@ internal class SharedPreferencesIdentityStateStore(context: Context) : IdentityS
     }
 
     override fun write(value: ByteArray): Boolean {
+        ownerLease.requireActive()
         if (value.isEmpty() || value.size > IdentityStateCodec.MAX_STATE_BYTES) {
             throw IdentityStateException("Identity state size is invalid")
         }
         return preferences.edit().putString(STATE_KEY, encoder.encodeToString(value)).commit()
     }
 
-    override fun clear(): Boolean = preferences.edit().remove(STATE_KEY).commit()
+    override fun clear(): Boolean {
+        ownerLease.requireActive()
+        return preferences.edit().remove(STATE_KEY).commit()
+    }
 
     private companion object {
         const val PREFERENCES_NAME = "kenato_identity_v1"

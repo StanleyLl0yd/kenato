@@ -69,9 +69,88 @@ class M5VoiceUiSnapshotGuardTest {
         assertEquals(false, updated.voiceCapabilityConfirmed)
         assertEquals(12L, updated.voiceUiEpoch)
         assertEquals("Current operation", updated.notice)
-        assertEquals(false, updated.busy)
+        // The stale completion must not release a newer operation's UI lock.
+        assertEquals(true, updated.busy)
         assertNull(updated.voiceChallengeQr)
         assertNull(updated.voiceProofQr)
+
+        val fresh = updated.copy(busy = false, voiceUiEpoch = 12)
+        val settled = M5VoiceUiSnapshotGuard.redactStaleProofs(updated, fresh, true)
+        assertEquals(false, settled.busy)
+    }
+
+    @Test
+    fun completedOldWorkerCannotLaunderQrThroughNewForegroundSnapshot() {
+        val launchedEpoch = 20L
+        val newForeground = M45AcceptanceUiState(
+            voiceUiEpoch = launchedEpoch + 1,
+            selectedPeerIdentityId = "peer-new",
+            busy = true,
+            voiceCapabilityConfirmed = false,
+        )
+        // Build work may finish after a foreground transition. The controller
+        // stamps the response with the epoch captured BEFORE dispatch.
+        val finishedWorker = newForeground.copy(
+            voiceUiEpoch = launchedEpoch,
+            selectedPeerIdentityId = "peer-old",
+            voiceProofQr = "old-user-approved-signature",
+            voiceCapabilityConfirmed = true,
+            busy = false,
+        )
+        val unchanged = M5VoiceUiSnapshotGuard.redactStaleProofs(
+            newForeground, finishedWorker, true,
+        )
+        assertEquals(21L, unchanged.voiceUiEpoch)
+        assertEquals("peer-new", unchanged.selectedPeerIdentityId)
+        assertEquals(false, unchanged.voiceCapabilityConfirmed)
+        assertEquals(true, unchanged.busy)
+        assertNull(unchanged.voiceProofQr)
+    }
+
+    @Test
+    fun foregroundRefreshDoesNotReleaseActiveOperationEvenInMatchingEpoch() {
+        val action = M45AcceptanceUiState(voiceUiEpoch = 8, busy = true)
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(action, 8))
+        assertEquals(false, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(
+            action.copy(busy = false), 7,
+        ))
+        assertEquals(true, M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(
+            action.copy(busy = false), 8,
+        ))
+    }
+
+    @Test
+    fun actualStaleCompletionReleasesOnlyItsOwnTicketWithoutShowingOldProof() {
+        val resumed = M45AcceptanceUiState(
+            voiceUiEpoch = 31,
+            busy = true,
+            voiceProofQr = "should-not-survive",
+            notice = "obsolete",
+            error = "old error",
+        )
+        val staleOtherAction = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            resumed, operationEpoch = 30, completedTicket = 12, activeTicket = 13,
+        )
+        assertEquals(true, staleOtherAction.busy)
+        assertEquals("obsolete", staleOtherAction.notice)
+
+        val matchingCompletion = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            resumed, operationEpoch = 30, completedTicket = 13, activeTicket = 13,
+        )
+        assertEquals(false, matchingCompletion.busy)
+        assertNull(matchingCompletion.voiceProofQr)
+        assertNull(matchingCompletion.notice)
+        assertNull(matchingCompletion.error)
+        assertEquals(31L, matchingCompletion.voiceUiEpoch)
+    }
+
+    @Test
+    fun matchingEpochCompletionCannotPrematurelyReleaseBusyWithoutSnapshot() {
+        val active = M45AcceptanceUiState(voiceUiEpoch = 40, busy = true)
+        val unchanged = M5VoiceUiSnapshotGuard.settleStaleOperation(
+            active, operationEpoch = 40, completedTicket = 14, activeTicket = 14,
+        )
+        assertEquals(true, unchanged.busy)
     }
 
     @Test

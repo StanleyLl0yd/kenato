@@ -82,7 +82,13 @@ internal class DurableMessagingInboundDeliveryHandler(
     override fun handle(
         envelope: MessagingEnvelope,
         receivedAtEpochSeconds: Long,
-    ): MessagingDeliveryAck {
+    ): MessagingDeliveryAck = handleWithAckExpiry(envelope, receivedAtEpochSeconds).ack
+
+    @Synchronized
+    override fun handleWithAckExpiry(
+        envelope: MessagingEnvelope,
+        receivedAtEpochSeconds: Long,
+    ): MessagingInboundAckOutcome {
         val ownerIdentityId = envelope.recipientIdentityId.copyOf()
         requireIdentity(ownerIdentityId, "M4 inbound owner identity id")
         MessagingProtocol.validateEnvelope(envelope, receivedAtEpochSeconds)
@@ -98,7 +104,7 @@ internal class DurableMessagingInboundDeliveryHandler(
             if (duplicateVoice) {
                 throw MessagingInboundDeliveryException("M4 and M5 durable receipt keys collide")
             }
-            return acknowledgement(envelope)
+            return MessagingInboundAckOutcome(acknowledgement(envelope))
         }
 
         // A reused authenticated message id with different ciphertext/context is a conflict, not a
@@ -111,7 +117,9 @@ internal class DurableMessagingInboundDeliveryHandler(
         if (duplicateVoice) {
             // Persisted exact encrypted M5 event and replay permit both exist.
             // ACK without a second irreversible M3 ratchet decrypt.
-            return acknowledgement(envelope)
+            return MessagingInboundAckOutcome(
+                acknowledgement(envelope), envelope.expiresAtEpochSeconds,
+            )
         }
 
         // Parse and bind the opaque M3 wrapper before consulting local session state. Malformed,
@@ -209,7 +217,12 @@ internal class DurableMessagingInboundDeliveryHandler(
             )
         }
 
-        return acknowledgement(envelope)
+        return MessagingInboundAckOutcome(
+            acknowledgement(envelope),
+            if (application is EncryptedApplicationPayload.Voice) {
+                envelope.expiresAtEpochSeconds
+            } else null,
+        )
     }
 
     private fun hasConflictingInboundHistoryKey(

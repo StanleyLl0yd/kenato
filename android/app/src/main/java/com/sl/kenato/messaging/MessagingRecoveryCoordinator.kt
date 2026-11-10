@@ -20,6 +20,9 @@ internal data class MessagingRecoveredSend(
 internal data class MessagingRecoveredAck(
     val peerIdentityId: ByteArray,
     val messageId: ByteArray,
+    /** Only M5 verified voice ACKs carry a strict bounded dispatch interval. */
+    val expiresAtEpochSeconds: Long? = null,
+    val validatedAtEpochSeconds: Long? = null,
 )
 
 internal data class MessagingRecoveryPlan(
@@ -104,11 +107,24 @@ internal class MessagingRecoveryCoordinator(
     @Synchronized
     fun recover(ownerIdentityId: ByteArray): MessagingRecoveryPlan {
         requireIdentity(ownerIdentityId)
+        // An opt-in M5 receive adapter must never recover with metadata-only ACK proof.
+        if (voice != null && verifiedVoiceAcks == null) {
+            throw MessagingRecoveryException(
+                "M5 voice recovery requires the encrypted semantic/replay ACK verifier",
+            )
+        }
+        // One operation-wide clock snapshot for every recovered M5 handoff and ACK.
+        val nowSnapshot = if (voice != null || outboundVoice != null) {
+            clock.nowEpochSeconds().also {
+                if (it < 0L) throw MessagingRecoveryException("Voice recovery clock is invalid")
+            }
+        } else null
         val handoffs = sessions.pendingMessageHandoffs(ownerIdentityId)
         val recoveredSends = reconcileHandoffs(
             ownerIdentityId = ownerIdentityId,
             handoffs = handoffs,
             includeInbound = true,
+            nowEpochSeconds = nowSnapshot,
         )
         val recoveredAcks = history.pendingInboundAcks(ownerIdentityId).map { record ->
             MessagingRecoveredAck(
@@ -117,14 +133,13 @@ internal class MessagingRecoveryCoordinator(
             )
         }.toMutableList()
         if (voice != null) {
-            val now = clock.nowEpochSeconds()
-            if (now < 0L) throw MessagingRecoveryException("Voice ACK recovery clock is invalid")
+            val now = nowSnapshot ?: throw MessagingRecoveryException("Voice recovery clock is missing")
             val replayCandidates = voice.pendingLiveReceipts(ownerIdentityId, now)
-            if (replayCandidates.isNotEmpty()) {
-                val verifier = verifiedVoiceAcks ?: throw MessagingRecoveryException(
-                    "Voice replay receipts have no independently encrypted semantic ACK verifier",
-                )
-                val verified = verifier.verifiedPendingLiveReceipts(ownerIdentityId, now)
+            // Even an empty replay journal must be compared with the encrypted
+            // semantic store: a crash may have committed only the semantic file.
+            val verified = requireNotNull(verifiedVoiceAcks)
+                .verifiedPendingLiveReceipts(ownerIdentityId, now)
+            if (replayCandidates.isNotEmpty() || verified.isNotEmpty()) {
                 // Fail closed even when a miswired adapter has the same peer/message IDs
                 // but a different authenticated encrypted envelope or call metadata.
                 val raw = replayCandidates.associateBy {
@@ -154,7 +169,12 @@ internal class MessagingRecoveryCoordinator(
                     }
                 }
                 recoveredAcks += verified.map {
-                    MessagingRecoveredAck(it.peerIdentityId.copyOf(), it.messageId.copyOf())
+                    MessagingRecoveredAck(
+                        it.peerIdentityId.copyOf(),
+                        it.messageId.copyOf(),
+                        expiresAtEpochSeconds = it.expiresAtEpochSeconds,
+                        validatedAtEpochSeconds = now,
+                    )
                 }
             }
         }
@@ -173,10 +193,16 @@ internal class MessagingRecoveryCoordinator(
     @Synchronized
     fun recoverOutbound(ownerIdentityId: ByteArray): List<MessagingRecoveredSend> {
         requireIdentity(ownerIdentityId)
+        val nowSnapshot = if (outboundVoice != null) {
+            clock.nowEpochSeconds().also {
+                if (it < 0L) throw MessagingRecoveryException("Voice recovery clock is invalid")
+            }
+        } else null
         return reconcileHandoffs(
             ownerIdentityId = ownerIdentityId,
             handoffs = sessions.pendingMessageHandoffs(ownerIdentityId),
             includeInbound = false,
+            nowEpochSeconds = nowSnapshot,
         )
     }
 
@@ -295,6 +321,7 @@ internal class MessagingRecoveryCoordinator(
         ownerIdentityId: ByteArray,
         handoffs: List<SessionMessageHandoff>,
         includeInbound: Boolean,
+        nowEpochSeconds: Long?,
     ): List<MessagingRecoveredSend> {
         val recoveredSends = ArrayList<MessagingRecoveredSend>()
         val pendingSendKeys = HashSet<MessageKey>()
@@ -312,7 +339,7 @@ internal class MessagingRecoveryCoordinator(
         handoffs.forEach { handoff ->
             when (handoff.direction) {
                 SessionStateCodec.HANDOFF_DIRECTION_INBOUND -> {
-                    if (includeInbound) recoverInbound(ownerIdentityId, handoff)
+                    if (includeInbound) recoverInbound(ownerIdentityId, handoff, nowEpochSeconds)
                 }
                 SessionStateCodec.HANDOFF_DIRECTION_OUTBOUND -> {
                     when (applicationVersion(handoff)) {
@@ -323,7 +350,7 @@ internal class MessagingRecoveryCoordinator(
                             requireNoTextOutboundCollision(
                                 ownerIdentityId, handoff.peerIdentityId, handoff.messageId,
                             )
-                            val now = clock.nowEpochSeconds()
+                            val now = nowEpochSeconds ?: clock.nowEpochSeconds()
                             val recovered = adapter.recover(ownerIdentityId, handoff, now)
                             if (!pendingSendKeys.add(MessageKey(recovered.peerIdentityId, recovered.messageId))) {
                                 throw MessagingRecoveryException("Duplicate typed outbound recovery handoff")
@@ -395,7 +422,11 @@ internal class MessagingRecoveryCoordinator(
         }
     }
 
-    private fun recoverInbound(ownerIdentityId: ByteArray, handoff: SessionMessageHandoff) {
+    private fun recoverInbound(
+        ownerIdentityId: ByteArray,
+        handoff: SessionMessageHandoff,
+        nowEpochSeconds: Long?,
+    ) {
         when (applicationVersion(handoff)) {
             1 -> {
                 if (voice?.hasPersistedInboundMessageKey(
@@ -418,7 +449,7 @@ internal class MessagingRecoveryCoordinator(
                 if (sameTextKey) {
                     throw MessagingRecoveryException("M5 voice collides with a durable M4 text id")
                 }
-                val now = clock.nowEpochSeconds()
+                val now = nowEpochSeconds ?: clock.nowEpochSeconds()
                 if (now < 0L) throw MessagingRecoveryException("Voice recovery clock is invalid")
                 val envelope = try {
                     MessagingWire.decodeEnvelope(handoff.encodedEnvelope)
@@ -443,12 +474,20 @@ internal class MessagingRecoveryCoordinator(
                     if (parsed !is EncryptedApplicationPayload.Voice) {
                         throw MessagingRecoveryException("Recovered M5 handoff is not a voice record")
                     }
-                    val sink = voiceSink ?: throw MessagingRecoveryException(
-                        "M5 live handoff has no durable semantic event sink",
+                    if (voiceSink == null) {
+                        throw MessagingRecoveryException(
+                            "M5 live handoff has no durable semantic event sink",
+                        )
+                    }
+                    // The verified facade owns both the encrypted semantic write and
+                    // replay import with the same recovery-time snapshot.
+                    val verifier = verifiedVoiceAcks ?: throw MessagingRecoveryException(
+                        "M5 live handoff has no verified semantic/replay import owner",
                     )
-                    sink.persistAuthenticatedVoiceEvent(ownerIdentityId, handoff)
+                    verifier.importCommittedHandoff(ownerIdentityId, handoff, now)
+                } else {
+                    voiceRecovery.reconcileCommittedHandoff(ownerIdentityId, handoff, now)
                 }
-                voiceRecovery.reconcileCommittedHandoff(ownerIdentityId, handoff, now)
             }
             else -> throw MessagingRecoveryException("Unsupported recovered M3 application record version")
         }
