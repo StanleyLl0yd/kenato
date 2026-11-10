@@ -52,6 +52,46 @@ class VoiceCapabilityOutOfBandServiceTest {
     }
 
     @Test
+    fun localApprovalResetRequiresExplicitGestureAndAllowsNewChallenge() {
+        val f = Fixture()
+        val alice = f.aliceService()
+        val challenge = alice.issueChallengeQr(f.bobId)
+        val proof = f.bobService().approveAndSignChallengeQr(f.aliceId, challenge, true)
+        alice.approveAndImportProofQr(f.bobId, proof, true)
+        assertTrue(f.aliceConsent.isVoiceVersion2Confirmed(f.aliceId, f.bobId, f.bob.public.encoded))
+
+        assertThrows(VoiceCapabilityExchangeException::class.java) {
+            alice.revokeLocalCapability(f.bobId, explicitUserApproval = false)
+        }
+        assertTrue(f.aliceConsent.isVoiceVersion2Confirmed(f.aliceId, f.bobId, f.bob.public.encoded))
+
+        alice.revokeLocalCapability(f.bobId, explicitUserApproval = true)
+        assertFalse(f.aliceConsent.isVoiceVersion2Confirmed(f.aliceId, f.bobId, f.bob.public.encoded))
+        val refreshed = alice.issueChallengeQr(f.bobId)
+        assertTrue(refreshed != challenge)
+        val freshProof = f.bobService().approveAndSignChallengeQr(f.aliceId, refreshed, true)
+        alice.approveAndImportProofQr(f.bobId, freshProof, true)
+        assertTrue(f.aliceConsent.isVoiceVersion2Confirmed(f.aliceId, f.bobId, f.bob.public.encoded))
+    }
+
+    @Test
+    fun resetInvalidatesPreviouslySignedPendingProofAndCannotTargetUnknownPeer() {
+        val f = Fixture()
+        val alice = f.aliceService()
+        val challenge = alice.issueChallengeQr(f.bobId)
+        val oldProof = f.bobService().approveAndSignChallengeQr(f.aliceId, challenge, true)
+
+        assertThrows(VoiceCapabilityExchangeException::class.java) {
+            alice.revokeLocalCapability(ByteArray(32) { 7 }, explicitUserApproval = true)
+        }
+        alice.revokeLocalCapability(f.bobId, explicitUserApproval = true)
+        assertThrows(VoiceCapabilityConsentException::class.java) {
+            alice.approveAndImportProofQr(f.bobId, oldProof, true)
+        }
+        assertFalse(f.aliceConsent.isVoiceVersion2Confirmed(f.aliceId, f.bobId, f.bob.public.encoded))
+    }
+
+    @Test
     fun unknownOrReplacedPinnedPeerCannotSignOrImportProof() {
         val f = Fixture()
         val challenge = f.aliceService().issueChallengeQr(f.bobId)
