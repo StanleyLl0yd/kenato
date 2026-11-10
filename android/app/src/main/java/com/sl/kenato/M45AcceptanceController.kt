@@ -49,6 +49,8 @@ internal data class M45AcceptanceUiState(
     val voiceCapabilityConfirmed: Boolean = false,
     /** Volatile UI generation forces pasted QR text to be cleared after background. */
     val voiceUiEpoch: Long = 0L,
+    /** In-memory reset fence for stale asynchronous voice QR image imports. */
+    val voiceConsentResetEpoch: Long = 0L,
     val busy: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
@@ -65,6 +67,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private var ephemeralVoiceChallenge: String? = null
     private var ephemeralVoiceProof: String? = null
     private var ephemeralVoicePeerId: String? = null
+    // Only the serialized worker modifies this counter after a durable local reset.
+    private var voiceConsentResetEpoch = 0L
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val worker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "kenato-m45-acceptance").apply { isDaemon = true }
@@ -244,6 +248,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             }
             voiceCapability.revokeLocalCapability(currentPeer)
             clearEphemeralVoiceQr()
+            voiceConsentResetEpoch++
         }
 
     fun refresh() = launchOperation("State refreshed") { }
@@ -359,6 +364,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         if (identity == null) {
             return M45AcceptanceUiState(
                 serviceOrigin = origin,
+                voiceConsentResetEpoch = voiceConsentResetEpoch,
                 messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
                 messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
                 diagnostics = diagnosticJournal.snapshot(),
@@ -433,6 +439,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             voiceProofQr = ephemeralVoiceProof.takeIf { showVoiceQr },
             voiceCapabilityConfirmed = confirmedVoice,
             voiceUiEpoch = state.voiceUiEpoch,
+            voiceConsentResetEpoch = voiceConsentResetEpoch,
         )
     }
 
