@@ -236,8 +236,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             clearEphemeralVoiceQr()
         }
 
-    fun revokeVoiceCapability(peerIdentityId: String) =
-        launchOperation("Local call approval and pending challenge cleared") {
+    fun revokeVoiceCapability(peerIdentityId: String, onReset: () -> Unit = {}) =
+        launchOperation("Local call approval and pending challenge cleared", onSuccess = onReset) {
             val currentPeer = selectedPeerBytes()
             if (encodePeerId(currentPeer) != peerIdentityId) {
                 throw IllegalStateException("Selected contact changed; reset was not applied")
