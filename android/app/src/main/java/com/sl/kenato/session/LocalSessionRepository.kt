@@ -1,6 +1,7 @@
 package com.sl.kenato.session
 
 import android.content.Context
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 import java.security.MessageDigest
 
 internal data class SessionMessageCryptoContext(
@@ -984,10 +985,21 @@ internal class LocalSessionRepository(
         private const val FIRST_ONE_TIME_KEY_ID = 1L
         private const val TARGET_ONE_TIME_KEYS = 32
 
-        fun create(context: Context): LocalSessionRepository = LocalSessionRepository(
-            engine = JniSessionEngine(),
-            keyBackend = AndroidSessionPickleKeyBackend(),
-            stateStore = AtomicFileSessionStateStore(context),
-        )
+        // Serialize M3 operations through one repository monitor per app-private directory
+        // inside this process. This is NOT inter-process exclusion or a durable M2/M3/WSS
+        // transaction and does not authorize voice admission.
+        private val applicationOwners = ProcessLocalOwnerRegistry<LocalSessionRepository>()
+
+        fun create(context: Context): LocalSessionRepository {
+            val applicationContext = context.applicationContext
+            val storageDirectory = applicationContext.noBackupFilesDir.canonicalFile
+            return applicationOwners.getOrCreate(storageDirectory.path) {
+                LocalSessionRepository(
+                    engine = JniSessionEngine(),
+                    keyBackend = AndroidSessionPickleKeyBackend(),
+                    stateStore = AtomicFileSessionStateStore(applicationContext),
+                )
+            }
+        }
     }
 }

@@ -606,14 +606,18 @@ internal class SessionCoordinator(
     companion object {
         private val NEVER_CANCELLED = SessionCancellation { false }
 
-        fun create(context: Context, serviceOrigin: URI): SessionCoordinator {
+        fun create(
+            context: Context,
+            serviceOrigin: URI,
+            sessionRepository: LocalSessionRepository = LocalSessionRepository.create(context),
+        ): SessionCoordinator {
             val identityProvider = LocalContactIdentityProvider(LocalIdentityRepository.create(context))
             return SessionCoordinator(
                 identity = ContactSessionIdentityBoundary(identityProvider),
                 contacts = LocalSessionContactBoundary(
                     ContactLocalState(SharedPreferencesContactStateStore(context)),
                 ),
-                sessions = LocalSessionBoundary(LocalSessionRepository.create(context)),
+                sessions = LocalSessionBoundary(sessionRepository),
                 transport = HttpSessionTransport(serviceOrigin),
                 threadGuard = AndroidSessionThreadGuard,
                 clock = SystemSessionClock,
