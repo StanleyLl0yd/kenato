@@ -172,8 +172,13 @@ private fun KenatoApp(
     // An approved local reset also invalidates a picker request or decode still in flight.
     // Do not use the foreground epoch: launching the Android picker can pause the Activity.
     LaunchedEffect(state.voiceConsentResetEpoch) {
-        requestedVoicePhoto = null
-        selectedVoicePhoto = null
+        // A voice reset must not discard an unrelated M2 invitation image import.
+        if (requestedVoicePhoto?.kind != VoiceCapabilityQrPhotoKind.INVITE) {
+            requestedVoicePhoto = null
+        }
+        if (selectedVoicePhoto?.request?.kind != VoiceCapabilityQrPhotoKind.INVITE) {
+            selectedVoicePhoto = null
+        }
         voiceChallengeInput = ""
         voiceProofInput = ""
         voicePhotoError = null
