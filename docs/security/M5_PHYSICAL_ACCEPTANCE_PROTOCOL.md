@@ -85,7 +85,12 @@ viewer is not evidence that M5 effects or native audio actually ran.
 | P21 | Restore previously valid KSAE or canonical KNS3 after newer authenticated state | Detect or explicitly classify full-file rollback as blocking; never claim AES-GCM prevents replay |
 | P22 | Recovery with key deletion failure, then with file deletion failure | Confirm key-first destructive order; restored old ciphertext remains unreadable **after key invalidation** |
 | P23 | Restore an older valid positive capability consent after revoke | Classify any re-grant as rollback finding; never interpret valid AEAD tag as fresh approval |
-| P24 | Foreground/background, audio route, Bluetooth and permission transitions | Explicit Android 14+/target-SDK compliance, no silent background microphone or lingering capture |
+| P24 | Android permission/foreground safety and teardown at lifecycle transitions | Explicit Android 14+/target-SDK compliance, no silent background microphone or lingering capture. Advanced background calling, notifications and Bluetooth route management belong to M6; do not require them to finish M5 |
+
+For P24, verify supported M5 foreground audio and safe loss/denial of microphone
+permission, activity backgrounding and process teardown. A passing M5 test
+must not imply background-call or Bluetooth-route features that have not been
+implemented; such feature-level behavior is deferred to M6.
 
 P18-P23 require a **separately reviewed test-only injection or controlled
 device harness** before execution. The current draft #118 is not wired into
