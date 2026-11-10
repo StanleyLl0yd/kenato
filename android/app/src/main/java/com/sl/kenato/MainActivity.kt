@@ -527,7 +527,11 @@ private fun KenatoApp(
                                     TextButton(
                                         onClick = {
                                             voiceRevokeConfirmation = null
-                                            controller.revokeVoiceCapability(peer)
+                                            controller.revokeVoiceCapability(peer) {
+                                                voiceChallengeInput = ""
+                                                voiceProofInput = ""
+                                                voicePhotoError = null
+                                            }
                                         },
                                         enabled = !state.busy,
                                     ) { Text("Reset approval") }
