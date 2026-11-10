@@ -17,7 +17,8 @@ internal object M5VoiceUiSnapshotGuard {
         selectedPeerId: String?,
         requestResetEpoch: Long,
         currentResetEpoch: Long,
-    ): Boolean = requestPeerId != null && requestPeerId == selectedPeerId &&
+        operationInProgress: Boolean = false,
+    ): Boolean = !operationInProgress && requestPeerId != null && requestPeerId == selectedPeerId &&
         requestResetEpoch == currentResetEpoch
 
     /** Failure of optional voice consent storage never blocks M4 text UI. */
