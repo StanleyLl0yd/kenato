@@ -37,10 +37,10 @@ jobs:
         working-directory: .
         run: python3 scripts/verify_ci_supply_chain.py
 
-      - name: Set up patched Go 1.27.3
+      - name: Set up patched Go 1.27.4
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
 
       - name: Verify source and runtime
@@ -67,7 +67,7 @@ jobs:
           mv "$RUNNER_TEMP/kenato-server-linux-arm64" dist/kenato-server-linux-arm64
           readelf -h dist/kenato-server-linux-arm64 | grep -Eq 'Machine:[[:space:]]*AArch64'
           go version -m dist/kenato-server-linux-arm64 > dist/GO_BUILD_INFO.txt
-          grep -F 'go1.27.3' dist/GO_BUILD_INFO.txt
+          grep -F 'go1.27.4' dist/GO_BUILD_INFO.txt
           grep -F "vcs.revision=$GITHUB_SHA" dist/GO_BUILD_INFO.txt
           grep -F 'vcs.modified=false' dist/GO_BUILD_INFO.txt
           grep -F 'GOOS=linux' dist/GO_BUILD_INFO.txt

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 workflow = Path(".github/workflows/build-server-arm64.yml").read_text(encoding="utf-8")
-if "go 1.27.3" not in Path("server/go.mod").read_text(encoding="utf-8").splitlines():
+if "go 1.27.4" not in Path("server/go.mod").read_text(encoding="utf-8").splitlines():
     raise SystemExit("Go module must refuse unpatched 1.27.x local toolchains")
 required = (
     "workflow_dispatch:",
@@ -14,7 +14,7 @@ required = (
     "permissions: {}",
     'test "$GITHUB_REF" = "refs/heads/main"',
     'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
-    'go-version: "1.27.3"',
+    'go-version: "1.27.4"',
     "GOTOOLCHAIN: local",
     "GOOS: linux",
     "GOARCH: arm64",
@@ -42,7 +42,9 @@ expected_pins = {
 }
 for workflow_path, count in expected_pins.items():
     content = Path(workflow_path).read_text(encoding="utf-8")
-    if content.count('go-version: "1.27.3"') != count or 'go-version: "1.27.2"' in content:
+    if content.count('go-version: "1.27.4"') != count or any(
+        f'go-version: "{old}"' in content for old in ("1.27.2", "1.27.3")
+    ):
         raise SystemExit(f"Go toolchain security pin drift: {workflow_path}")
 
 for token in required:
