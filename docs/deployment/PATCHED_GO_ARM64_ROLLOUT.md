@@ -1,7 +1,6 @@
-# Go 1.27.3 Linux ARM64 backend rebuild and guarded rollout
+# Go 1.27.4 Linux ARM64 backend rebuild and guarded rollout
 
-Status: **build preparation only** for #91. Go 1.27.3 addresses CVE-2026-111943 in `crypto/x509` (official security release 2026-10-19). Older 1.27.2 artifacts are not authorized for this upgrade; generate a new exact-main artifact first. No live deployment, backend
-feature change, new Kenato server, release signing, TURN, or M6.
+Status: **build preparation only** for #91. Go 1.27.4 (released 2026-11-10) fixes GO-2026-6859/CVE-2026-97054 and other security issues; the formerly verified Go 1.27.3 backend artifact is now obsolete. Build and independently review a new exact-main Go 1.27.4 ARM64 artifact. **SECURITY HOLD: the legacy 1.27.3 Bash/PowerShell operator helpers now reject deployment attempts before host mutation; do not use them to deploy their pinned binary.** Their original immutable SHA pins must be replaced only after a new artifact has been independently verified and the helpers re-reviewed. No live deployment, backend feature change, new Kenato server, release signing, TURN, or M6.
 
 ## Produce and verify a reviewed-source binary
 
@@ -10,7 +9,7 @@ later rebuilds may be run manually from **Verified Go ARM64 backend artifact**.
 A push upload is never deployment approval. Require successful exact-main
 CI/security checks before trusting its output. The job rejects non-`main`
 refs; its checkout is checked against
-`GITHUB_SHA`. The pinned Go 1.27.3 toolchain builds with
+`GITHUB_SHA`. The pinned Go 1.27.4 toolchain builds with
 `GOTOOLCHAIN=local`, `GOOS=linux`, `GOARCH=arm64`, `CGO_ENABLED=0`,
 `-trimpath`, and embedded VCS revision. Go unit tests, module verification,
 ELF architecture, build metadata, clean tree and SHA-256 verification must
@@ -36,7 +35,7 @@ Record only the source SHA, binary SHA-256, Actions run ID, source/toolchain
 verification and operator approval in #91. Do not record the host address,
 secrets, raw requests, user identities or databases.
 
-## Guarded on-host operator helper
+## Historical Go 1.27.3 operator helper (deployment suspended)
 
 The independently verified Go 1.27.3 artifact was built in GitHub Actions
 [run #42628027765](https://github.com/StanleyLl0yd/kenato/actions/runs/42628027765)
@@ -47,7 +46,9 @@ The archive has exactly four expected files. Go build metadata, clean VCS
 revision, architecture and main-only provenance were independently checked.
 This is **artifact acceptance**, not OCI host acceptance or deployment.
 
- (proposal; not yet deployed)
+**The following commands and hashes document the previous, vulnerable 1.27.3 artifact only. Do not execute them while the security hold above is active.**
+
+(proposal; not deployed)
 
 A reviewed, **manual-only** helper at
 `scripts/rollout_existing_oci_arm64.sh` stages the exact existing Go
@@ -90,7 +91,7 @@ pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-se
 ```
 
 The PowerShell wrapper independently pins the **reviewed LF-normalized
-root-executed Bash helper** to SHA-256 `bc7302c07d7447868b4c8c65077b81280efb2ca3799669104b551338a20d6a00`
+root-executed Bash helper** to SHA-256 `1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc`
 and checks that digest before opening an SSH connection or changing the host.
 A locally modified or substituted helper is rejected, even if the verified
 server executable ZIP is unchanged. Windows CRLF is normalized to LF before

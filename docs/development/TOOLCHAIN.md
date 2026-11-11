@@ -11,8 +11,9 @@ Current post-M3 baseline:
 - minSdk: 26
 - Compose BOM: 2026.08.00
 - ZXing Core: 3.5.4 (M2 QR encoding only; no scanner SDK)
-- Go: 1.27.2 in CI (security update 2026-10-09; standard-library vulnerabilities fixed in Go 1.27.2)
+- Go: 1.27.4 in CI (security release 2026-11-10; fixes GO-2026-6859/CVE-2026-97054 and additional toolchain/stdlib issues)
 - Protocol Buffers Go runtime: `google.golang.org/protobuf` 1.36.12
+- Protocol Buffers compiler: official protoc 33.1 linux-x86_64 ZIP, exact upstream GitHub release asset SHA-256 `f3340e28a83d1c637d8bafdeed92b9f7db6a384c26bca880a6e5217b40a4328b` (CI uses verified single-binary extraction rather than mutable Ubuntu APT mirrors)
 - protobuf lint: protolint 0.56.4
 - SQLite Go driver: pure-Go `modernc.org/sqlite` 1.58.0
 - Go vulnerability scanner: govulncheck `709015412431dd2b5b28a53c06c70bc02d49074c` (2026-09-08 upstream revision; pinned because released v1.1.4 predates Go 1.27 AST support)
