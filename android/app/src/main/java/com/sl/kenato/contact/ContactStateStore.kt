@@ -1,6 +1,7 @@
 package com.sl.kenato.contact
 
 import android.content.Context
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -312,6 +313,21 @@ internal class ContactLocalState(
     private fun requireOwner(ownerIdentityId: ByteArray) {
         if (ownerIdentityId.size != CONTACT_ID_BYTES) {
             throw ContactStateException("Local owner identity id is invalid")
+        }
+    }
+
+    companion object {
+        // The invite/pinning factory and the M3 contact admission boundary must
+        // share the same local contact-state monitor for this app-private namespace.
+        // This does not make M2/M3 commits cross-store atomic or rollback-resistant.
+        private val applicationOwners = ProcessLocalOwnerRegistry<ContactLocalState>()
+
+        fun create(context: Context): ContactLocalState {
+            val appContext = context.applicationContext
+            val directory = appContext.noBackupFilesDir.canonicalPath
+            return applicationOwners.getOrCreate(directory) {
+                ContactLocalState(SharedPreferencesContactStateStore(appContext))
+            }
         }
     }
 }

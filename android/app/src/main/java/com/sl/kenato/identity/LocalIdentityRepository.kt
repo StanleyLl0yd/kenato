@@ -1,6 +1,7 @@
 package com.sl.kenato.identity
 
 import android.content.Context
+import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 
 /**
  * Owns the device-local identity lifecycle. All methods are synchronous and must be called off the UI thread.
@@ -271,11 +272,22 @@ class LocalIdentityRepository internal constructor(
         private const val FIRST_PREKEY_ID = 1
         private const val MAX_PROTOCOL_SIGNING_BYTES = 64 shl 10
 
-        fun create(context: Context): LocalIdentityRepository = LocalIdentityRepository(
-            keyBackend = AndroidIdentityKeyBackend(),
-            stateStore = SharedPreferencesIdentityStateStore(context),
-            clock = SystemIdentityClock,
-        )
+        // The M2 bootstrap, M3 session and WSS factories must not construct
+        // independently synchronized owners for one persisted identity/Keystore namespace.
+        // This is process-local exclusion, not cross-process recovery or durable voice authority.
+        private val applicationOwners = ProcessLocalOwnerRegistry<LocalIdentityRepository>()
+
+        fun create(context: Context): LocalIdentityRepository {
+            val appContext = context.applicationContext
+            val directory = appContext.noBackupFilesDir.canonicalPath
+            return applicationOwners.getOrCreate(directory) {
+                LocalIdentityRepository(
+                    keyBackend = AndroidIdentityKeyBackend(),
+                    stateStore = SharedPreferencesIdentityStateStore(appContext),
+                    clock = SystemIdentityClock,
+                )
+            }
+        }
     }
 }
 

@@ -55,6 +55,25 @@ class ProcessLocalOwnerRegistryTest {
     }
 
     @Test
+    fun distinctM2OwnerFamiliesDoNotAliasAtTheSamePrivateDirectory() {
+        // Identity and contacts have separate storage/locks, while each family reuses
+        // one process-local monitor even when bootstrap and WSS request it separately.
+        val identities = ProcessLocalOwnerRegistry<Any>()
+        val contacts = ProcessLocalOwnerRegistry<Any>()
+        val directory = "/data/app/shared/no_backup"
+        val identity = identities.getOrCreate(directory) { Any() }
+        val contact = contacts.getOrCreate(directory) { Any() }
+
+        assertNotSame(identity, contact)
+        assertSame(identity, identities.getOrCreate(directory) {
+            throw AssertionError("Duplicate identity owner")
+        })
+        assertSame(contact, contacts.getOrCreate(directory) {
+            throw AssertionError("Duplicate contact owner")
+        })
+    }
+
+    @Test
     fun failedConstructionIsNotCachedAndMayBeRetried() {
         val registry = ProcessLocalOwnerRegistry<Any>()
         val attempts = AtomicInteger()
