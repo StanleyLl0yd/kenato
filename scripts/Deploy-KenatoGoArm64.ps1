@@ -23,10 +23,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Fail before reading the artifact or opening SSH for the retired Go 1.27.3 payload.
+if ($Apply) {
+    throw 'Go 1.27.3 rollout suspended (GO-2026-6859). Require independently approved 1.27.4 source and artifact pins.'
+}
+
 $sourceSha = 'aa3bcebe646bd84ce3be0dd4357840ca31acd71d'
 $expectedZipSha = '0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d'
 $expectedElfSha = 'c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107'
-$expectedRootHelperSha = 'bc7302c07d7447868b4c8c65077b81280efb2ca3799669104b551338a20d6a00'
+$expectedRootHelperSha = '1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc'
 $zipSha = (Get-FileHash -LiteralPath $ArtifactZip -Algorithm SHA256).Hash.ToLowerInvariant()
 
 if ($zipSha -cne $expectedZipSha) {

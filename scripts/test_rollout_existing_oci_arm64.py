@@ -12,6 +12,13 @@ help_result = subprocess.run(["bash", str(path), "--help"], text=True, capture_o
 assert help_result.returncode == 0, help_result.stderr
 refusal = subprocess.run(["bash", str(path)], text=True, capture_output=True)
 assert refusal.returncode == 2, (refusal.stdout, refusal.stderr)
+# Retired artifact must fail before root privilege, file or systemd checks.
+retired = subprocess.run(
+    ["bash", str(path), "--apply", "/nonexistent/obsolete-kenato-artifact", "a" * 40],
+    text=True, capture_output=True,
+)
+assert retired.returncode == 3, (retired.stdout, retired.stderr)
+assert "GO-2026-6859" in retired.stderr
 
 required = [
     'if [[ $# -ne 3 || "$1" != "--apply"',
@@ -82,13 +89,15 @@ for ss_output, should_accept in examples:
 
 
 operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
-reviewed_digest = "bc7302c07d7447868b4c8c65077b81280efb2ca3799669104b551338a20d6a00"
+reviewed_digest = "1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc"
 assert hashlib.sha256(path.read_bytes()).hexdigest() == reviewed_digest
 assert "$sourceSha = 'aa3bcebe646bd84ce3be0dd4357840ca31acd71d'" in operator
 assert "$expectedZipSha = '0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d'" in operator
 assert "$expectedElfSha = 'c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107'" in operator
-assert "$expectedRootHelperSha = 'bc7302c07d7447868b4c8c65077b81280efb2ca3799669104b551338a20d6a00'" in operator
+assert "$expectedRootHelperSha = '1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc'" in operator
 assert f"$expectedRootHelperSha = '{reviewed_digest}'" in operator
+assert "if ($Apply) {" in operator and "GO-2026-6859" in operator
+assert operator.index("if ($Apply) {") < operator.index("$zipSha = (Get-FileHash")
 assert operator.index("$scriptHash -cne $expectedRootHelperSha") < operator.index(
     '& ssh $SshAlias "umask 077; mkdir -p'
 ), "Unreviewed shell helper must be rejected before any SSH host mutation"

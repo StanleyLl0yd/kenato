@@ -1,6 +1,6 @@
 # Go 1.27.4 Linux ARM64 backend rebuild and guarded rollout
 
-Status: **build preparation only** for #91. Go 1.27.4 (released 2026-11-10) fixes GO-2026-6859/CVE-2026-97054 and other security issues; the formerly verified Go 1.27.3 backend artifact is now obsolete. Build and independently review a new exact-main Go 1.27.4 ARM64 artifact. **SECURITY HOLD: do not apply the legacy 1.27.3 Bash/PowerShell operator helpers or deploy their pinned binary.** Their original immutable SHA pins must be replaced only after a new artifact has been independently verified and the helpers re-reviewed. No live deployment, backend feature change, new Kenato server, release signing, TURN, or M6.
+Status: **build preparation only** for #91. Go 1.27.4 (released 2026-11-10) fixes GO-2026-6859/CVE-2026-97054 and other security issues; the formerly verified Go 1.27.3 backend artifact is now obsolete. Build and independently review a new exact-main Go 1.27.4 ARM64 artifact. **SECURITY HOLD: the legacy 1.27.3 Bash/PowerShell operator helpers now reject deployment attempts before host mutation; do not use them to deploy their pinned binary.** Their original immutable SHA pins must be replaced only after a new artifact has been independently verified and the helpers re-reviewed. No live deployment, backend feature change, new Kenato server, release signing, TURN, or M6.
 
 ## Produce and verify a reviewed-source binary
 
@@ -91,7 +91,7 @@ pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-se
 ```
 
 The PowerShell wrapper independently pins the **reviewed LF-normalized
-root-executed Bash helper** to SHA-256 `bc7302c07d7447868b4c8c65077b81280efb2ca3799669104b551338a20d6a00`
+root-executed Bash helper** to SHA-256 `1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc`
 and checks that digest before opening an SSH connection or changing the host.
 A locally modified or substituted helper is rejected, even if the verified
 server executable ZIP is unchanged. Windows CRLF is normalized to LF before

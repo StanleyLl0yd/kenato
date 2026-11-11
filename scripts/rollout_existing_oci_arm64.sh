@@ -14,6 +14,12 @@ if [[ $# -ne 3 || "$1" != "--apply" || ! "$3" =~ ^[0-9a-f]{40}$ ]]; then
   usage >&2
   exit 2
 fi
+# SECURITY HOLD (2026-11-11): the pinned Go 1.27.3 artifact is vulnerable
+# to GO-2026-6859. Fail before host probing, service stop, or file mutation.
+# Re-enable only with an independently verified Go 1.27.4 artifact and new pins.
+printf 'ERROR: retired Go 1.27.3 artifact (GO-2026-6859); rollout disabled pending reviewed 1.27.4 replacement.\n' >&2
+exit 3
+
 if (( EUID != 0 )); then
   echo 'ERROR: run as root on the authorized EXISTING OCI host.' >&2
   exit 2
