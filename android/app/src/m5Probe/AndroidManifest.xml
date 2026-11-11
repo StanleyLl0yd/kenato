@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Diagnostic Keystore probe is strictly offline. Production app manifest
+         remains unchanged and retains INTERNET for encrypted M4 messaging. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+</manifest>
