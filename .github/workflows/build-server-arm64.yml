@@ -47,7 +47,7 @@ jobs:
         env:
           GOTOOLCHAIN: local
         run: |
-          go version | grep -Eq '^go version go1[.]27[.]3 linux/amd64$'
+          go version | grep -Eq '^go version go1[.]27[.]4 linux/amd64$'
           go mod verify
           go test ./...
           test -z "$(git status --porcelain)"
