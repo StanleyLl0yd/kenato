@@ -17,6 +17,54 @@ Parent #88, #116, #87. Effective 2026-10-20.
   after native vendor verification and release scope acceptance**.
 - M6, new APK/release and microphone/runtime activation remain prohibited.
 
+## Future video compatibility: required for vendor selection (2026-11-03)
+
+**Owner requirement:** Kenato will support one-to-one video calls after the first
+audio-only M5 prototype. Video remains **outside M5 acceptance and must not
+activate M6**, but the prebuilt WebRTC dependency chosen now must not force
+another vendor migration when video work starts. Do not interpret the M5
+audio-only runtime boundary as a permanent audio-only product strategy.
+
+- Keep the publisher's full, usable video stack: WebRTC Android Java video
+  capture/render APIs, ARM64 encoder/decoder factories, hardware acceleration
+  where available, and a documented software fallback. Do not select an
+  audio-only/reduced/stripped AAR merely for its size until its **actual video
+  encode/decode behavior** is proven on supported Android devices.
+- Establish a real interoperable minimum video codec profile (VP8 and/or H.264)
+  by **SDP capability negotiation and on-device encode/decode tests**; record
+  exact supported codecs and hardware/software paths for each candidate.
+  VP9/AV1, multi-codec simulcast, screen sharing and group calls are future
+  compatibility considerations, **not** unverified release promises or
+  mandatory prerequisites for the first one-to-one video call.
+- Compare Shiguredo `m157.8103.4.0` with the newer complete
+  `webrtc-sdk/android v150.7871.04` artifact using equal ARM64 ABI and
+  codec-policy constraints. The latter's prefixed/stripped variant is
+  **not assumed video-equivalent**. AAR size alone is not a meaningful
+  final package, codec quality, camera, power or memory comparison.
+- Before final vendor approval, verify actual factory construction and video
+  capability enumeration, local camera capture to preview, hardware/software
+  encoder and decoder interoperability, rotation/orientation, teardown/reopen,
+  device permission refusal and camera/microphone lifecycle on physical
+  ARM64 Android 10/13/14+ (and a 16-KiB page-size device where available).
+  Keep separate performance baselines for video CPU/RAM/thermal/battery and
+  audio latency; test on at least two physical devices before accepting video.
+- Preserve existing authenticated SDP/DTLS-fingerprint binding, encrypted M5
+  signaling, one-time call effect gating, consent and no-plaintext fallback.
+  Video frames/media must remain on DTLS-SRTP; camera permission and Android
+  foreground-service policy require their own review when video is scoped.
+- The actual Shiguredo m157.8103.4.0 Android producer includes
+  `android_simulcast.patch` and `SimulcastVideoEncoder` Java/JNI sources.
+  This does not establish **multi-codec** simulcast support or working codec
+  performance. The separate multi-codec-simulcast upstream branch must not be
+  conflated with the present standard Java encoder API; validate real device
+  behavior when video enters the approved scope.
+
+**Current result:** Shiguredo m157 remains the provisional prebuilt **research**
+selection, **not an approved lifetime vendor**. Existing AAR structural/ELF,
+JDK25/D8 and permissionless JNI-APK build passes do not prove video availability
+or performance. No production dependency, media runtime, permissions, TURN,
+M6, server or release changes are authorized by this decision.
+
 ## Shiguredo m157 selected for investigation
 
 - Publisher: shiguredo-webrtc-build/webrtc-build.

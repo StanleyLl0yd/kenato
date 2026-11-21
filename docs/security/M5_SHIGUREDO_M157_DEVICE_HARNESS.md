@@ -30,3 +30,19 @@ inconclusive tool result fail closed. This is a read-only check; it does not
 rewrite or re-sign the APK. It complements the pinned AAR ELF PT_LOAD 16KiB
 check in #155; full Android device/API execution and release AAB alignment
 are still NOT proven. Reference: https://developer.android.com/tools/zipalign
+
+## Two independently pinned m157 candidate APKs
+
+The source-controlled research probe accepts only the original
+`m157.8103.0.0` and newer `m157.8103.4.0` tags. Each must match its own
+publisher AAR SHA-256 and byte count **before any Gradle build**. PR builds
+prepare separate permissionless ARM64 debug APKs only in disposable directories;
+only version-labeled JSON evidence is uploaded. No vendor binary or APK is
+retained as a PR artifact, and no JNI function is invoked by CI.
+
+The manual `workflow_dispatch` still requires `reviewed_native_risk=true`
+**before** building or uploading a selected candidate APK. Its explicit
+`candidate_tag` choice is restricted to those two SHA-pinned versions. The
+3-day APK artifact must not be installed until separately approved native CVE,
+license and binary-provenance review. Source revision in the JSON remains an
+unverified publisher declaration, not reproducible compiled provenance.

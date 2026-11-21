@@ -12,6 +12,7 @@ import binascii
 import json
 import re
 import subprocess
+import time
 import sys
 import urllib.parse
 from pathlib import Path
@@ -23,14 +24,23 @@ EXPECTED_AAR_SHA256 = "b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340
 PUBLISHER_ROOT = "https://raw.githubusercontent.com/shiguredo-webrtc-build/webrtc-build/" + PUBLISHER_SHA + "/"
 GITILES_ROOT = "https://webrtc.googlesource.com/src/+/" + WEBRTC_SHA + "/"
 UPSTREAM_RTP_PATH = "modules/rtp_rtcp/source/rtp_format.cc"
+UPSTREAM_RTP_HEADER_PATH = "modules/rtp_rtcp/source/rtp_format.h"
+UPSTREAM_H264_PATH = "modules/rtp_rtcp/source/rtp_format_h264.cc"
+UPSTREAM_H265_PATH = "modules/rtp_rtcp/source/rtp_packetizer_h265.cc"
+UPSTREAM_VIDEO_SENDER_PATH = "modules/rtp_rtcp/source/rtp_sender_video.cc"
 UPSTREAM_SCTP_PATH = "pc/sctp_data_channel.cc"
 UPSTREAM_TRANSCEIVER_PATH = "pc/sdp_offer_answer.cc"
+UPSTREAM_PEER_CONNECTION_PATH = "pc/peer_connection.cc"
+UPSTREAM_TRANSCEIVER_LIST_PATH = "pc/transceiver_list.cc"
 MAX_VERSION = 4096
 MAX_NOTICE = 128 * 1024
 MAX_LICENSE = 128 * 1024
 MAX_RTP_BASE64 = 2 * 1024 * 1024
+MAX_RTP_COMPONENT_BASE64 = 3 * 1024 * 1024
 MAX_SCTP_BASE64 = 2 * 1024 * 1024
 MAX_TRANSCEIVER_BASE64 = 4 * 1024 * 1024
+MAX_PEER_CONNECTION_BASE64 = 4 * 1024 * 1024
+MAX_TRANSCEIVER_LIST_BASE64 = 2 * 1024 * 1024
 
 
 class SourceProbeError(ValueError):
@@ -49,34 +59,44 @@ def fetch_exact(url: str, *, maximum: int, host: str) -> bytes:
                    PUBLISHER_ROOT + "NOTICE")
     elif host == "webrtc.googlesource.com":
         allowed = (GITILES_ROOT + UPSTREAM_RTP_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_RTP_HEADER_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_H264_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_H265_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_VIDEO_SENDER_PATH + "?format=TEXT",
                    GITILES_ROOT + UPSTREAM_SCTP_PATH + "?format=TEXT",
-                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT")
+                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_PEER_CONNECTION_PATH + "?format=TEXT",
+                   GITILES_ROOT + UPSTREAM_TRANSCEIVER_LIST_PATH + "?format=TEXT")
     else:
         raise SourceProbeError("Source host outside exact allowlist")
     if parsed.hostname != host or url not in allowed:
         raise SourceProbeError("Source URL outside exact allowlist")
-    # curl is provided by the pinned ubuntu-24.04 GitHub Actions runner.
-    # No shell, redirects, HTTP, proxies via user arguments, or arbitrary URL.
-    try:
-        result = subprocess.run(
-            ["curl", "--silent", "--show-error", "--proto", "=https",
-             "--max-time", "30", "--connect-timeout", "15",
-             "--max-filesize", str(maximum),
-             "--write-out", "\n@@KENATO_STATUS:%{http_code}",
-             "--url", url],
-            capture_output=True, timeout=40, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise SourceProbeError("Pinned source retrieval failed") from error
-    if result.returncode != 0:
-        raise SourceProbeError("Pinned source transport rejected response")
-    body, sep, status = result.stdout.rpartition(b"\n@@KENATO_STATUS:")
-    if not sep or status != b"200":
-        raise SourceProbeError("Pinned source did not return HTTP 200")
-    if not body or len(body) > maximum:
-        raise SourceProbeError("Missing or oversized source snapshot")
-    return body
-
+    # Curl is pinned by the Ubuntu runner; only retry transient HTTP errors.
+    # Preserve the exact source SHA/URL and reject redirects/other responses.
+    for attempt in range(4):
+        try:
+            result = subprocess.run(
+                ["curl", "--silent", "--show-error", "--proto", "=https",
+                 "--max-time", "30", "--connect-timeout", "15",
+                 "--max-filesize", str(maximum),
+                 "--write-out", "\n@@KENATO_STATUS:%{http_code}",
+                 "--url", url],
+                capture_output=True, timeout=40, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SourceProbeError("Pinned source retrieval failed") from error
+        if result.returncode != 0:
+            raise SourceProbeError("Pinned source transport rejected response")
+        body, sep, status = result.stdout.rpartition(b"\n@@KENATO_STATUS:")
+        if sep and status == b"200":
+            if not body or len(body) > maximum:
+                raise SourceProbeError("Missing or oversized source snapshot")
+            return body
+        if not (sep and status in {b"429", b"502", b"503", b"504"} and
+                attempt < 3):
+            raise SourceProbeError("Pinned source did not return HTTP 200")
+        time.sleep(min(2 ** attempt, 4))
+    raise SourceProbeError("Pinned source did not return HTTP 200")
 
 def validate_version(text: str) -> None:
     expected = {
@@ -181,6 +201,66 @@ def validate_transceiver_source(source: str) -> None:
         raise SourceProbeError("CVE-2026-106268: ordered removal/teardown guard absent")
 
 
+
+
+def validate_rtp_payload_capacity_source(
+    rtp: str, header: str, h264: str, h265: str, sender: str,
+) -> None:
+    """CVE-2026-103631 source fingerprint, not Android ELF remediation proof.
+
+    Upstream WebRTC fc6666263eafa63878d02102189e3dabe9c90455.
+    """
+    if not re.search(r"limits\s*=\s*limits\.Sanitize\s*\(\s*\)", rtp):
+        raise SourceProbeError("CVE-2026-103631: RTP payload sanitation absent")
+    if not re.search(
+        r"PayloadSizeLimits\s+Sanitize\s*\(\s*\)\s*const", header
+    ) or not re.search(
+        r"result\.max_payload_len\s*=\s*std::max\s*\(\s*0\s*,\s*"
+        r"result\.max_payload_len\s*\)", header
+    ):
+        raise SourceProbeError("CVE-2026-103631: bounded payload limits absent")
+    for reduction in ("single_packet", "first_packet", "last_packet"):
+        field = reduction + "_reduction_len"
+        if not re.search(
+            r"result\." + field + r"\s*=\s*std::clamp\s*\(\s*result\."
+            + field + r"\s*,\s*0\s*,\s*result\.max_payload_len\s*\)", header,
+        ):
+            raise SourceProbeError("CVE-2026-103631: reduction clamp absent")
+    for video in (h264, h265):
+        if "limits_(limits.Sanitize())" not in video:
+            raise SourceProbeError("CVE-2026-103631: video packetizer lacks sanitized limits")
+    if not re.search(
+        r"RTC_CHECK_LE\s*\(\s*index\s*\+\s*kH265LengthFieldSizeBytes\s*\+"
+        r"\s*fragment\.size\(\)\s*,\s*payload_capacity\s*\)", h265,
+    ):
+        raise SourceProbeError("CVE-2026-103631: H265 fragment capacity guard absent")
+    for packet in ("single", "first", "last"):
+        if not re.search(
+            packet + r"_packet->headers_size\(\)\s*>\s*"
+            r"middle_packet->headers_size\(\)", sender,
+        ):
+            raise SourceProbeError("CVE-2026-103631: sender header reduction bound absent")
+
+def validate_mid_binding_source(peer_connection: str, sdp: str, transceiver_list: str) -> None:
+    """CVE-2026-106357 / Chromium 567160162: source-only MID binding fingerprint.
+
+    Upstream WebRTC commit 7a25e1c85a0af15cae8a2d55bf02e5610bf1af53.
+    This is NOT Android binary, reachability, or full CVE remediation proof.
+    """
+    if not re.search(
+        r"if\s*\(\s*internal->channel_mid\(\)\s*==\s*mid\s*\)", peer_connection
+    ):
+        raise SourceProbeError("CVE-2026-106357: peer channel MID binding absent")
+    if not re.search(
+        r"transceivers\(\)->FindUnassociatedByMLineIndex\s*\(\s*mline_index\s*\)", sdp
+    ):
+        raise SourceProbeError("CVE-2026-106357: SDP unassociated MID lookup absent")
+    if not re.search(
+        r"if\s*\(\s*!internal->mid\(\)\s*&&\s*"
+        r"internal->mline_index\(\)\s*==\s*mline_index\s*\)", transceiver_list
+    ):
+        raise SourceProbeError("CVE-2026-106357: list unassociated MID guard absent")
+
 def inspect_snapshots(version: str, license_text: str, notice: str, source: str, sctp_source: str, transceiver_source: str) -> dict:
     validate_version(version)
     validate_licenses(license_text, notice)
@@ -229,11 +309,37 @@ def collect() -> dict:
         maximum=MAX_TRANSCEIVER_BASE64,
         host="webrtc.googlesource.com",
     )
+    rtp_sources = {}
+    for path in (
+        UPSTREAM_RTP_HEADER_PATH, UPSTREAM_H264_PATH, UPSTREAM_H265_PATH,
+        UPSTREAM_VIDEO_SENDER_PATH,
+    ):
+        rtp_sources[path] = fetch_exact(
+            GITILES_ROOT + path + "?format=TEXT",
+            maximum=MAX_RTP_COMPONENT_BASE64,
+            host="webrtc.googlesource.com",
+        )
+    peer_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_PEER_CONNECTION_PATH + "?format=TEXT",
+        maximum=MAX_PEER_CONNECTION_BASE64,
+        host="webrtc.googlesource.com",
+    )
+    list_encoded = fetch_exact(
+        GITILES_ROOT + UPSTREAM_TRANSCEIVER_LIST_PATH + "?format=TEXT",
+        maximum=MAX_TRANSCEIVER_LIST_BASE64,
+        host="webrtc.googlesource.com",
+    )
     try:
         source = base64.b64decode(encoded, validate=True).decode("utf-8")
         sctp_source = base64.b64decode(sctp_encoded, validate=True).decode("utf-8")
         transceiver_source = base64.b64decode(transceiver_encoded, validate=True).decode("utf-8")
-        return inspect_snapshots(
+        peer_source = base64.b64decode(peer_encoded, validate=True).decode("utf-8")
+        list_source = base64.b64decode(list_encoded, validate=True).decode("utf-8")
+        rtp_components = {
+            path: base64.b64decode(encoded_data, validate=True).decode("utf-8")
+            for path, encoded_data in rtp_sources.items()
+        }
+        report = inspect_snapshots(
             version.decode("utf-8"),
             license_data.decode("utf-8"),
             notice.decode("utf-8"),
@@ -241,6 +347,21 @@ def collect() -> dict:
             sctp_source,
             transceiver_source,
         )
+        validate_mid_binding_source(peer_source, transceiver_source, list_source)
+        validate_rtp_payload_capacity_source(
+            source,
+            rtp_components[UPSTREAM_RTP_HEADER_PATH],
+            rtp_components[UPSTREAM_H264_PATH],
+            rtp_components[UPSTREAM_H265_PATH],
+            rtp_components[UPSTREAM_VIDEO_SENDER_PATH],
+        )
+        report["cve_2026_103631_upstream_source_fix_signature"] = True
+        report["cve_2026_103631_binary_remediation_verified"] = False
+        report["cve_2026_103631_android_reachability_verified"] = False
+        report["cve_2026_106357_upstream_source_fix_signature"] = True
+        report["cve_2026_106357_binary_remediation_verified"] = False
+        report["cve_2026_106357_android_reachability_verified"] = False
+        return report
     except (UnicodeError, binascii.Error) as error:
         raise SourceProbeError("Invalid upstream encoded source") from error
 

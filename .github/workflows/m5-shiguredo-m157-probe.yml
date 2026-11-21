@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/m5-shiguredo-m157-probe.yml"
       - "scripts/probe_shiguredo_m157.py"
+      - "scripts/probe_shiguredo_m157_notice.py"
+      - "scripts/test_probe_shiguredo_m157_notice.py"
       - "scripts/probe_shiguredo_m157_elf.py"
       - "scripts/test_probe_shiguredo_m157_elf.py"
       - "scripts/probe_shiguredo_m157_source.py"
@@ -46,19 +48,33 @@ jobs:
       - name: Download pinned publisher m157 AAR and inspect ARM64 without running native code
         run: python3 scripts/probe_shiguredo_m157.py --output /tmp/kenato-shiguredo-m157-evidence.json
 
+      - name: Compare newer pinned m157 patch AAR without executing third-party code
+        run: >-
+          python3 scripts/probe_shiguredo_m157.py --tag m157.8103.4.0
+          --output /tmp/kenato-shiguredo-m157-patch-evidence.json
+      - name: Offline generated NOTICE regression tests
+        run: python3 scripts/test_probe_shiguredo_m157_notice.py
+      - name: Verify all 34 publisher-generated notice attributions in exact patch AAR
+        run: >-
+          python3 scripts/probe_shiguredo_m157_notice.py
+          --output /tmp/kenato-shiguredo-m157-notice-inventory.json
+
       - name: Publish JSON only (never third-party binary)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m157-arm64-evidence
-          path: /tmp/kenato-shiguredo-m157-evidence.json
+          path: |
+            /tmp/kenato-shiguredo-m157-evidence.json
+            /tmp/kenato-shiguredo-m157-patch-evidence.json
+            /tmp/kenato-shiguredo-m157-notice-inventory.json
           if-no-files-found: ignore
           retention-days: 7
 
   disposable-jdk25-d8:
-    name: Test Java25 AAR with JDK25, AGP9.4 and arm64 D8 (not production)
+    name: Test old and patch Java25 AAR with JDK25, AGP9.4 and arm64 D8
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 65
     permissions:
       contents: read
     steps:
@@ -93,17 +109,30 @@ jobs:
           "build-tools;37.0.0"
       - name: Offline disposable smoke tests
         run: python3 scripts/test_probe_shiguredo_m157_d8.py
-      - name: Build disposable JDK25 ARM64 test app using published prebuilt AAR
+      - name: Download and verify exact official bundletool 1.18.3 before running Java
+        run: |
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --max-time 100 --max-filesize 40000000 \
+            --output /tmp/kenato-bundletool-1.18.3.jar \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  /tmp/kenato-bundletool-1.18.3.jar" | sha256sum -c -
+      - name: Build disposable JDK25 ARM64 test app using original prebuilt AAR
         run: >
           python3 scripts/probe_shiguredo_m157_d8.py
           --gradlew ./gradlew
           --output /tmp/kenato-m157-jdk25-d8.json
+      - name: Build separate disposable JDK25 ARM64 test app using m157 patch prebuilt AAR
+        run: >
+          python3 scripts/probe_shiguredo_m157_d8.py --tag m157.8103.4.0
+          --gradlew ./gradlew --bundletool /tmp/kenato-bundletool-1.18.3.jar
+          --output /tmp/kenato-m157-patch-jdk25-d8.json
       - name: Upload research JSON only (no AAR/APK)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m157-jdk25-d8-research
-          path: /tmp/kenato-m157-jdk25-d8.json
+          path: |
+            /tmp/kenato-m157-jdk25-d8.json
+            /tmp/kenato-m157-patch-jdk25-d8.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -148,13 +177,19 @@ jobs:
         run: python3 scripts/verify_ci_supply_chain.py
       - name: Run offline static ELF probe regressions
         run: python3 scripts/test_probe_shiguredo_m157_elf.py
-      - name: Inspect only SHA-pinned real m157 ARM64 library
+      - name: Inspect only SHA-pinned original m157 ARM64 library
         run: python3 scripts/probe_shiguredo_m157_elf.py --output /tmp/m157-arm64-elf-hardening.json
+      - name: Inspect SHA-pinned newer m157 patch ARM64 library separately
+        run: >-
+          python3 scripts/probe_shiguredo_m157_elf.py --tag m157.8103.4.0
+          --output /tmp/m157-patch-arm64-elf-hardening.json
       - name: Upload JSON only (no AAR or ELF)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: m5-shiguredo-m157-arm64-hardening
-          path: /tmp/m157-arm64-elf-hardening.json
+          path: |
+            /tmp/m157-arm64-elf-hardening.json
+            /tmp/m157-patch-arm64-elf-hardening.json
           if-no-files-found: ignore
           retention-days: 7

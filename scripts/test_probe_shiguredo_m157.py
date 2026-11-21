@@ -43,6 +43,32 @@ class ReadyMadeVendorTests(unittest.TestCase):
             with self.assertRaises(m157.CandidateProbeError):
                 m157.collect(downloader=fake_download)
 
+    def test_newer_m157_patch_release_is_independently_pinned_and_unapproved(self):
+        url, size, digest, producer, source = m157.candidate(m157.PATCH_TAG)
+        self.assertEqual(size, 15037143)
+        self.assertIn("/m157.8103.4.0/libwebrtc.aar", url)
+        self.assertEqual(producer, "c8c2c3ff87d6443192f9f42c3c12f005ee4f6d4c")
+        self.assertEqual(source, "95554e4a0c5c343fdc989387d9d0ce18e2a2294b")
+        m157.verify_observation(digest, size, tag=m157.PATCH_TAG)
+        with self.assertRaises(m157.CandidateProbeError):
+            m157.verify_observation(m157.EXPECTED_SHA256, size, tag=m157.PATCH_TAG)
+        with self.assertRaises(m157.CandidateProbeError):
+            m157.verify_observation(digest, m157.EXPECTED_SIZE, tag=m157.PATCH_TAG)
+        with self.assertRaises(m157.CandidateProbeError):
+            m157.candidate("m158.unreviewed")
+
+    def test_newer_patch_download_must_match_exact_bytes_not_just_claimed_digest(self):
+        def synthetic_download(url, output, *, max_bytes):
+            self.assertEqual(url, m157.PATCH_RELEASE_URL)
+            self.assertLess(max_bytes, 18 * 1024 * 1024)
+            output.write_bytes(b"unsafe")
+            return m157.PATCH_EXPECTED_SHA256, m157.PATCH_EXPECTED_SIZE
+
+        with mock.patch.object(m157, "inspect_pinned_aar") as inspect:
+            with self.assertRaises(m157.CandidateProbeError):
+                m157.collect(downloader=synthetic_download, tag=m157.PATCH_TAG)
+            inspect.assert_not_called()
+
     def test_embedded_notice_paths_are_inventory_only(self):
         import io
         import zipfile

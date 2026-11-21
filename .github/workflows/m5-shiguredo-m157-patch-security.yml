@@ -1,0 +1,45 @@
+name: M5 Shiguredo m157.4 exact source CVE and patch-chain audit (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-shiguredo-m157-patch-security.yml"
+      - "scripts/probe_shiguredo_m157_patch_security.py"
+      - "scripts/test_probe_shiguredo_m157_patch_security.py"
+      - "scripts/probe_shiguredo_m157_source.py"
+      - "scripts/probe_shiguredo_m157.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  source-patches-and-cves:
+    name: Check exact m157.4 producer tag, 21 patches and six CVE source fingerprints
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact research commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify CI policy and unmodified production media boundary
+        run: |
+          python3 scripts/verify_ci_supply_chain.py
+          python3 scripts/verify_m5_media_boundary.py
+      - name: Offline negative regression tests
+        run: python3 scripts/test_probe_shiguredo_m157_patch_security.py
+      - name: Fetch only exact SHA-pinned publisher patch and WebRTC source snapshots
+        run: >
+          python3 scripts/probe_shiguredo_m157_patch_security.py
+          --output /tmp/kenato-shiguredo-m157-patch-security.json
+      - name: Upload source-status and patch digest JSON only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m157-4-source-cve-and-patch-digests
+          path: /tmp/kenato-shiguredo-m157-patch-security.json
+          retention-days: 7
+          if-no-files-found: ignore

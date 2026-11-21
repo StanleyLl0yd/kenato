@@ -28,6 +28,17 @@ EXPECTED_SIZE = 15036224
 EXPECTED_SHA256 = "b95158860143edd381b804a5f3a8fea371ff24c44c2ebfc9a66c52340d558d3a"
 PRODUCER_TAG_SHA = "c575fdf836d1185d8cefda37197a2a489e95ffd9"
 PUBLISHER_DECLARED_WEBRTC_SHA = "b321f634929af0af61a8964487fbd7894a008f12"
+
+# Independently SHA-pinned newer M157 patch candidate. No approval or replacement.
+PATCH_TAG = "m157.8103.4.0"
+PATCH_RELEASE_URL = (
+    "https://github.com/shiguredo-webrtc-build/webrtc-build/releases/"
+    "download/m157.8103.4.0/libwebrtc.aar"
+)
+PATCH_EXPECTED_SIZE = 15037143
+PATCH_EXPECTED_SHA256 = "4ce14722c9c8f633cc9390f0547ee3195ad95cf1eeab18928ced733218d88cd1"
+PATCH_PRODUCER_TAG_SHA = "c8c2c3ff87d6443192f9f42c3c12f005ee4f6d4c"
+PATCH_PUBLISHER_DECLARED_WEBRTC_SHA = "95554e4a0c5c343fdc989387d9d0ce18e2a2294b"
 MAX_BYTES = 17 * 1024 * 1024
 MAX_EMBEDDED_NOTICE_BYTES = 2 * 1024 * 1024
 MAX_EMBEDDED_NOTICE_ENTRIES = 32
@@ -37,10 +48,21 @@ class CandidateProbeError(ValueError):
     pass
 
 
-def verify_observation(digest: str, size: int) -> None:
-    if not hmac.compare_digest(digest, EXPECTED_SHA256):
+def candidate(tag: str) -> tuple[str, int, str, str, str]:
+    if tag == TAG:
+        return (RELEASE_URL, EXPECTED_SIZE, EXPECTED_SHA256,
+                PRODUCER_TAG_SHA, PUBLISHER_DECLARED_WEBRTC_SHA)
+    if tag == PATCH_TAG:
+        return (PATCH_RELEASE_URL, PATCH_EXPECTED_SIZE, PATCH_EXPECTED_SHA256,
+                PATCH_PRODUCER_TAG_SHA, PATCH_PUBLISHER_DECLARED_WEBRTC_SHA)
+    raise CandidateProbeError("Unreviewed Shiguredo candidate tag")
+
+
+def verify_observation(digest: str, size: int, *, tag: str = TAG) -> None:
+    _url, expected_size, expected_sha, _producer, _source = candidate(tag)
+    if not hmac.compare_digest(digest, expected_sha):
         raise CandidateProbeError("GitHub release asset SHA-256 mismatch")
-    if size != EXPECTED_SIZE:
+    if size != expected_size:
         raise CandidateProbeError("GitHub release asset byte count mismatch")
 
 
@@ -70,11 +92,12 @@ def inspect_notice_evidence(archive: zipfile.ZipFile, names: list[str]) -> list[
     return out
 
 
-def inspect_pinned_aar(path: Path) -> dict:
+def inspect_pinned_aar(path: Path, *, tag: str = TAG) -> dict:
     # Existing comprehensive AAR ZIP, ELF and Java audit, with an explicit
     # research-only ARM64 selection. Historical multi-ABI callers stay strict.
+    _url, _size, expected_sha, producer, source = candidate(tag)
     details = evidence.audit.audit_aar(
-        path, expected_sha256=EXPECTED_SHA256,
+        path, expected_sha256=expected_sha,
         required_abis=frozenset(("arm64-v8a",)),
         # Shiguredo m157 observed classfile major 69; this research setting is
         # NOT a claim that Kenato's JDK 17 / AGP 9.4 can consume this bytecode.
@@ -97,12 +120,12 @@ def inspect_pinned_aar(path: Path) -> dict:
         logging_present = "org/webrtc/LoggingJni.class" in nested.namelist()
     return {
         "status": "STRUCTURAL_PASS_NOT_VENDOR_APPROVAL",
-        "tag": TAG,
+        "tag": tag,
         "asset_sha256": details["sha256"],
         "asset_size": details["file_bytes"],
         "asset_sha256_matches_github_release_metadata": True,
-        "publisher_tag_git_sha": PRODUCER_TAG_SHA,
-        "declared_upstream_webrtc_git_sha_UNVERIFIED_IN_BINARY": PUBLISHER_DECLARED_WEBRTC_SHA,
+        "publisher_tag_git_sha": producer,
+        "declared_upstream_webrtc_git_sha_UNVERIFIED_IN_BINARY": source,
         "required_abis": details["required_abis"],
         "other_packaged_abis": details["optional_abis_present"],
         "native_paths": native,
@@ -129,28 +152,30 @@ def inspect_pinned_aar(path: Path) -> dict:
     }
 
 
-def collect(*, downloader=evidence.download_snapshot) -> dict:
+def collect(*, downloader=evidence.download_snapshot, tag: str = TAG) -> dict:
+    url, _size, _sha, _producer, _source = candidate(tag)
     with tempfile.TemporaryDirectory(prefix="kenato-m5-shiguredo-") as temp:
         target = Path(temp) / "publisher-m157.aar"
-        digest, size = downloader(RELEASE_URL, target, max_bytes=MAX_BYTES)
-        verify_observation(digest, size)
+        digest, size = downloader(url, target, max_bytes=MAX_BYTES)
+        verify_observation(digest, size, tag=tag)
         # Re-hash exactly the downloaded artifact, not a supplied checksum alone.
         if not target.is_file() or target.stat().st_size != size:
             raise CandidateProbeError("Missing or replaced AAR snapshot")
-        return inspect_pinned_aar(target)
+        return inspect_pinned_aar(target, tag=tag)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tag", choices=(TAG, PATCH_TAG), default=TAG)
     args = parser.parse_args()
     try:
-        report = collect()
+        report = collect(tag=args.tag)
     except (CandidateProbeError, evidence.EvidenceError,
             evidence.audit.AarAuditError, OSError, zipfile.BadZipFile) as error:
         report = {
             "status": "RESEARCH_PROBE_FAILED",
-            "tag": TAG,
+            "tag": args.tag,
             "failure": type(error).__name__,
             "detail": str(error)[:180],
             "vendor_approved_for_kenato": False,

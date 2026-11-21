@@ -1,0 +1,78 @@
+name: M5 Shiguredo m158.1 exact source CVE and patch audit (research only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/m5-shiguredo-m158-patch-security.yml"
+      - "scripts/probe_shiguredo_m158_patch_security.py"
+      - "scripts/test_probe_shiguredo_m158_patch_security.py"
+      - "scripts/probe_shiguredo_m158_sctp_scope.py"
+      - "scripts/test_probe_shiguredo_m158_sctp_scope.py"
+      - "scripts/probe_shiguredo_m158_video_patch.py"
+      - "scripts/probe_shiguredo_m157_patch_security.py"
+      - "scripts/probe_shiguredo_m157_source.py"
+      - "scripts/probe_shiguredo_m157_notice.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  m158-source-cves-and-patches:
+    name: Verify exact m158 producer tag and six WebRTC source CVE fingerprints
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact research commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify CI policy and production media boundary
+        run: |
+          python3 scripts/verify_ci_supply_chain.py
+          python3 scripts/verify_m5_media_boundary.py
+      - name: Offline fail-closed regression tests
+        run: python3 scripts/test_probe_shiguredo_m158_patch_security.py
+      - name: Fetch exact publisher and upstream source by commit SHA
+        run: >
+          python3 scripts/probe_shiguredo_m158_patch_security.py
+          --output /tmp/kenato-shiguredo-m158-patches-cves.json
+      - name: Offline SCTP scope guards
+        if: always()
+        run: python3 scripts/test_probe_shiguredo_m158_sctp_scope.py
+      - name: Collect exact SCTP SendAsync source for independent CVE scope review
+        if: always()
+        run: >
+          python3 scripts/probe_shiguredo_m158_sctp_scope.py
+          --output /tmp/kenato-m158-sctp-scope.json
+      - name: Inspect exact m158 ToI420 Java/JNI error-path patch (research only)
+        if: always()
+        run: >
+          python3 scripts/probe_shiguredo_m158_video_patch.py
+          --output /tmp/kenato-m158-to-i420-patch.json
+      - name: Upload research-only source fingerprint JSON
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m158-1-source-cve-and-patch-evidence
+          path: /tmp/kenato-shiguredo-m158-patches-cves.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload pinned SCTP method excerpt (not a security verdict)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m158-sctp-sendasync-scope
+          path: /tmp/kenato-m158-sctp-scope.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload exact ToI420 Java/JNI failure-path source markers
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-shiguredo-m158-to-i420-source-only
+          path: /tmp/kenato-m158-to-i420-patch.json
+          retention-days: 7
+          if-no-files-found: ignore
