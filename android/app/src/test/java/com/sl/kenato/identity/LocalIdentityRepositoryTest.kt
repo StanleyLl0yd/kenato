@@ -154,7 +154,7 @@ class LocalIdentityRepositoryTest {
     }
 
     @Test
-    fun failedRecoveryStateClearDoesNotDeleteManagedKeys() {
+    fun failedRecoveryStateClearInvalidatesKeysBeforeClearingState() {
         val backend = TestIdentityKeyBackend()
         val store = InMemoryIdentityStateStore()
         val repository = repository(backend, store)
@@ -165,9 +165,65 @@ class LocalIdentityRepositoryTest {
             repository.resetLocalIdentityForRecovery()
         }
 
-        assertTrue(backend.hasAllManagedKeys())
-        assertEquals(0, backend.deleteCalls)
+        assertFalse(backend.hasAnyManagedKey())
+        assertEquals(1, backend.deleteCalls)
         assertTrue(store.read() != null)
+        assertThrows(IdentityStateException::class.java) {
+            repository.current()
+        }
+    }
+
+    @Test
+    fun failedKeyDeletionPreservesStateAndDoesNotClaimRecovery() {
+        val backend = TestIdentityKeyBackend()
+        val store = InMemoryIdentityStateStore()
+        val repository = repository(backend, store)
+        repository.loadOrCreate()
+        val original = requireNotNull(store.read()).copyOf()
+        backend.failDeleteBeforeAnyMutation = true
+
+        assertThrows(IdentityStateException::class.java) {
+            repository.resetLocalIdentityForRecovery()
+        }
+        assertArrayEquals(original, store.read())
+        assertEquals(1, backend.deleteCalls)
+        assertTrue(backend.hasAllManagedKeys())
+    }
+
+    @Test
+    fun partialKeystoreDeletionFailsWithoutClearingStateOrRegeneratingKey() {
+        val backend = TestIdentityKeyBackend()
+        val store = InMemoryIdentityStateStore()
+        val repository = repository(backend, store)
+        repository.loadOrCreate()
+        val original = requireNotNull(store.read()).copyOf()
+        backend.failDeleteAfterIdentityMutation = true
+
+        assertThrows(IdentityStateException::class.java) {
+            repository.resetLocalIdentityForRecovery()
+        }
+        assertArrayEquals(original, store.read())
+        assertTrue(backend.hasAnyManagedKey())
+        assertFalse(backend.hasAllManagedKeys())
+        assertThrows(IdentityStateException::class.java) {
+            repository.current()
+        }
+    }
+
+    @Test
+    fun backendSilentPartialDeleteCannotBeMistakenForRecoverySuccess() {
+        val backend = TestIdentityKeyBackend()
+        val store = InMemoryIdentityStateStore()
+        val repository = repository(backend, store)
+        repository.loadOrCreate()
+        val original = requireNotNull(store.read()).copyOf()
+        backend.silentPartialDelete = true
+
+        assertThrows(IdentityStateException::class.java) {
+            repository.resetLocalIdentityForRecovery()
+        }
+        assertArrayEquals(original, store.read())
+        assertTrue(backend.hasAnyManagedKey())
     }
 
     @Test
@@ -279,6 +335,9 @@ private class TestIdentityKeyBackend : IdentityKeyBackend {
         private set
     var deleteCalls = 0
         private set
+    var failDeleteBeforeAnyMutation = false
+    var failDeleteAfterIdentityMutation = false
+    var silentPartialDelete = false
 
     override fun hasAnyManagedKey(): Boolean = identityKeyPair != null || wrappingKeyPresent
 
@@ -317,8 +376,14 @@ private class TestIdentityKeyBackend : IdentityKeyBackend {
 
     override fun deleteManagedKeys() {
         deleteCalls += 1
+        if (failDeleteBeforeAnyMutation) {
+            throw IdentityStateException("Injected Keystore deletion failure")
+        }
         identityKeyPair = null
-        wrappingKeyPresent = false
+        if (failDeleteAfterIdentityMutation) {
+            throw IdentityStateException("Injected partial Keystore deletion failure")
+        }
+        if (!silentPartialDelete) wrappingKeyPresent = false
     }
 
     fun dropWrappingKey() {
