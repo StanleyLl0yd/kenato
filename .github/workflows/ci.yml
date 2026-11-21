@@ -140,6 +140,30 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Compile isolated P23 Android instrumentation (NOT EXECUTED)
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PkenatoM5ConsentProbeInstrumentation=true
+          :android:app:assembleM5ConsentProbe
+          :android:app:assembleM5ConsentProbeAndroidTest
+
+      - name: Verify isolated P23 diagnostic APK permissions and package
+        run: |
+          set -euo pipefail
+          probe=android/app/build/outputs/apk/m5ConsentProbe/app-m5ConsentProbe.apk
+          tests=android/app/build/outputs/apk/androidTest/m5ConsentProbe/app-m5ConsentProbe-androidTest.apk
+          test -s "$probe"
+          test -s "$tests"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          test -x "$aapt"
+          "$aapt" dump badging "$probe" | grep -Fq "package: name='com.sl.kenato.m5consentprobe'"
+          "$aapt" dump badging "$tests" | grep -Fq "package: name='com.sl.kenato.m5consentprobe.test'"
+          permissions="$("$aapt" dump permissions "$probe")"
+          if grep -Eq 'android[.]permission[.](INTERNET|RECORD_AUDIO|CAMERA|CAPTURE_AUDIO_OUTPUT)' <<< "$permissions"; then
+            echo "P23 probe unexpectedly requests network or media permissions" >&2
+            exit 1
+          fi
+
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 
