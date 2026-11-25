@@ -14,6 +14,9 @@ internal class M45ProcessTransportGate {
     private var poisoned = false
 
     @Synchronized
+    fun isAvailable(owner: Any): Boolean = !poisoned && (activeOwner == null || activeOwner === owner)
+
+    @Synchronized
     fun requireAvailable(owner: Any) {
         check(!poisoned) { "Process WSS safety state is uncertain" }
         check(activeOwner == null || activeOwner === owner) {
@@ -72,6 +75,35 @@ internal class M45ProcessTransportGate {
             "Process trust mutation generation unavailable"
         }
         mutationEpoch++
+    }
+
+    /** Local trust grants share the transport owner and fence queued starts,
+     * without disconnecting M4 for an offline capability exchange. */
+    @Synchronized
+    fun <T> localTrustMutation(owner: Any, action: () -> T): T {
+        beginMutation(owner)
+        return try {
+            action()
+        } finally {
+            endMutation()
+        }
+    }
+
+    /**
+     * A local revocation is a denial, not a grant. It must remain possible
+     * despite a competing owner or poisoned WSS, and never restart transport.
+     * If the epoch cannot advance, poison the transport but still attempt the
+     * durable local denial. This is not native media teardown.
+     */
+    @Synchronized
+    fun <T> localRevocation(action: () -> T): T {
+        val ownsEpoch = mutationEpoch % 2L == 0L && mutationEpoch < Long.MAX_VALUE - 1L
+        if (ownsEpoch) mutationEpoch++ else poison()
+        return try {
+            action()
+        } finally {
+            if (ownsEpoch) endMutation()
+        }
     }
 
     @Synchronized

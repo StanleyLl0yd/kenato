@@ -317,6 +317,107 @@ class M45AcceptanceRuntimeTest {
         assertThrows(IllegalStateException::class.java) { gate.claim(other) }
     }
 
+    @Test
+    fun controllerLocalGrantsUseActiveOwnerAndFenceStartsWithoutDisconnectingM4() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val owner = first.runtime(gate)
+        val other = Fixture().runtime(gate)
+        owner.startMessaging()
+        first.events.clear()
+        val before = gate.mutationEpoch
+        val result = owner.localTrustMutation {
+            assertEquals(before + 1L, gate.mutationEpoch)
+            "local proof"
+        }
+        assertEquals("local proof", result)
+        assertEquals(before + 2L, gate.mutationEpoch)
+        assertTrue(first.messaging.started)
+        assertTrue(first.events.isEmpty())
+        assertThrows(IllegalStateException::class.java) {
+            other.localTrustMutation { throw AssertionError("Competing grant must not execute") }
+        }
+        assertThrows(IllegalStateException::class.java) {
+            gate.localTrustMutation(Any()) { throw AssertionError("Offline competing grant must not execute") }
+        }
+        owner.close()
+        other.close()
+    }
+
+    @Test
+    fun offlineGrantNeedsNoRuntimeAndFailureStillClosesMutationEpoch() {
+        val gate = M45ProcessTransportGate()
+        val failure = IllegalStateException("synthetic grant failure")
+        val owner = Any()
+        assertTrue(assertThrows(IllegalStateException::class.java) {
+            gate.localTrustMutation(owner) {
+                assertEquals(1L, gate.mutationEpoch)
+                throw failure
+            }
+        } === failure)
+        assertEquals(2L, gate.mutationEpoch)
+        assertEquals("offline", gate.localTrustMutation(owner) { "offline" })
+        assertEquals(4L, gate.mutationEpoch)
+    }
+
+    @Test
+    fun snapshotConversationAdmissionRejectsCompetingClosedAndPoisonedRuntime() {
+        val gate = M45ProcessTransportGate()
+        val owner = Fixture().runtime(gate)
+        val other = Fixture().runtime(gate)
+        val localOwner = Any()
+        assertTrue(gate.isAvailable(localOwner))
+        assertTrue(other.canReadConversation())
+        owner.startMessaging()
+        assertTrue(owner.canReadConversation())
+        assertFalse(other.canReadConversation())
+        assertFalse(gate.isAvailable(localOwner))
+        assertEquals("revoked", gate.localRevocation { "revoked" })
+        assertFalse(other.canReadConversation())
+        owner.close()
+        assertFalse(owner.canReadConversation())
+        assertTrue(other.canReadConversation())
+        assertTrue(gate.isAvailable(localOwner))
+        gate.poison()
+        assertFalse(other.canReadConversation())
+        assertFalse(gate.isAvailable(localOwner))
+        other.close()
+    }
+
+    @Test
+    fun localRevocationDoesNotRequireHealthyOrOwnedTransport() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val owner = first.runtime(gate)
+        owner.startMessaging()
+        first.events.clear()
+        val before = gate.mutationEpoch
+        assertEquals("revoked", gate.localRevocation {
+            assertEquals(before + 1L, gate.mutationEpoch)
+            "revoked"
+        })
+        assertEquals(before + 2L, gate.mutationEpoch)
+        assertTrue(first.messaging.started)
+        assertTrue(first.events.isEmpty())
+        gate.poison()
+        var attempts = 0
+        val failure = IllegalStateException("synthetic local persistence failure")
+        assertTrue(assertThrows(IllegalStateException::class.java) {
+            gate.localRevocation {
+                attempts++
+                throw failure
+            }
+        } === failure)
+        gate.localRevocation { attempts++ }
+        assertEquals(2, attempts)
+        assertEquals(before + 6L, gate.mutationEpoch)
+        assertTrue(gate.isPoisoned())
+        assertThrows(IllegalStateException::class.java) {
+            owner.localTrustMutation { throw AssertionError("Poisoned grant must not execute") }
+        }
+        owner.close()
+    }
+
     private class Fixture {
         val events = ArrayList<String>()
         val identity = FakeIdentity(events)
