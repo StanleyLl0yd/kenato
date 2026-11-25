@@ -1,10 +1,45 @@
 package com.sl.kenato
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class M5VoiceUiSnapshotGuardTest {
+    @Test
+    fun storageLossRedactsPrivateSnapshotButPreservesUiAndResetFences() {
+        val current = M45AcceptanceUiState(
+            serviceOrigin = "https://example.test",
+            identityId = "owner",
+            pendingInvites = listOf("invite"),
+            contacts = listOf(M45UiContact("local", "peer")),
+            selectedPeerIdentityId = "peer",
+            diagnostics = listOf("event"),
+            voiceChallengeQr = "challenge",
+            voiceProofQr = "proof",
+            voiceCapabilityConfirmed = true,
+            voiceUiEpoch = 7L,
+            voiceConsentResetEpoch = 3L,
+            busy = true,
+        )
+        val unavailable = M5VoiceUiSnapshotGuard.storageUnavailable(current, "lease unavailable")
+        assertEquals(M45AcceptanceUiState(
+            voiceUiEpoch = 7L,
+            voiceConsentResetEpoch = 3L,
+            busy = true,
+            storageUnavailable = true,
+            messagingState = com.sl.kenato.messaging.MessagingWssState.FAILED,
+            error = "lease unavailable",
+        ), unavailable)
+        val recovered = M5VoiceUiSnapshotGuard.redactStaleProofs(
+            unavailable.copy(busy = false), current.copy(busy = false), foreground = true,
+        )
+        assertFalse(recovered.storageUnavailable)
+        assertEquals("owner", recovered.identityId)
+        assertNull(recovered.voiceChallengeQr)
+        assertNull(recovered.voiceProofQr)
+    }
+
     @Test
     fun unavailableOrCorruptedVoiceConsentCannotBlockTextScreen() {
         assertEquals(true, M5VoiceUiSnapshotGuard.confirmedOrUnavailable { true })

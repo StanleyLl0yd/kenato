@@ -1,11 +1,35 @@
 package com.sl.kenato
 
+import com.sl.kenato.storage.M45CrossProcessLease
+
+internal class M45StorageLeaseUnavailableException(cause: Exception) :
+    IllegalStateException("Exclusive local storage ownership is unavailable", cause)
+
 /**
  * One process-local transport owner per private storage directory.
- * This gate is neither a cross-process lease nor durable rollback protection.
+ * The production gate also requires an advisory cross-process storage lease.
+ * Neither mechanism is durable rollback protection.
  * Runtime operations and transport callbacks take this monitor before WSS.
  */
-internal class M45ProcessTransportGate {
+internal class M45ProcessTransportGate(
+    private val storageLease: (() -> M45CrossProcessLease)? = null,
+) {
+    @Synchronized
+    fun requireStorageLease() {
+        try {
+            storageLease?.invoke()?.requireActive()
+        } catch (error: Exception) {
+            throw M45StorageLeaseUnavailableException(error)
+        }
+    }
+
+    private fun storageAvailable(): Boolean = try {
+        requireStorageLease()
+        true
+    } catch (_: M45StorageLeaseUnavailableException) {
+        false
+    }
+
     @Volatile var mutationEpoch: Long = 0L
         private set
     private var activeOwner: Any? = null
@@ -14,10 +38,12 @@ internal class M45ProcessTransportGate {
     private var poisoned = false
 
     @Synchronized
-    fun isAvailable(owner: Any): Boolean = !poisoned && (activeOwner == null || activeOwner === owner)
+    fun isAvailable(owner: Any): Boolean =
+        !poisoned && storageAvailable() && (activeOwner == null || activeOwner === owner)
 
     @Synchronized
     fun requireAvailable(owner: Any) {
+        requireStorageLease()
         check(!poisoned) { "Process WSS safety state is uncertain" }
         check(activeOwner == null || activeOwner === owner) {
             "Another acceptance runtime owns the process WSS transport"
@@ -54,15 +80,15 @@ internal class M45ProcessTransportGate {
     }
 
     @Synchronized
-    fun isPoisoned(): Boolean = poisoned
+    fun isPoisoned(): Boolean = poisoned || !storageAvailable()
 
     @Synchronized
     fun captureCallbackPermission(owner: Any): () -> Boolean {
         val capturedGeneration = generation
-        val admitted = !poisoned && callbacksEnabled && activeOwner === owner
+        val admitted = !poisoned && storageAvailable() && callbacksEnabled && activeOwner === owner
         return {
             synchronized(this) {
-                admitted && !poisoned && callbacksEnabled &&
+                admitted && !poisoned && storageAvailable() && callbacksEnabled &&
                     activeOwner === owner && generation == capturedGeneration
             }
         }
@@ -97,6 +123,8 @@ internal class M45ProcessTransportGate {
      */
     @Synchronized
     fun <T> localRevocation(action: () -> T): T {
+        // Unlike WSS poison, another process owning storage cannot be bypassed.
+        requireStorageLease()
         val ownsEpoch = mutationEpoch % 2L == 0L && mutationEpoch < Long.MAX_VALUE - 1L
         if (ownsEpoch) mutationEpoch++ else poison()
         return try {

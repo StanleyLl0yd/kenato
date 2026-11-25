@@ -51,6 +51,7 @@ internal data class M45AcceptanceUiState(
     /** In-memory reset fence for stale asynchronous voice QR image imports. */
     val voiceConsentResetEpoch: Long = 0L,
     val busy: Boolean = false,
+    val storageUnavailable: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
 )
@@ -59,9 +60,9 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val processGate = processTransportGate(appContext)
     private val localTrustOwner = Any()
-    private val identityRepository = LocalIdentityRepository.create(appContext)
-    private val diagnosticJournal = M45DiagnosticJournal(appContext)
-    private val contactState = ContactLocalState.create(appContext)
+    private val identityRepository by lazy { LocalIdentityRepository.create(appContext) }
+    private val diagnosticJournal by lazy { M45DiagnosticJournal(appContext) }
+    private val contactState by lazy { ContactLocalState.create(appContext) }
     private val voiceCapability by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         M5VoiceCapabilityLocalBridge(appContext, identityRepository, contactState)
     }
@@ -70,7 +71,9 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private var ephemeralVoicePeerId: String? = null
     // Only the serialized worker modifies this counter after a durable local reset.
     private var voiceConsentResetEpoch = 0L
-    private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private val preferences by lazy {
+        appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
     private val worker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "kenato-m45-acceptance").apply { isDaemon = true }
     }
@@ -85,12 +88,8 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private var nextOperationTicket = 0L
     private var activeOperationTicket: Long? = null
 
-    var state by mutableStateOf(
-        M45AcceptanceUiState(
-            serviceOrigin = preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty(),
-            messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
-        ),
-    )
+    // Load persisted preferences on the worker only after acquiring the storage lease.
+    var state by mutableStateOf(M45AcceptanceUiState())
         private set
 
     private val pollRunnable = object : Runnable {
@@ -111,6 +110,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         val requestEpoch = state.voiceUiEpoch
         worker.execute {
             try {
+                processGate.requireStorageLease()
                 if (
                     preferences.getBoolean(KEY_MESSAGING_ENABLED, false) &&
                     preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty().isNotBlank() &&
@@ -125,9 +125,12 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                     }
                 }
             } catch (error: Exception) {
+                if (error is M45StorageLeaseUnavailableException) clearEphemeralVoiceQr()
                 mainHandler.post {
                     if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
-                        state = state.copy(error = userError(error))
+                        state = if (error is M45StorageLeaseUnavailableException) {
+                            M5VoiceUiSnapshotGuard.storageUnavailable(state, userError(error))
+                        } else state.copy(error = userError(error))
                     }
                 }
             }
@@ -307,6 +310,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         state = state.copy(busy = true, notice = null, error = null)
         worker.execute {
             try {
+                processGate.requireStorageLease()
                 operation()
                 val snapshot = buildSnapshot().copy(voiceUiEpoch = requestEpoch)
                 val completedResetEpoch = voiceConsentResetEpoch
@@ -317,10 +321,22 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
                     )
                 }
             } catch (error: Exception) {
-                val snapshot = runCatching {
-                    buildSnapshot().copy(voiceUiEpoch = requestEpoch)
-                }.getOrNull()
-                val message = userError(error)
+                val attemptedSnapshot = if (error is M45StorageLeaseUnavailableException) null else {
+                    runCatching { buildSnapshot().copy(voiceUiEpoch = requestEpoch) }
+                }
+                val leaseError = (error as? M45StorageLeaseUnavailableException)
+                    ?: (attemptedSnapshot?.exceptionOrNull() as? M45StorageLeaseUnavailableException)
+                val message = userError(leaseError ?: error)
+                val snapshot = if (leaseError != null) {
+                    clearEphemeralVoiceQr()
+                    M5VoiceUiSnapshotGuard.storageUnavailable(
+                        M45AcceptanceUiState(
+                            voiceUiEpoch = requestEpoch,
+                            voiceConsentResetEpoch = voiceConsentResetEpoch,
+                        ),
+                        message,
+                    )
+                } else attemptedSnapshot?.getOrNull()
                 val completedResetEpoch = voiceConsentResetEpoch
                 mainHandler.post {
                     finishOperation(
@@ -369,12 +385,16 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         val requestEpoch = state.voiceUiEpoch
         worker.execute {
             val result = runCatching { buildSnapshot().copy(voiceUiEpoch = requestEpoch) }
+            if (result.exceptionOrNull() is M45StorageLeaseUnavailableException) clearEphemeralVoiceQr()
             mainHandler.post {
                 silentRefreshInFlight.set(false)
-                result.onSuccess { snapshot ->
-                    if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
-                        applySnapshot(snapshot)
-                    }
+                if (M5VoiceUiSnapshotGuard.mayApplyForegroundRefresh(state, requestEpoch)) {
+                    result.onSuccess { snapshot -> applySnapshot(snapshot) }
+                        .onFailure { error ->
+                            if (error is M45StorageLeaseUnavailableException) {
+                                state = M5VoiceUiSnapshotGuard.storageUnavailable(state, userError(error))
+                            }
+                        }
                 }
             }
         }
@@ -434,6 +454,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     private fun buildSnapshot(): M45AcceptanceUiState = synchronized(processGate) {
+        processGate.requireStorageLease()
         val origin = preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty()
         val identity = identityRepository.current()
         if (identity == null) {
@@ -526,7 +547,7 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private fun applySnapshot(
         snapshot: M45AcceptanceUiState,
         notice: String? = state.notice,
-        error: String? = state.error,
+        error: String? = state.error.takeUnless { state.storageUnavailable },
     ) {
         // Work on the serialized worker may produce a snapshot *before* background or a
         // contact change, then post it *after* the UI has resumed. The epoch can only

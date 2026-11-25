@@ -54,6 +54,14 @@ android {
     }
 
     buildTypes {
+        if (providers.gradleProperty("kenatoM5StorageProbe").orNull == "true") {
+            create("m5StorageProbe") {
+                initWith(getByName("debug"))
+                applicationIdSuffix = ".m5storageprobe"
+                versionNameSuffix = "-m5storageprobe"
+                matchingFallbacks += listOf("debug")
+            }
+        }
         release {
             isMinifyEnabled = true
             if (hasReleaseSigning) {

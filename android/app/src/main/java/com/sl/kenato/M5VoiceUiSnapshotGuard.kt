@@ -1,5 +1,7 @@
 package com.sl.kenato
 
+import com.sl.kenato.messaging.MessagingWssState
+
 /**
  * Compose/controller thread boundary for short-lived signed QR records.
  * An async snapshot prepared in an earlier Activity foreground epoch must
@@ -20,6 +22,18 @@ internal object M5VoiceUiSnapshotGuard {
         operationInProgress: Boolean = false,
     ): Boolean = !operationInProgress && requestPeerId != null && requestPeerId == selectedPeerId &&
         requestResetEpoch == currentResetEpoch
+
+    /** No previous private snapshot or QR may survive loss of storage ownership.
+     * This is not a successful reset and must retain the existing operation fences. */
+    fun storageUnavailable(current: M45AcceptanceUiState, error: String): M45AcceptanceUiState =
+        M45AcceptanceUiState(
+            voiceUiEpoch = current.voiceUiEpoch,
+            voiceConsentResetEpoch = current.voiceConsentResetEpoch,
+            busy = current.busy,
+            storageUnavailable = true,
+            messagingState = MessagingWssState.FAILED,
+            error = error,
+        )
 
     /** Failure of optional voice consent storage never blocks M4 text UI. */
     fun confirmedOrUnavailable(check: () -> Boolean): Boolean =

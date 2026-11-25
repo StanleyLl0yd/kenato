@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <application android:testOnly="true">
+        <activity android:name=".MainActivity" tools:node="remove" />
+        <service
+            android:name="com.sl.kenato.storage.M45StorageLeaseProbeService"
+            android:exported="false"
+            android:process=":storageleaseprobe" />
+    </application>
+    <instrumentation
+        android:name="com.sl.kenato.storage.M45StorageLeaseInstrumentation"
+        android:targetPackage="com.sl.kenato.m5storageprobe" />
+</manifest>
