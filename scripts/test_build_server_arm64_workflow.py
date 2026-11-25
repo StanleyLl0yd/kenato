@@ -19,7 +19,7 @@ required = (
     "GOOS: linux",
     "GOARCH: arm64",
     'CGO_ENABLED: "0"',
-    "go version | grep -Eq '^go version go1[.]27[.]3 linux/amd64$'",
+    "go version | grep -Eq '^go version go1[.]27[.]4 linux/amd64$'",
     "go mod verify",
     "go test ./...",
     "-trimpath -buildvcs=true",
