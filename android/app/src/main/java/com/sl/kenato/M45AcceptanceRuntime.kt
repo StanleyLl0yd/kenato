@@ -114,6 +114,26 @@ internal interface M45MessagingBoundary : AutoCloseable {
     fun conversation(ownerIdentityId: ByteArray, peerIdentityId: ByteArray): MessagingConversationState
 }
 
+/**
+ * Stop and release are independent teardown obligations. Always attempt both
+ * and preserve distinct failures. This is not proof of native socket shutdown.
+ */
+internal fun closeM45Resources(stop: () -> Unit, release: () -> Unit) {
+    var failure: Throwable? = null
+    try {
+        stop()
+    } catch (error: Throwable) {
+        failure = error
+    }
+    try {
+        release()
+    } catch (error: Throwable) {
+        val prior = failure
+        if (prior == null) failure = error else if (prior !== error) prior.addSuppressed(error)
+    }
+    failure?.let { throw it }
+}
+
 internal class M45AcceptanceRuntime(
     private val identity: M45IdentityBoundary,
     private val contacts: M45ContactBoundary,
@@ -186,8 +206,7 @@ internal class M45AcceptanceRuntime(
 
     override fun close() {
         messagingStarted = false
-        messaging.stop()
-        messaging.close()
+        closeM45Resources(messaging::stop, messaging::close)
     }
 
     private fun currentIdentityId(): ByteArray {
@@ -317,7 +336,6 @@ private class AndroidM45MessagingBoundary(
     ): MessagingConversationState = conversations.conversation(ownerIdentityId, peerIdentityId)
 
     override fun close() {
-        wss.stop()
-        scheduler.close()
+        closeM45Resources(wss::stop, scheduler::close)
     }
 }

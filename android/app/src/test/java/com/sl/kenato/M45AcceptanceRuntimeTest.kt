@@ -137,6 +137,69 @@ class M45AcceptanceRuntimeTest {
         assertFalse(fixture.messaging.started)
     }
 
+    @Test
+    fun runtimeCloseStillReleasesBoundaryWhenStopFails() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.startMessaging()
+        fixture.events.clear()
+        val failure = IllegalStateException("simulated stop failure")
+        fixture.messaging.stopFailure = failure
+        val actual = assertThrows(IllegalStateException::class.java) { runtime.close() }
+        assertTrue(actual === failure)
+        assertEquals(listOf("messaging.stop", "messaging.close"), fixture.events)
+        assertFalse(fixture.messaging.started)
+    }
+
+    @Test
+    fun runtimeClosePreservesDistinctStopAndReleaseFailures() {
+        val fixture = Fixture()
+        val failure = IllegalStateException("simulated stop failure")
+        val secondary = IllegalArgumentException("simulated release failure")
+        fixture.messaging.stopFailure = failure
+        fixture.messaging.closeFailure = secondary
+        val actual = assertThrows(IllegalStateException::class.java) { fixture.runtime().close() }
+        assertTrue(actual === failure)
+        assertEquals(listOf(secondary), actual.suppressed.toList())
+        assertEquals(listOf("messaging.stop", "messaging.close"), fixture.events)
+    }
+
+    @Test
+    fun resourceCloseDoesNotSuppressTheSameThrowableInstance() {
+        val failure = IllegalStateException("shared teardown failure")
+        var releaseAttempted = false
+        val actual = assertThrows(IllegalStateException::class.java) {
+            closeM45Resources({ throw failure }, {
+                releaseAttempted = true
+                throw failure
+            })
+        }
+        assertTrue(releaseAttempted)
+        assertTrue(actual === failure)
+        assertTrue(actual.suppressed.isEmpty())
+    }
+
+    @Test
+    fun resourceCloseReportsReleaseFailureAndAttemptsBothSteps() {
+        val events = ArrayList<String>()
+        val failure = IllegalStateException("simulated release failure")
+        val actual = assertThrows(IllegalStateException::class.java) {
+            closeM45Resources({ events += "stop" }, {
+                events += "release"
+                throw failure
+            })
+        }
+        assertEquals(listOf("stop", "release"), events)
+        assertTrue(actual === failure)
+    }
+
+    @Test
+    fun resourceCloseRunsBothStepsInOrderOnSuccess() {
+        val events = ArrayList<String>()
+        closeM45Resources({ events += "stop" }, { events += "release" })
+        assertEquals(listOf("stop", "release"), events)
+    }
+
     private class Fixture {
         val events = ArrayList<String>()
         val identity = FakeIdentity(events)
@@ -252,6 +315,8 @@ class M45AcceptanceRuntimeTest {
         private val events: MutableList<String>,
     ) : M45MessagingBoundary {
         var started = false
+        var stopFailure: Throwable? = null
+        var closeFailure: Throwable? = null
 
         override fun start() {
             events += "messaging.start"
@@ -260,6 +325,7 @@ class M45AcceptanceRuntimeTest {
 
         override fun stop() {
             events += "messaging.stop"
+            stopFailure?.let { throw it }
             started = false
         }
 
@@ -288,7 +354,9 @@ class M45AcceptanceRuntimeTest {
         )
 
         override fun close() {
+            events += "messaging.close"
             started = false
+            closeFailure?.let { throw it }
         }
     }
 }
