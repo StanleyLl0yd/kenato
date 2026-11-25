@@ -12,23 +12,25 @@ help_result = subprocess.run(["bash", str(path), "--help"], text=True, capture_o
 assert help_result.returncode == 0, help_result.stderr
 refusal = subprocess.run(["bash", str(path)], text=True, capture_output=True)
 assert refusal.returncode == 2, (refusal.stdout, refusal.stderr)
-# Retired artifact must fail before root privilege, file or systemd checks.
+# The retired artifact's actual source must fail before root privilege or host checks.
 retired = subprocess.run(
-    ["bash", str(path), "--apply", "/nonexistent/obsolete-kenato-artifact", "a" * 40],
+    ["bash", str(path), "--apply", "/nonexistent/obsolete-kenato-artifact", "aa3bcebe646bd84ce3be0dd4357840ca31acd71d"],
     text=True, capture_output=True,
 )
-assert retired.returncode == 3, (retired.stdout, retired.stderr)
-assert "GO-2026-6859" in retired.stderr
+assert retired.returncode == 1, (retired.stdout, retired.stderr)
+assert "Unreviewed backend source revision" in retired.stderr
+assert text.index('[[ "$expected_source" == "$pinned_source" ]]') < text.index('if (( EUID != 0 ))')
+assert "c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107" not in text
 
 required = [
     'if [[ $# -ne 3 || "$1" != "--apply"',
     'if (( EUID != 0 ))',
     'source_sha=$expected_source',
     "vcs.modified=false",
-    "go1.27.3",
+    "go1.27.4",
     "SHA256SUMS",
-    "pinned_source=aa3bcebe646bd84ce3be0dd4357840ca31acd71d",
-    "pinned_binary=c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107",
+    "pinned_source=7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb",
+    "pinned_binary=a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb",
     "readelf -h",
     "local_health()",
     "127.0.0.1:8080/healthz",
@@ -89,15 +91,20 @@ for ss_output, should_accept in examples:
 
 
 operator = Path("scripts/Deploy-KenatoGoArm64.ps1").read_text(encoding="utf-8")
-reviewed_digest = "1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc"
+reviewed_digest = "cf08ed6ea890d01fabf0664935226d6982ac10a71253c4766577f98314a290ba"
 assert hashlib.sha256(path.read_bytes()).hexdigest() == reviewed_digest
-assert "$sourceSha = 'aa3bcebe646bd84ce3be0dd4357840ca31acd71d'" in operator
-assert "$expectedZipSha = '0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d'" in operator
-assert "$expectedElfSha = 'c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107'" in operator
-assert "$expectedRootHelperSha = '1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc'" in operator
+assert "$sourceSha = '7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb'" in operator
+assert "$expectedZipSha = 'e867874d61ffcd5c8a03b32cd5218259211b6f7a230c27b7de914590c64c082c'" in operator
+assert "$expectedElfSha = 'a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb'" in operator
+assert "$expectedRootHelperSha = 'cf08ed6ea890d01fabf0664935226d6982ac10a71253c4766577f98314a290ba'" in operator
 assert f"$expectedRootHelperSha = '{reviewed_digest}'" in operator
-assert "if ($Apply) {" in operator and "GO-2026-6859" in operator
-assert operator.index("if ($Apply) {") < operator.index("$zipSha = (Get-FileHash")
+# Reject the obsolete outer ZIP and ELF before the first remote command, even with -Apply.
+assert "0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d" not in operator
+assert "c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107" not in operator
+assert "aa3bcebe646bd84ce3be0dd4357840ca31acd71d" not in operator
+for marker in ("$zipSha -cne $expectedZipSha", "$actualElfSha -cne $expectedElfSha", "if (-not $Apply)"):
+    assert operator.index(marker) < operator.index('& ssh $SshAlias "umask 077; mkdir -p')
+assert operator.index("$zipSha -cne $expectedZipSha") < operator.index("Expand-Archive")
 assert operator.index("$scriptHash -cne $expectedRootHelperSha") < operator.index(
     '& ssh $SshAlias "umask 077; mkdir -p'
 ), "Unreviewed shell helper must be rejected before any SSH host mutation"
