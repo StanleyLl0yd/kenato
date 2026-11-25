@@ -140,6 +140,18 @@ jobs:
           :android:app:assembleRelease
           :android:app:bundleRelease
 
+      - name: Compile isolated M5 storage lease probe (do not install or publish)
+        run: |
+          ./gradlew --no-daemon --stacktrace -PkenatoM5StorageProbe=true :android:app:assembleM5StorageProbe
+          apk=android/app/build/outputs/apk/m5StorageProbe/app-m5StorageProbe.apk
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt2"
+          test -f "$apk"
+          "$aapt" dump badging "$apk" | grep -F "package: name='com.sl.kenato.m5storageprobe'"
+          "$aapt" dump permissions "$apk" > /tmp/kenato-storage-probe-permissions.txt
+          if grep -E 'android\.permission\.(INTERNET|RECORD_AUDIO|FOREGROUND_SERVICE_MICROPHONE)' /tmp/kenato-storage-probe-permissions.txt; then
+            exit 1
+          fi
+
       - name: Guard Android Java17 bytecode after JDK25 build
         run: python3 scripts/audit_kenato_jvm_target.py android/app/build --max-major 61
 

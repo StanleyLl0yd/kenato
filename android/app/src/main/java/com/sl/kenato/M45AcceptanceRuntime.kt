@@ -31,6 +31,7 @@ import com.sl.kenato.messaging.WssMessagingDurableWorkFlusher
 import com.sl.kenato.messaging.WssMessagingOutboundAdmission
 import com.sl.kenato.messaging.SerializedMessagingRetryScheduler
 import com.sl.kenato.messaging.SerializedMessagingSocketFactory
+import com.sl.kenato.storage.M45CrossProcessLease
 import com.sl.kenato.storage.ProcessLocalOwnerRegistry
 import com.sl.kenato.session.EstablishedSession
 import com.sl.kenato.session.LocalSessionRepository
@@ -140,8 +141,11 @@ internal fun closeM45Resources(stop: () -> Unit, release: () -> Unit) {
 private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
 
 internal fun processTransportGate(context: Context): M45ProcessTransportGate =
-    processTransportGates.getOrCreate(context.applicationContext.noBackupFilesDir.canonicalPath) {
-        M45ProcessTransportGate()
+    context.applicationContext.noBackupFilesDir.canonicalFile.let { directory ->
+        processTransportGates.getOrCreate(directory.path) {
+            val lease by lazy { M45CrossProcessLease.shared(directory) }
+            M45ProcessTransportGate { lease }
+        }
     }
 
 internal class M45AcceptanceRuntime(
@@ -318,6 +322,7 @@ internal class M45AcceptanceRuntime(
         fun create(context: Context, serviceOrigin: URI): M45AcceptanceRuntime {
             val appContext = context.applicationContext
             val processGate = processTransportGate(appContext)
+            processGate.requireStorageLease()
             val ownerToken = Any()
             val identityRepository = LocalIdentityRepository.create(appContext)
             val contactRepository = ContactRepository.create(appContext, serviceOrigin)
