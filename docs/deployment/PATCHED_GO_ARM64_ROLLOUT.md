@@ -1,6 +1,6 @@
 # Go 1.27.4 Linux ARM64 backend rebuild and guarded rollout
 
-Status: **build preparation only** for #91. Go 1.27.4 (released 2026-11-10) fixes GO-2026-6859/CVE-2026-97054 and other security issues; the formerly verified Go 1.27.3 backend artifact is now obsolete. Build and independently review a new exact-main Go 1.27.4 ARM64 artifact. **SECURITY HOLD: the legacy 1.27.3 Bash/PowerShell operator helpers now reject deployment attempts before host mutation; do not use them to deploy their pinned binary.** Their original immutable SHA pins must be replaced only after a new artifact has been independently verified and the helpers re-reviewed. No live deployment, backend feature change, new Kenato server, release signing, TURN, or M6.
+Status: **verified artifact / operator preparation only** for #91. Go 1.27.4 fixes GO-2026-6859/CVE-2026-97054; the former Go 1.27.3 artifact is retired and must never be deployed. The replacement below was independently downloaded and verified. It is not a release, host acceptance or permission to deploy. Require successful exact-source CI/security, review of these pins, an explicitly authorized maintenance window, and independent live HTTPS/WSS and rollback checks. No new server, TURN, M6 or backend feature change.
 
 ## Produce and verify a reviewed-source binary
 
@@ -35,24 +35,28 @@ Record only the source SHA, binary SHA-256, Actions run ID, source/toolchain
 verification and operator approval in #91. Do not record the host address,
 secrets, raw requests, user identities or databases.
 
-## Historical Go 1.27.3 operator helper (deployment suspended)
+## Independently verified Go 1.27.4 artifact and operator helper
 
-The independently verified Go 1.27.3 artifact was built in GitHub Actions
-[run #42628027765](https://github.com/StanleyLl0yd/kenato/actions/runs/42628027765)
-from exact main source `aa3bcebe646bd84ce3be0dd4357840ca31acd71d`. Artifact ID: `13679088216`.
-The independently recomputed ZIP SHA-256 is `0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d`, and its
-AArch64 ELF SHA-256 is `c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107`.
-The archive has exactly four expected files. Go build metadata, clean VCS
-revision, architecture and main-only provenance were independently checked.
+The independently verified Go 1.27.4 artifact was built in GitHub Actions
+[run #45575045413](https://github.com/StanleyLl0yd/kenato/actions/runs/45575045413)
+from exact main source `7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb`. Artifact ID: `15003931153`.
+The independently recomputed ZIP SHA-256 is `e867874d61ffcd5c8a03b32cd5218259211b6f7a230c27b7de914590c64c082c`, and its
+AArch64 ELF SHA-256 is `a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb`.
+The downloaded 9,305,968-byte ZIP matches the authenticated artifact digest;
+its 16,352,243-byte ELF matches the independently reported Actions log digest.
+The archive has exactly four expected files. The actual ELF was inspected
+with `readelf -h` and `go version -m`: ELF64 AArch64, Go 1.27.4,
+`GOOS=linux`, `GOARCH=arm64`, `CGO_ENABLED=0`, exact clean VCS revision.
+The manifest, ZIP member CRCs and source provenance were also checked.
 This is **artifact acceptance**, not OCI host acceptance or deployment.
 
-**The following commands and hashes document the previous, vulnerable 1.27.3 artifact only. Do not execute them while the security hold above is active.**
+**Do not use the retired Go 1.27.3 ZIP or any unreviewed replacement. The commands below are for the verified Go 1.27.4 artifact only, after separate operator authorization.**
 
-(proposal; not deployed)
+(operator preparation; not deployed)
 
 A reviewed, **manual-only** helper at
 `scripts/rollout_existing_oci_arm64.sh` stages the exact existing Go
-1.27.3 ARM64 artifact on the **existing host only**, validates local checksums,
+1.27.4 ARM64 artifact on the **existing host only**, validates local checksums,
 source/provenance fields, binary architecture, existing service ownership,
 pre-change service health and loopback-only port, preserves the original binary
 under `/var/backups/kenato`, performs an atomic executable replacement and
@@ -62,8 +66,8 @@ executable rollback and a health recheck. No SSH, firewall, Nginx, TLS, SQLite,
 secrets, server feature, additional host or TURN changes are attempted.
 
 The helper is hard-pinned to the original reviewed
-`source_sha=aa3bcebe646bd84ce3be0dd4357840ca31acd71d` and actual ELF
-SHA-256 `c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107`.
+`source_sha=7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb` and actual ELF
+SHA-256 `a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb`.
 A different source or executable cannot be supplied just by changing an
 untrusted archive's own `SHA256SUMS`. New builds require a separately
 reviewed change to these pins.
@@ -75,7 +79,7 @@ review the script and copy the extracted files to an operator-controlled
 directory on the real host. Then on the host:
 
 ```sh
-sudo bash scripts/rollout_existing_oci_arm64.sh --apply /path/to/extracted-artifact aa3bcebe646bd84ce3be0dd4357840ca31acd71d
+sudo bash scripts/rollout_existing_oci_arm64.sh --apply /path/to/extracted-artifact 7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb
 ```
 
 For a Windows operator using PowerShell 7 and an existing SSH config alias
@@ -91,7 +95,7 @@ pwsh -File scripts/Deploy-KenatoGoArm64.ps1 -ArtifactZip C:\\path\\to\\kenato-se
 ```
 
 The PowerShell wrapper independently pins the **reviewed LF-normalized
-root-executed Bash helper** to SHA-256 `1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc`
+root-executed Bash helper** to SHA-256 `cf08ed6ea890d01fabf0664935226d6982ac10a71253c4766577f98314a290ba`
 and checks that digest before opening an SSH connection or changing the host.
 A locally modified or substituted helper is rejected, even if the verified
 server executable ZIP is unchanged. Windows CRLF is normalized to LF before

@@ -14,26 +14,22 @@ if [[ $# -ne 3 || "$1" != "--apply" || ! "$3" =~ ^[0-9a-f]{40}$ ]]; then
   usage >&2
   exit 2
 fi
-# SECURITY HOLD (2026-11-11): the pinned Go 1.27.3 artifact is vulnerable
-# to GO-2026-6859. Fail before host probing, service stop, or file mutation.
-# Re-enable only with an independently verified Go 1.27.4 artifact and new pins.
-printf 'ERROR: retired Go 1.27.3 artifact (GO-2026-6859); rollout disabled pending reviewed 1.27.4 replacement.\n' >&2
-exit 3
-
-if (( EUID != 0 )); then
-  echo 'ERROR: run as root on the authorized EXISTING OCI host.' >&2
-  exit 2
-fi
+# Only the independently verified Go 1.27.4 payload is eligible.
+# The retired Go 1.27.3 source and ELF are intentionally not accepted.
 
 artifact_dir="$2"
 expected_source="$3"
 # Hard-pin the previously source-verified GitHub Actions artifact. A checksum
 # carried inside the same untrusted archive is not an independent trust anchor.
-pinned_source=aa3bcebe646bd84ce3be0dd4357840ca31acd71d
-pinned_binary=c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107
+pinned_source=7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb
+pinned_binary=a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb
 [[ "$expected_source" == "$pinned_source" ]] || {
   echo 'Unreviewed backend source revision' >&2; exit 1;
 }
+if (( EUID != 0 )); then
+  echo 'ERROR: run as root on the authorized EXISTING OCI host.' >&2
+  exit 2
+fi
 service=kenato-server
 target=/usr/local/bin/kenato-server
 backup_root=/var/backups/kenato
@@ -68,7 +64,7 @@ grep -Fxq 'source_ref=refs/heads/main' "$artifact_dir/PROVENANCE.txt"
 grep -Fxq 'goos=linux' "$artifact_dir/PROVENANCE.txt"
 grep -Fxq 'goarch=arm64' "$artifact_dir/PROVENANCE.txt"
 grep -Fxq 'cgo_enabled=0' "$artifact_dir/PROVENANCE.txt"
-grep -Fq 'go1.27.3' "$artifact_dir/GO_BUILD_INFO.txt"
+grep -Fq 'go1.27.4' "$artifact_dir/GO_BUILD_INFO.txt"
 grep -Fq "vcs.revision=$expected_source" "$artifact_dir/GO_BUILD_INFO.txt"
 grep -Fq 'vcs.modified=false' "$artifact_dir/GO_BUILD_INFO.txt"
 grep -Fq 'GOOS=linux' "$artifact_dir/GO_BUILD_INFO.txt"

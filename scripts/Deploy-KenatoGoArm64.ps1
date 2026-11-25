@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  Verify the exact reviewed Go 1.27.3 GitHub artifact on Windows and optionally
+  Verify the exact reviewed Go 1.27.4 GitHub artifact on Windows and optionally
   apply it to the EXISTING OCI instance using the operator's SSH config.
 .DESCRIPTION
   No secrets are accepted, saved or logged. Without -Apply: local checks only.
@@ -23,15 +23,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Fail before reading the artifact or opening SSH for the retired Go 1.27.3 payload.
-if ($Apply) {
-    throw 'Go 1.27.3 rollout suspended (GO-2026-6859). Require independently approved 1.27.4 source and artifact pins.'
-}
-
-$sourceSha = 'aa3bcebe646bd84ce3be0dd4357840ca31acd71d'
-$expectedZipSha = '0feebe4644b8650569db9c3cb0fe24595ae16bd61915a14a39f70d2c51aecf0d'
-$expectedElfSha = 'c3fda56f38ea3b1e7e8243bfc7a0e72ff819af32052e4a377a177e9b86d54107'
-$expectedRootHelperSha = '1cb7f9f8f232ec975d8154ab06d5f115f3a0ca3e9fd4a0ebef2dcf614c41b6cc'
+# Verify only the reviewed replacement artifact before permitting any SSH.
+$sourceSha = '7b08a860e2cdf8b4369fc8206bcb96dd1aa82eeb'
+$expectedZipSha = 'e867874d61ffcd5c8a03b32cd5218259211b6f7a230c27b7de914590c64c082c'
+$expectedElfSha = 'a50e1eb8456c29a582d440698079cc44f4f16ffb5fe824be7ece598e198a48fb'
+$expectedRootHelperSha = 'cf08ed6ea890d01fabf0664935226d6982ac10a71253c4766577f98314a290ba'
 $zipSha = (Get-FileHash -LiteralPath $ArtifactZip -Algorithm SHA256).Hash.ToLowerInvariant()
 
 if ($zipSha -cne $expectedZipSha) {
@@ -68,7 +64,7 @@ try {
     foreach ($needle in @("source_sha=$sourceSha", 'source_ref=refs/heads/main', 'goos=linux', 'goarch=arm64', 'cgo_enabled=0')) {
         if (-not $provenance.Contains($needle)) { throw 'Missing source provenance field.' }
     }
-    foreach ($needle in @('go1.27.3', "vcs.revision=$sourceSha", 'vcs.modified=false', 'GOOS=linux', 'GOARCH=arm64', 'CGO_ENABLED=0')) {
+    foreach ($needle in @('go1.27.4', "vcs.revision=$sourceSha", 'vcs.modified=false', 'GOOS=linux', 'GOARCH=arm64', 'CGO_ENABLED=0')) {
         if (-not $buildInfo.Contains($needle)) { throw 'Missing Go build verification field.' }
     }
 
