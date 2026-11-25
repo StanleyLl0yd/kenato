@@ -139,6 +139,11 @@ internal fun closeM45Resources(stop: () -> Unit, release: () -> Unit) {
 
 private val processTransportGates = ProcessLocalOwnerRegistry<M45ProcessTransportGate>()
 
+internal fun processTransportGate(context: Context): M45ProcessTransportGate =
+    processTransportGates.getOrCreate(context.applicationContext.noBackupFilesDir.canonicalPath) {
+        M45ProcessTransportGate()
+    }
+
 internal class M45AcceptanceRuntime(
     private val identity: M45IdentityBoundary,
     private val contacts: M45ContactBoundary,
@@ -151,7 +156,15 @@ internal class M45AcceptanceRuntime(
     private var closed = false
     private var uncertainShutdown = false
 
-    fun initializeIdentity(): IdentityBundle = withOwner { identity.loadOrCreate() }
+    fun initializeIdentity(): IdentityBundle = withMessagingPaused { identity.loadOrCreate() }
+
+    fun <T> localTrustMutation(action: () -> T): T = withOwner {
+        processGate.localTrustMutation(ownerToken, action)
+    }
+
+    fun canReadConversation(): Boolean = synchronized(processGate) {
+        !closed && processGate.isAvailable(ownerToken)
+    }
 
     fun currentIdentity(): IdentityBundle? = withOwner { identity.current() }
 
@@ -304,9 +317,7 @@ internal class M45AcceptanceRuntime(
     companion object {
         fun create(context: Context, serviceOrigin: URI): M45AcceptanceRuntime {
             val appContext = context.applicationContext
-            val processGate = processTransportGates.getOrCreate(appContext.noBackupFilesDir.canonicalPath) {
-                M45ProcessTransportGate()
-            }
+            val processGate = processTransportGate(appContext)
             val ownerToken = Any()
             val identityRepository = LocalIdentityRepository.create(appContext)
             val contactRepository = ContactRepository.create(appContext, serviceOrigin)

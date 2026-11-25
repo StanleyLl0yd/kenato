@@ -57,6 +57,8 @@ internal data class M45AcceptanceUiState(
 
 internal class M45AcceptanceController(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val processGate = processTransportGate(appContext)
+    private val localTrustOwner = Any()
     private val identityRepository = LocalIdentityRepository.create(appContext)
     private val diagnosticJournal = M45DiagnosticJournal(appContext)
     private val contactState = ContactLocalState.create(appContext)
@@ -166,7 +168,12 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
     }
 
     fun initializeIdentity() = launchOperation("Local identity is ready") {
-        identityRepository.loadOrCreate()
+        val existing = runtime
+        if (existing != null) {
+            existing.initializeIdentity()
+        } else {
+            processGate.localTrustMutation(localTrustOwner) { identityRepository.loadOrCreate() }
+        }
     }
 
     fun prepareForAcceptance(onPrepared: () -> Unit = {}) =
@@ -227,38 +234,48 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
      * proof flow. None of them starts a call or probes an M4 text-only client.
      */
     fun issueVoiceCapabilityChallenge() = launchOperation("Voice capability challenge ready to share") {
-        val peer = selectedPeerBytes()
-        val challenge = voiceCapability.issueChallengeQr(peer)
-        ephemeralVoiceChallenge = challenge
-        ephemeralVoiceProof = null
-        ephemeralVoicePeerId = encodePeerId(peer)
+        localTrustMutation {
+            val peer = selectedPeerBytes()
+            val challenge = voiceCapability.issueChallengeQr(peer)
+            ephemeralVoiceChallenge = challenge
+            ephemeralVoiceProof = null
+            ephemeralVoicePeerId = encodePeerId(peer)
+        }
     }
 
     fun approveAndSignVoiceCapabilityChallenge(qr: String, onSigned: () -> Unit = {}) =
         launchOperation("Signed voice capability proof ready to share", onSuccess = onSigned) {
-            val peer = selectedPeerBytes()
-            val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
-            ephemeralVoiceChallenge = null
-            ephemeralVoiceProof = proof
-            ephemeralVoicePeerId = encodePeerId(peer)
+            localTrustMutation {
+                val peer = selectedPeerBytes()
+                val proof = voiceCapability.approveAndSignChallengeQr(peer, qr.trim())
+                ephemeralVoiceChallenge = null
+                ephemeralVoiceProof = proof
+                ephemeralVoicePeerId = encodePeerId(peer)
+            }
         }
 
     fun approveAndImportVoiceCapabilityProof(qr: String, onImported: () -> Unit = {}) =
         launchOperation("Pinned voice capability proof accepted", onSuccess = onImported) {
-            val peer = selectedPeerBytes()
-            voiceCapability.approveAndImportProofQr(peer, qr.trim())
-            clearEphemeralVoiceQr()
+            localTrustMutation {
+                val peer = selectedPeerBytes()
+                voiceCapability.approveAndImportProofQr(peer, qr.trim())
+                clearEphemeralVoiceQr()
+            }
         }
 
     fun revokeVoiceCapability(peerIdentityId: String, onReset: () -> Unit = {}) =
         launchOperation("Local call approval and pending challenge cleared", onSuccess = onReset) {
-            val currentPeer = selectedPeerBytes()
-            if (encodePeerId(currentPeer) != peerIdentityId) {
-                throw IllegalStateException("Selected contact changed; reset was not applied")
+            // No service origin, healthy transport or active runtime is required
+            // for explicit local denial. Serialize with grants and WSS callbacks.
+            processGate.localRevocation {
+                val currentPeer = selectedPeerBytes()
+                if (encodePeerId(currentPeer) != peerIdentityId) {
+                    throw IllegalStateException("Selected contact changed; reset was not applied")
+                }
+                voiceCapability.revokeLocalCapability(currentPeer)
+                clearEphemeralVoiceQr()
+                voiceConsentResetEpoch++
             }
-            voiceCapability.revokeLocalCapability(currentPeer)
-            clearEphemeralVoiceQr()
-            voiceConsentResetEpoch++
         }
 
     fun refresh() = launchOperation("State refreshed") { }
@@ -363,6 +380,16 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         }
     }
 
+    private fun <T> localTrustMutation(action: () -> T): T {
+        val existing = runtime
+        return if (existing != null) existing.localTrustMutation(action)
+        else processGate.localTrustMutation(localTrustOwner, action)
+    }
+
+    private fun transportState(): MessagingWssState =
+        if (processGate.isPoisoned()) MessagingWssState.FAILED
+        else runtime?.messagingState() ?: MessagingWssState.STOPPED
+
     private fun requireRuntime(): M45AcceptanceRuntime {
         val origin = M45ServiceOrigin.parse(
             preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty(),
@@ -406,15 +433,15 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         ephemeralVoicePeerId = null
     }
 
-    private fun buildSnapshot(): M45AcceptanceUiState {
+    private fun buildSnapshot(): M45AcceptanceUiState = synchronized(processGate) {
         val origin = preferences.getString(KEY_SERVICE_ORIGIN, "").orEmpty()
         val identity = identityRepository.current()
         if (identity == null) {
-            return M45AcceptanceUiState(
+            return@synchronized M45AcceptanceUiState(
                 serviceOrigin = origin,
                 voiceConsentResetEpoch = voiceConsentResetEpoch,
                 messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
-                messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
+                messagingState = transportState(),
                 diagnostics = diagnosticJournal.snapshot(),
             )
         }
@@ -447,7 +474,12 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
             }.getOrDefault(false)
         } ?: contacts.firstOrNull()?.peerIdentityId
 
-        val messages = if (selectedPeer != null && origin.isNotBlank()) {
+        // Transport ownership must not hide a successful local consent reset.
+        // Do not construct or access a competing/closed runtime just to render
+        // a local snapshot. The gate is held for the complete read below.
+        val canReadConversation = runtime?.canReadConversation()
+            ?: processGate.isAvailable(localTrustOwner)
+        val messages = if (selectedPeer != null && origin.isNotBlank() && canReadConversation) {
             val peer = decodeM45IdentityId(selectedPeer)
             requireRuntime().conversation(peer).messages.map { message ->
                 M45UiMessage(
@@ -473,14 +505,14 @@ internal class M45AcceptanceController(context: Context) : AutoCloseable {
         } ?: false
         val showVoiceQr = foreground && ephemeralVoicePeerId == selectedPeer
 
-        return M45AcceptanceUiState(
+        M45AcceptanceUiState(
             serviceOrigin = origin,
             identityId = identity.identityId,
             pendingInvites = pendingInvites,
             contacts = contacts,
             selectedPeerIdentityId = selectedPeer,
             messagingEnabled = preferences.getBoolean(KEY_MESSAGING_ENABLED, false),
-            messagingState = runtime?.messagingState() ?: MessagingWssState.STOPPED,
+            messagingState = transportState(),
             messages = messages,
             diagnostics = diagnosticJournal.snapshot(),
             voiceChallengeQr = ephemeralVoiceChallenge.takeIf { showVoiceQr },
