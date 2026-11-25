@@ -200,6 +200,123 @@ class M45AcceptanceRuntimeTest {
         assertEquals(listOf("stop", "release"), events)
     }
 
+    @Test
+    fun secondRuntimeCannotStartOrStageWorkUntilFirstStops() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        owner.startMessaging()
+        assertThrows(IllegalStateException::class.java) { other.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { other.createInvite() }
+        assertThrows(IllegalStateException::class.java) { other.currentIdentity() }
+        assertThrows(IllegalStateException::class.java) {
+            other.sendText(ByteArray(32), "blocked")
+        }
+        assertTrue(second.events.isEmpty())
+        owner.stopMessaging()
+        other.startMessaging()
+        assertTrue(second.messaging.started)
+        owner.close()
+        assertTrue(second.messaging.started)
+        other.close()
+    }
+
+    @Test
+    fun partialStartIsStoppedBeforeAnotherRuntimeMayStart() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        val failure = IllegalStateException("simulated partial start")
+        first.messaging.startFailure = failure
+        assertTrue(assertThrows(IllegalStateException::class.java) { owner.startMessaging() } === failure)
+        assertFalse(first.messaging.started)
+        assertEquals(listOf("identity.load", "messaging.start", "messaging.stop"), first.events)
+        other.startMessaging()
+        assertTrue(second.messaging.started)
+        other.close()
+        owner.close()
+    }
+
+    @Test
+    fun uncertainStopPoisonsProcessAndAbortsTrustMutationBeforeStoreAccess() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val second = Fixture()
+        val owner = first.runtime(gate)
+        val other = second.runtime(gate)
+        owner.startMessaging()
+        first.events.clear()
+        val failure = IllegalStateException("simulated uncertain stop")
+        first.messaging.stopFailure = failure
+        assertTrue(assertThrows(IllegalStateException::class.java) { owner.createInvite() } === failure)
+        assertEquals(listOf("messaging.stop", "messaging.close"), first.events)
+        assertEquals(MessagingWssState.FAILED, owner.messagingState())
+        assertThrows(IllegalStateException::class.java) { owner.stopMessaging() }
+        assertThrows(IllegalStateException::class.java) { other.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { other.createInvite() }
+        assertTrue(second.events.isEmpty())
+        owner.close()
+        other.close()
+    }
+
+    @Test
+    fun uncertainCloseCannotBeBypassedByNewRuntime() {
+        val gate = M45ProcessTransportGate()
+        val first = Fixture()
+        val owner = first.runtime(gate)
+        owner.startMessaging()
+        first.messaging.stopFailure = IllegalStateException("uncertain shutdown")
+        assertThrows(IllegalStateException::class.java) { owner.close() }
+        owner.close()
+        val second = Fixture()
+        assertThrows(IllegalStateException::class.java) { second.runtime(gate).startMessaging() }
+        assertTrue(second.events.isEmpty())
+    }
+
+    @Test
+    fun successfullyClosedRuntimeCannotRestartOrTouchTrustState() {
+        val fixture = Fixture()
+        val runtime = fixture.runtime()
+        runtime.close()
+        fixture.events.clear()
+        assertThrows(IllegalStateException::class.java) { runtime.startMessaging() }
+        assertThrows(IllegalStateException::class.java) { runtime.createInvite() }
+        assertThrows(IllegalStateException::class.java) { runtime.initializeIdentity() }
+        assertTrue(fixture.events.isEmpty())
+        runtime.stopMessaging()
+        runtime.close()
+        assertTrue(fixture.events.isEmpty())
+    }
+
+    @Test
+    fun callbackAuthorityDoesNotSurviveStopRestartOrPoison() {
+        val gate = M45ProcessTransportGate()
+        val owner = Any()
+        val other = Any()
+        val beforeStart = gate.captureCallbackPermission(owner)
+        gate.claim(owner)
+        val first = gate.captureCallbackPermission(owner)
+        val wrongOwner = gate.captureCallbackPermission(other)
+        assertTrue(first())
+        assertFalse(beforeStart())
+        assertFalse(wrongOwner())
+        gate.suspendCallbacks(owner)
+        assertFalse(first())
+        gate.release(owner)
+        gate.claim(owner)
+        val second = gate.captureCallbackPermission(owner)
+        assertFalse(first())
+        assertTrue(second())
+        gate.poison()
+        assertFalse(second())
+        gate.release(owner)
+        assertThrows(IllegalStateException::class.java) { gate.claim(other) }
+    }
+
     private class Fixture {
         val events = ArrayList<String>()
         val identity = FakeIdentity(events)
@@ -213,7 +330,8 @@ class M45AcceptanceRuntimeTest {
         val sessions = FakeSessions(events, pin)
         val messaging = FakeMessaging(events)
 
-        fun runtime() = M45AcceptanceRuntime(identity, contacts, sessions, messaging)
+        fun runtime(gate: M45ProcessTransportGate = M45ProcessTransportGate()) =
+            M45AcceptanceRuntime(identity, contacts, sessions, messaging, gate)
     }
 
     private class FakeIdentity(
@@ -315,12 +433,14 @@ class M45AcceptanceRuntimeTest {
         private val events: MutableList<String>,
     ) : M45MessagingBoundary {
         var started = false
+        var startFailure: Throwable? = null
         var stopFailure: Throwable? = null
         var closeFailure: Throwable? = null
 
         override fun start() {
             events += "messaging.start"
             started = true
+            startFailure?.let { throw it }
         }
 
         override fun stop() {
